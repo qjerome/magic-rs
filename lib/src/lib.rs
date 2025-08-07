@@ -14,6 +14,7 @@ use std::{
     fmt::{self, Debug, Display},
     fs,
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom},
+    iter::Peekable,
     ops::{Add, BitAnd, Div, Mul, Rem, Sub},
     path::Path,
     string::FromUtf8Error,
@@ -108,7 +109,7 @@ fn unescape_string(s: &str) -> String {
     result
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Message {
     String(String),
     Format(FormatString),
@@ -236,18 +237,6 @@ impl From<pest::error::Error<Rule>> for ParserError {
     }
 }
 
-impl ParserError {
-    fn custom<S: AsRef<str>>(msg: S, span: Span<'_>) -> Self {
-        pest::error::Error::new_from_span(
-            ErrorVariant::CustomError {
-                message: msg.as_ref().into(),
-            },
-            span,
-        )
-        .into()
-    }
-}
-
 impl FileMagicParser {
     fn parse_str<S: AsRef<str>>(s: S) -> Result<MagicFile, Error> {
         let pairs = FileMagicParser::parse(Rule::file, s.as_ref()).map_err(Box::new)?;
@@ -282,7 +271,7 @@ impl FileMagicParser {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 enum ScalarDataType {
     belong,
@@ -515,7 +504,7 @@ impl ScalarDataType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Op {
     Mul,
     Add,
@@ -525,7 +514,7 @@ enum Op {
     And,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum CmpOp {
     Eq,
     Lt,
@@ -561,7 +550,7 @@ impl Op {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Transform {
     op: Op,
     num: Scalar,
@@ -582,7 +571,7 @@ impl Transform {
 }
 
 // Any Magic Data type
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum MagicDataType {
     String,
     PString,
@@ -606,7 +595,7 @@ flags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RegexTest {
     re: bytes::Regex,
     length: Option<usize>,
@@ -667,7 +656,7 @@ flags! {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct StringTest {
     str: String,
     length: Option<usize>,
@@ -715,7 +704,7 @@ impl StringTest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SearchTest {
     str: String,
     n_pos: Option<usize>,
@@ -763,7 +752,7 @@ impl SearchTest {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ScalarTest {
     ty: ScalarDataType,
     transform: Option<Transform>,
@@ -771,7 +760,7 @@ struct ScalarTest {
     value: Scalar,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Test {
     Scalar(ScalarTest),
     Read(MagicDataType),
@@ -1021,7 +1010,6 @@ impl Test {
                 RegexTest {
                     // FIXME: remove unwrap
                     re: Regex::new(&pattern).unwrap(),
-                    // if there is a length we add string size so that we can match full string until the last search token
                     length: None,
                     mods: FlagSet::empty(),
                     str_mods: Some(s.mods),
@@ -1208,6 +1196,16 @@ enum Offset {
     End(i64),
 }
 
+impl Display for Offset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Offset::Start(i) => write!(f, "{i}"),
+            Offset::Current(c) => write!(f, "&{c}"),
+            Offset::End(e) => write!(f, "-{e}"),
+        }
+    }
+}
+
 impl Default for Offset {
     fn default() -> Self {
         Self::Current(0)
@@ -1269,7 +1267,7 @@ impl Offset {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Match {
     depth: u8,
     offset: Offset,
@@ -1314,10 +1312,29 @@ impl Match {
     fn matches<'a, R: Read + Seek>(
         &'a self,
         magic: &mut Magic<'a>,
+        state: &mut MatchState,
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
         switch_endianness: bool,
     ) -> Result<bool, Error> {
+        // handle clear and default tests
+        if matches!(self.test, Test::Clear) {
+            trace!("clear");
+            state.clear_continuation_level(&self.continuation_level());
+            return Ok(true);
+        }
+
+        // we don't continue if we already
+        if state.get_continuation_level(&self.continuation_level()) {
+            return Ok(false);
+        }
+
+        if matches!(self.test, Test::Default) {
+            trace!("default");
+            state.set_continuation_level(self.continuation_level());
+            return Ok(true);
+        }
+
         // FIXME: handle better
         let current_offset = haystack.stream_position()?;
 
@@ -1337,19 +1354,6 @@ impl Match {
             Offset::End(e) => haystack.seek(SeekFrom::End(e + i))?,
         };
 
-        // handle clear and default tests
-        match &self.test {
-            Test::Clear => {
-                magic.clear_continuation_level(&self.continuation_level());
-                return Ok(true);
-            }
-            Test::Default => {
-                magic.set_continuation_level(self.continuation_level());
-                return Ok(true);
-            }
-            _ => {}
-        }
-
         let mut trace_msg = None;
 
         if enabled!(Level::DEBUG) {
@@ -1365,7 +1369,6 @@ impl Match {
 
             trace_msg
                 .as_mut()
-                //.map(|v| v.push(format!("test={:?} value={:?}", self.test, &tv)));
                 .map(|v| v.push(format!("test={:?}", self.test)));
 
             let match_res = self.test.match_value(tv);
@@ -1394,7 +1397,7 @@ impl Match {
                         haystack.seek(SeekFrom::Start(current_offset + s.len() as u64))?;
                     }
                 }
-                magic.set_continuation_level(self.continuation_level());
+                state.set_continuation_level(self.continuation_level());
                 return Ok(true);
             }
         }
@@ -1408,7 +1411,7 @@ impl Match {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Use {
     depth: u8,
     start_offset: Offset,
@@ -1490,18 +1493,19 @@ impl Use {
 
         m
     }
-
-    #[inline(always)]
-    fn continuation_level(&self) -> ContinuationLevel {
-        ContinuationLevel(self.depth, self.start_offset)
-    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+struct Strength {
+    op: Op,
+    by: u8,
+}
+
+#[derive(Debug, Clone)]
 pub enum Flag {
     Mime(String),
     Ext(HashSet<String>),
-    Strength { op: Op, by: u8 },
+    Strength(Strength),
 }
 
 impl Flag {
@@ -1516,7 +1520,7 @@ impl Flag {
                     .as_str()
                     .into(),
             ),
-            Rule::strength_flag => Self::Strength { op: Op::Mul, by: 0 },
+            Rule::strength_flag => Self::Strength(Strength { op: Op::Add, by: 0 }),
             Rule::ext_flag => {
                 let exts = flag.into_inner().next().expect("expecting extension list");
                 assert_eq!(exts.as_rule(), Rule::exts);
@@ -1527,25 +1531,192 @@ impl Flag {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct Name {
+    offset: Offset,
+    name: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum Entry {
+    Name(Name),
     Match(Match),
     Flag(Flag),
     Use(Use),
 }
 
-#[derive(Debug)]
-pub struct MagicRule {
-    entries: Vec<Entry>,
+#[derive(Debug, Clone)]
+pub enum MatchEntry {
+    Match(Match),
+    Use(Use),
+    Name(Name),
 }
 
-impl MagicRule {
-    pub fn entries(&self) -> &[Entry] {
-        &self.entries
+impl From<Match> for MatchEntry {
+    fn from(value: Match) -> Self {
+        Self::Match(value)
     }
 }
 
-#[derive(Debug)]
+impl From<Use> for MatchEntry {
+    fn from(value: Use) -> Self {
+        Self::Use(value)
+    }
+}
+
+impl From<Name> for MatchEntry {
+    fn from(value: Name) -> Self {
+        Self::Name(value)
+    }
+}
+
+impl MatchEntry {
+    fn depth(&self) -> u8 {
+        match self {
+            MatchEntry::Match(m) => m.depth,
+            MatchEntry::Use(u) => u.depth,
+            MatchEntry::Name(_) => 0,
+        }
+    }
+
+    fn offset(&self) -> Offset {
+        match self {
+            MatchEntry::Match(m) => m.offset,
+            MatchEntry::Use(u) => u.start_offset,
+            MatchEntry::Name(n) => n.offset,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EntryNode {
+    entry: MatchEntry,
+    children: Vec<EntryNode>,
+    mimetype: Option<String>,
+}
+
+impl EntryNode {
+    fn from_entries(entries: Vec<Entry>) -> Self {
+        Self::from_peekable(&mut entries.into_iter().peekable())
+    }
+
+    fn from_peekable(entries: &mut Peekable<impl Iterator<Item = Entry>>) -> Self {
+        let root = match entries.next().unwrap() {
+            Entry::Match(m) => MatchEntry::from(m),
+            Entry::Use(u) => MatchEntry::from(u),
+            Entry::Name(n) => MatchEntry::from(n),
+            // FIXME: rm dumb panic msg
+            Entry::Flag(_) => panic!("should never happen"),
+        };
+
+        let mut children = vec![];
+        let mut mimetype = None;
+
+        while let Some(e) = entries.peek() {
+            match e {
+                Entry::Match(m) => {
+                    if m.depth <= root.depth() {
+                        break;
+                    }
+                    if m.depth == root.depth() + 1 {
+                        children.push(EntryNode::from_peekable(entries))
+                    }
+                }
+                Entry::Use(u) => {
+                    if u.depth <= root.depth() {
+                        break;
+                    }
+                    if u.depth == root.depth() + 1 {
+                        children.push(EntryNode::from_peekable(entries))
+                    }
+                }
+                Entry::Flag(_) => {
+                    // it cannot be otherwise
+                    if let Some(Entry::Flag(f)) = entries.next() {
+                        match f {
+                            Flag::Mime(m) => mimetype = Some(m),
+                            _ => {
+                                // FIXME: implement other flags
+                            }
+                        }
+                    }
+                }
+                // FIXME: rm dumb panic msg
+                Entry::Name(_) => panic!("should never happen"),
+            }
+        }
+
+        Self {
+            entry: root,
+            children,
+            mimetype,
+        }
+    }
+
+    fn matches<'r, R: Read + Seek>(
+        &'r self,
+        magic: &mut Magic<'r>,
+        state: &mut MatchState,
+        opt_start_offset: Option<Offset>,
+        haystack: &mut R,
+        deps: &'r HashMap<String, DependencyRule>,
+        abort_first_no_match: bool,
+        switch_endianness: bool,
+    ) -> Result<(), Error> {
+        match &self.entry {
+            MatchEntry::Name(n) => {
+                debug!("running dependency: {}", n.name);
+                let mut state = MatchState::default();
+                for e in self.children.iter() {
+                    e.matches(
+                        magic,
+                        &mut state,
+                        opt_start_offset,
+                        haystack,
+                        deps,
+                        abort_first_no_match,
+                        switch_endianness,
+                    )?
+                }
+
+                Ok(())
+            }
+
+            MatchEntry::Match(m) => {
+                let ok = m.matches(magic, state, opt_start_offset, haystack, switch_endianness)?;
+
+                if ok {
+                    if let Some(mimetype) = self.mimetype.as_ref() {
+                        magic.insert_mimetype(Cow::Borrowed(mimetype));
+                    }
+                    for e in self.children.iter() {
+                        e.matches(
+                            magic,
+                            state,
+                            opt_start_offset,
+                            haystack,
+                            deps,
+                            abort_first_no_match,
+                            switch_endianness,
+                        )?
+                    }
+                }
+
+                Ok(())
+            }
+            MatchEntry::Use(u) => u.matches(magic, haystack, deps),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MagicRule {
+    entries: EntryNode,
+}
+
+impl MagicRule {}
+
+#[derive(Debug, Clone)]
 pub struct DependencyRule {
     name: String,
     rule: MagicRule,
@@ -1553,17 +1724,21 @@ pub struct DependencyRule {
 
 impl DependencyRule {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
-        let mut pairs = pair.into_inner();
-        let name = pairs
-            .next()
-            .map(|p| p.as_str().to_string())
-            .expect("dependency rule must have a name");
+        let mut pairs = pair.clone().into_inner();
 
-        let rule_pair = pairs.next().expect("dependency contain entries");
+        let name_entry = pairs.next().expect("expecting name entry");
+        assert_eq!(name_entry.as_rule(), Rule::name_entry);
+
+        let name = name_entry
+            .into_inner()
+            .find(|p| p.as_rule() == Rule::rule_name)
+            .expect("missing rule name")
+            .as_str()
+            .to_string();
 
         Ok(Self {
             name,
-            rule: MagicRule::from_pair(rule_pair)?,
+            rule: MagicRule::from_pair(pair)?,
         })
     }
 
@@ -1581,6 +1756,17 @@ impl MagicRule {
         let mut items = vec![];
         for pair in pair.into_inner() {
             match pair.as_rule() {
+                Rule::name_entry => {
+                    let name = pair
+                        .into_inner()
+                        .find(|p| p.as_rule() == Rule::rule_name)
+                        .expect("rule must have a name");
+
+                    items.push(Entry::Name(Name {
+                        offset: Offset::Start(0),
+                        name: name.as_str().into(),
+                    }))
+                }
                 Rule::r#match_depth | Rule::r#match_no_depth => {
                     items.push(Entry::Match(Match::from_pairs(pair.into_inner())?));
                 }
@@ -1592,7 +1778,9 @@ impl MagicRule {
             }
         }
 
-        Ok(Self { entries: items })
+        Ok(Self {
+            entries: EntryNode::from_entries(items),
+        })
     }
 
     fn magic<'r, R: Read + Seek>(
@@ -1604,62 +1792,21 @@ impl MagicRule {
         abort_first_no_match: bool,
         switch_endianness: bool,
     ) -> Result<(), Error> {
-        let mut prev_item_match = true;
-        let mut last_continuation_level = ContinuationLevel::default();
-
-        for (i, item) in self.entries.iter().enumerate() {
-            match item {
-                Entry::Flag(f) => {
-                    if prev_item_match {
-                        match f {
-                            Flag::Mime(mime) => magic.insert_mimetype(mime.into()),
-                            _ => error!("flag not implemented {f:?}"),
-                        }
-                    }
-                }
-                Entry::Match(m) => {
-                    let cont_level = m.continuation_level();
-
-                    if magic.get_continuation_level(&cont_level)
-                        || (m.depth > last_continuation_level.0 && !prev_item_match)
-                    {
-                        trace!("skip: {m:?}");
-                        prev_item_match = false;
-                        continue;
-                    }
-
-                    // we are matching stuff
-                    prev_item_match =
-                        m.matches(magic, opt_start_offset, haystack, switch_endianness)?;
-
-                    // we abort if first item doesn't match
-                    if abort_first_no_match && i == 0 && !prev_item_match {
-                        return Ok(());
-                    }
-
-                    last_continuation_level = cont_level;
-                }
-
-                Entry::Use(u) => {
-                    if u.depth > last_continuation_level.0 && !prev_item_match {
-                        prev_item_match = false;
-                        continue;
-                    }
-
-                    let mut tmp = Magic::default();
-                    u.matches(&mut tmp, haystack, deps)?;
-                    magic.merge(tmp);
-
-                    prev_item_match = false;
-                }
-            }
-        }
-
-        Ok(())
+        self.entries
+            .matches(
+                magic,
+                &mut MatchState::default(),
+                opt_start_offset,
+                haystack,
+                deps,
+                abort_first_no_match,
+                switch_endianness,
+            )
+            .map(|_| ())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MagicFile {
     rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
@@ -1669,11 +1816,32 @@ pub struct MagicFile {
 struct ContinuationLevel(u8, Offset);
 
 #[derive(Debug, Default)]
+struct MatchState {
+    continuation_levels: HashSet<ContinuationLevel>,
+}
+
+impl MatchState {
+    #[inline(always)]
+    fn get_continuation_level(&mut self, level: &ContinuationLevel) -> bool {
+        self.continuation_levels.contains(level)
+    }
+
+    #[inline(always)]
+    fn set_continuation_level(&mut self, level: ContinuationLevel) {
+        self.continuation_levels.insert(level);
+    }
+
+    #[inline(always)]
+    fn clear_continuation_level(&mut self, level: &ContinuationLevel) {
+        self.continuation_levels.remove(level);
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Magic<'m> {
     message: Vec<Cow<'m, str>>,
     mime: Option<Cow<'m, str>>,
     strength: u64,
-    continuation_levels: HashSet<ContinuationLevel>,
 }
 
 impl<'m> Magic<'m> {
@@ -1704,30 +1872,13 @@ impl<'m> Magic<'m> {
         self.message.push(msg);
     }
 
-    #[inline(always)]
-    fn get_continuation_level(&mut self, level: &ContinuationLevel) -> bool {
-        self.continuation_levels.contains(level)
-    }
-
-    #[inline(always)]
-    fn set_continuation_level(&mut self, level: ContinuationLevel) {
-        self.continuation_levels.insert(level);
-    }
-
-    #[inline(always)]
-    fn clear_continuation_level(&mut self, level: &ContinuationLevel) {
-        self.continuation_levels.remove(level);
-    }
-
     fn insert_mimetype<'a: 'm>(&mut self, mime: Cow<'a, str>) {
         debug!("insert mime: {:?}", mime);
         self.mime = Some(mime)
     }
 
-    fn merge(&mut self, other: Self) {
-        self.message.extend(other.message);
-        self.mime = other.mime;
-        // FIXME: correctly handle strength
+    fn is_empty(&self) -> bool {
+        self.message.is_empty() && self.mime.is_none()
     }
 }
 
@@ -1737,15 +1888,19 @@ impl MagicFile {
     }
 
     pub fn magic<R: Read + Seek>(&self, haystack: &mut R) -> Magic<'_> {
-        let mut magic = Magic::default();
         // using a BufReader to gain speed
         let mut br = io::BufReader::new(haystack);
         for r in self.rules.iter() {
-            // FIXME: this is bad
-            r.magic(&mut magic, None, &mut br, &self.dependencies, true, false);
+            let mut magic = Magic::default();
+            // FIXME: this is bad this function should return Result<Option<Magic>, Error>
+            r.magic(&mut magic, None, &mut br, &self.dependencies, true, false)
+                .unwrap();
+            if !magic.is_empty() {
+                return magic;
+            }
         }
 
-        magic
+        Magic::default()
     }
 
     pub fn rules(&self) -> &[MagicRule] {

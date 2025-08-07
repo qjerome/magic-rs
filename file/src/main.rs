@@ -57,7 +57,7 @@ fn main() -> Result<(), anyhow::Error> {
             for f in o.rules {
                 let m = MagicFile::open(f)?;
 
-                for r in m.rules() {
+                /*for r in m.rules() {
                     println!("# new rule");
                     for e in r.entries() {
                         println!("{:?}", e)
@@ -71,7 +71,7 @@ fn main() -> Result<(), anyhow::Error> {
                         println!("{:?}", e)
                     }
                     println!()
-                }
+                }*/
             }
         }
         Some(Command::Test(o)) => {

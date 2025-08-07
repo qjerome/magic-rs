@@ -3,8 +3,8 @@
 // The main rule parses multiple lines in a magic file.
 file = { SOI ~ (rule_dependency | rule | NEWLINE)* ~ EOI }
 
-rule_dependency  = { "0" ~ "name" ~ rule_name ~ NEWLINE ~ rule_dep_content }
-rule_dep_content = { ((match_depth | use | flag) ~ (NEWLINE | EOI))+ }
+rule_dependency = { name_entry ~ NEWLINE ~ ((match_depth | use | flag) ~ (NEWLINE | EOI))+ }
+name_entry      = { offset ~ "name" ~ rule_name }
 
 // A rule consists of an offset, type, test, and optional message or continuation
 rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWLINE | EOI))* }
