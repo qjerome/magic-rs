@@ -1,0 +1,17 @@
+[package]
+name = "magic-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.1"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = "0.4.41"
+dyf = "0.1.1"
+flagset = "0.4.7"
+pest = "2.7.14"
+pest_derive = "2.7.14"
+regex = "1.11.1"
+thiserror = "2.0.12"
+tracing = "0.1.41"

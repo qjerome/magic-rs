@@ -1,0 +1,150 @@
+// libmagic.pest
+
+// The main rule parses multiple lines in a magic file.
+file = { SOI ~ (rule_dependency | rule | NEWLINE)* ~ EOI }
+
+rule_dependency  = { "0" ~ "name" ~ rule_name ~ NEWLINE ~ rule_dep_content }
+rule_dep_content = { ((match_depth | use | flag) ~ (NEWLINE | EOI))+ }
+
+// A rule consists of an offset, type, test, and optional message or continuation
+rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWLINE | EOI))* }
+
+// we need the both to be able to match
+match_no_depth = ${ offset ~ WHITESPACE+ ~ test ~ (WHITESPACE+ ~ message){,1} }
+match_depth    = ${ depth+ ~ offset ~ WHITESPACE+ ~ test ~ (WHITESPACE+ ~ message){,1} }
+
+test = ${ clear_test | scalar_test | default_test | string_test }
+
+rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
+endianness_switch = @{ "\\^" }
+use               = ${ depth+ ~ offset ~ WHITESPACE+ ~ "use" ~ WHITESPACE+ ~ endianness_switch? ~ rule_name }
+
+// operators
+op_add    = ${ "+" }
+op_mul    = ${ "*" }
+op_sub    = ${ "-" }
+op_div    = ${ "/" }
+op_and    = ${ "&" }
+op_mod    = ${ "%" }
+op_xor    = ${ "^" }
+op_negate = ${ "!" }
+op_gt     = ${ ">" }
+op_eq     = ${ "=" }
+op_lt     = ${ "<" }
+
+// flags
+mime_type     = @{ (ASCII_ALPHANUMERIC | "-" | "/" | ".")+ }
+mime_flag     =  { "mime" ~ WHITESPACE+ ~ mime_type }
+exts          = @{ (ASCII_ALPHANUMERIC | "-" | "/")+ }
+ext_flag      =  { "ext" ~ WHITESPACE+ ~ exts }
+apple_flag    =  { "apple" ~ WHITESPACE+ ~ (ASCII_ALPHANUMERIC | "?")+ }
+strength_op   = @{ op_add | op_mul | op_sub | op_div }
+strength_flag =  { "strength" ~ WHITESPACE+ ~ strength_op ~ WHITESPACE* ~ b10_number }
+flag          = ${ "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) }
+
+neg_number = ${ "-" ~ number }
+// hex must be checked first as 0 is also b10 number
+number     = ${ b16_number | b10_number }
+b10_number = @{ ASCII_DIGIT+ }
+b16_number = @{ "0x" ~ ASCII_HEX_DIGIT+ }
+
+// Parses offset as an integer at the start of a rule
+abs_offset = ${ number | neg_number }
+rel_offset = ${ "&" ~ (neg_number | number) }
+
+offset = ${ rel_offset | abs_offset }
+
+// all data types
+bedate      = @{ "bedate" }
+bedouble    = @{ "bedouble" }
+befloat     = @{ "befloat" }
+beldate     = @{ "beldate" }
+belong      = @{ "belong" }
+beqdate     = @{ "beqdate" }
+bequad      = @{ "bequad" }
+beshort     = @{ "beshort" }
+bestring16  = @{ "bestring16" }
+byte        = @{ "byte" }
+der         = @{ "der" }
+guid        = @{ "guid" }
+ldate       = @{ "ldate" }
+ledate      = @{ "ledate" }
+ledouble    = @{ "ledouble" }
+lefloat     = @{ "lefloat" }
+leldate     = @{ "leldate" }
+lelong      = @{ "lelong" }
+lemsdosdate = @{ "lemsdosdate" }
+lemsdostime = @{ "lemsdostime" }
+leqdate     = @{ "leqdate" }
+leqldate    = @{ "leqldate" }
+lequad      = @{ "lequad" }
+leqwdate    = @{ "leqwdate" }
+leshort     = @{ "leshort" }
+lestring16  = @{ "lestring16" }
+long        = @{ "long" }
+medate      = @{ "medate" }
+melong      = @{ "melong" }
+pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
+pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
+quad        = @{ "quad" }
+qwdate      = @{ "qwdate" }
+regex_mod   = @{ "c" | "s" | "l" }
+regex       =  { "regex" ~ ("/" ~ number)? ~ ("/" ~ regex_mod+)? }
+search      =  { "search" ~ ("/" ~ number)? ~ ("/" ~ string_mod+)? }
+short       = @{ "short" }
+string_mod  = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
+string      =  { "string" ~ ("/" ~ number)? ~ ("/" ~ string_mod+)? }
+u4          = @{ "u4" }
+ubelong     = @{ "ubelong" }
+ubequad     = @{ "ubequad" }
+ubeshort    = @{ "ubeshort" }
+ubyte       = @{ "ubyte" }
+uledate     = @{ "uledate" }
+ulelong     = @{ "ulelong" }
+ulequad     = @{ "ulequad" }
+uleshort    = @{ "uleshort" }
+ulong       = @{ "ulong" }
+uquad       = @{ "uquad" }
+ushort      = @{ "ushort" }
+ustring     = @{ "ustring" }
+
+// special keywords
+default = { "default" }
+clear   = { "clear" }
+
+value_read = { "x" }
+
+// tests on scalar data types
+scalar_type      = ${ bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | leqdate | leshort | long | offset | short | u4 | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | uledate }
+scalar_value     = ${ number }
+scalar_transform = ${ (op_and | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ number }
+scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and }
+scalar_test      = ${ scalar_type ~ scalar_transform{,1} ~ WHITESPACE+ ~ ((scalar_condition{,1} ~ scalar_value) | value_read) }
+
+// corresponds to `clear x` test
+clear_test = ${ clear ~ WHITESPACE+ ~ value_read }
+
+// corresponds to `default x` test
+default_test = ${ default ~ WHITESPACE+ ~ value_read }
+
+// string test
+string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
+string_test  = ${ (string | pstring | regex | search) ~ WHITESPACE+ ~ "="? ~ (value_read | string_value) }
+
+// Test value (could be a hex, string, or integer)
+// test = ${ (b16_number ~ ASCII_DIGIT* | (PUNCTUATION | ASCII_ALPHANUMERIC | ("\\x" ~ ASCII_HEX_DIGIT{2}))+) | "x" }
+
+// Parses the optional message that describes the file type
+message = @{ (!NEWLINE ~ ANY)* }
+
+depth = @{ ">"+ }
+
+// Parses comments
+// see pest doc to define COMMENT
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
+
+// Special characters
+NEWLINE = _{ "\n" | "\r\n" }
+// "\ " must not be treated as a whitespace as it is the
+// way to encode spaces into string/regex match
+WHITESPACE = _{ !("\\ ") ~ (" " | "\t") }
