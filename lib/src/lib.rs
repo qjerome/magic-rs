@@ -15,12 +15,12 @@ use std::{
     fs,
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom},
     iter::Peekable,
-    ops::{Add, BitAnd, Div, Mul, Rem, Sub},
+    ops::{Add, BitAnd, BitXor, Div, Mul, Rem, Sub},
     path::Path,
     string::FromUtf8Error,
 };
 use thiserror::Error;
-use tracing::{Level, debug, enabled, error, trace};
+use tracing::{Level, debug, enabled, error, field::debug, trace};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -180,6 +180,11 @@ impl Message {
         (rust_format, replacement_happened)
     }
 
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        assert_eq!(pair.as_rule(), Rule::message);
+        Self::from_str(pair.as_str())
+    }
+
     #[inline]
     fn from_str<S: AsRef<str>>(s: S) -> Message {
         let (s, _) = Self::convert_printf_to_rust_format(s.as_ref());
@@ -193,11 +198,18 @@ impl Message {
         }
     }
 
-    #[inline]
-    fn format_with(&self, mr: &MatchRes) -> Cow<'_, str> {
+    #[inline(always)]
+    fn format_with(&self, mr: Option<&MatchRes>) -> Cow<'_, str> {
         match self {
             Self::String(s) => Cow::Borrowed(s.as_str()),
-            Self::Format(s) => Cow::Owned(dformat!(s, mr).unwrap()),
+            // FIXME: remove unwrap
+            Self::Format(s) => {
+                if let Some(mr) = mr {
+                    Cow::Owned(dformat!(s, mr).unwrap())
+                } else {
+                    s.to_string_lossy()
+                }
+            }
         }
     }
 }
@@ -278,11 +290,15 @@ enum ScalarDataType {
     bequad,
     beshort,
     byte,
+    quad,
     lelong,
+    ledate,
     leqdate,
     leshort,
     long,
     short,
+    ushort,
+    ulong,
     ubelong,
     ubequad,
     ubeshort,
@@ -292,6 +308,9 @@ enum ScalarDataType {
     uleshort,
     uledate,
     lequad,
+    lemsdosdate,
+    lemsdostime,
+    offset,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -301,15 +320,19 @@ enum Scalar {
     // >18	default		x
     // >>18	leshort		x		*unknown arch %#x*
     read,
+    byte(i8),
+    long(i32),
+    short(i16),
+    quad(i64),
     belong(i32),
     bequad(i64),
     beshort(i16),
-    byte(i8),
+    ledate(i32),
     lelong(i32),
     leshort(i16),
     lequad(i64),
-    long(i32),
-    short(i16),
+    ushort(u16),
+    ulong(u32),
     ubelong(u32),
     ubequad(u64),
     ubeshort(u16),
@@ -319,21 +342,62 @@ enum Scalar {
     uleshort(u16),
     // FIXME: guessed
     uledate(u32),
+    offset(u64),
+    lemsdosdate(u32),
+    lemsdostime(u32),
+}
+
+impl Scalar {
+    fn is_zero(&self) -> bool {
+        match self {
+            Scalar::read => false,
+            Scalar::quad(x) => *x == 0,
+            Scalar::belong(x) => *x == 0,
+            Scalar::bequad(x) => *x == 0,
+            Scalar::beshort(x) => *x == 0,
+            Scalar::byte(x) => *x == 0,
+            Scalar::ledate(x) => *x == 0,
+            Scalar::lelong(x) => *x == 0,
+            Scalar::leshort(x) => *x == 0,
+            Scalar::lequad(x) => *x == 0,
+            Scalar::long(x) => *x == 0,
+            Scalar::short(x) => *x == 0,
+            Scalar::ushort(x) => *x == 0,
+            Scalar::ulong(x) => *x == 0,
+            Scalar::ubelong(x) => *x == 0,
+            Scalar::ubequad(x) => *x == 0,
+            Scalar::ubeshort(x) => *x == 0,
+            Scalar::ubyte(x) => *x == 0,
+            Scalar::ulelong(x) => *x == 0,
+            Scalar::ulequad(x) => *x == 0,
+            Scalar::uleshort(x) => *x == 0,
+            Scalar::uledate(x) => *x == 0,
+            Scalar::offset(x) => *x == 0,
+            Scalar::lemsdosdate(x) => *x == 0,
+            Scalar::lemsdostime(x) => *x == 0,
+        }
+    }
 }
 
 impl DynDisplay for Scalar {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
             Scalar::read => unimplemented!(),
+            Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::ledate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
+                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or("invalid timestamp".into())),
             Scalar::lelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::leshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::lequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::long(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::short(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::ushort(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::ulong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ubelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ubequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ubeshort(value) => DynDisplay::dyn_fmt(value, f),
@@ -344,6 +408,9 @@ impl DynDisplay for Scalar {
             Scalar::uledate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
                 .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or("invalid timestamp".into())),
+            Self::offset(value) => DynDisplay::dyn_fmt(value, f),
+            Self::lemsdosdate(value) => Ok(format!("mdosdate({})", value)),
+            Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
         }
     }
 }
@@ -352,15 +419,19 @@ impl fmt::Display for Scalar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Scalar::read => unimplemented!(),
+            Scalar::quad(value) => write!(f, "{}", value),
             Scalar::belong(value) => write!(f, "{}", value),
             Scalar::bequad(value) => write!(f, "{}", value),
             Scalar::beshort(value) => write!(f, "{}", value),
             Scalar::byte(value) => write!(f, "{}", value),
+            Scalar::ledate(value) => write!(f, "ledate({})", value),
             Scalar::lelong(value) => write!(f, "{}", value),
             Scalar::leshort(value) => write!(f, "{}", value),
             Scalar::lequad(value) => write!(f, "{}", value),
             Scalar::long(value) => write!(f, "{}", value),
             Scalar::short(value) => write!(f, "{}", value),
+            Scalar::ushort(value) => write!(f, "{}", value),
+            Scalar::ulong(value) => write!(f, "{}", value),
             Scalar::ubelong(value) => write!(f, "{}", value),
             Scalar::ubequad(value) => write!(f, "{}", value),
             Scalar::ubeshort(value) => write!(f, "{}", value),
@@ -368,7 +439,10 @@ impl fmt::Display for Scalar {
             Scalar::ulelong(value) => write!(f, "{}", value),
             Scalar::ulequad(value) => write!(f, "{}", value),
             Scalar::uleshort(value) => write!(f, "{}", value),
-            Scalar::uledate(value) => write!(f, "date({})", value),
+            Scalar::uledate(value) => write!(f, "uledate({})", value),
+            Scalar::offset(value) => write!(f, "{:p}", value),
+            Scalar::lemsdosdate(value) => write!(f, "lemsdosdate({})", value),
+            Scalar::lemsdostime(value) => write!(f, "lemsdostime({})", value),
         }
     }
 }
@@ -377,18 +451,21 @@ macro_rules! impl_op {
     ($trait:ident, $method:ident) => {
         impl $trait for Scalar {
             type Output = Self;
-
             fn $method(self, other: Self) -> Self {
                 match (self, other) {
+                    (Scalar::byte(a), Scalar::byte(b)) => Scalar::byte(a.$method(b)),
+                    (Scalar::long(a), Scalar::long(b)) => Scalar::long(a.$method(b)),
+                    (Scalar::short(a), Scalar::short(b)) => Scalar::short(a.$method(b)),
+                    (Scalar::quad(a), Scalar::quad(b)) => Scalar::quad(a.$method(b)),
                     (Scalar::belong(a), Scalar::belong(b)) => Scalar::belong(a.$method(b)),
                     (Scalar::bequad(a), Scalar::bequad(b)) => Scalar::bequad(a.$method(b)),
                     (Scalar::beshort(a), Scalar::beshort(b)) => Scalar::beshort(a.$method(b)),
-                    (Scalar::byte(a), Scalar::byte(b)) => Scalar::byte(a.$method(b)),
+                    (Scalar::ledate(a), Scalar::ledate(b)) => Scalar::ledate(a.$method(b)),
                     (Scalar::lelong(a), Scalar::lelong(b)) => Scalar::lelong(a.$method(b)),
                     (Scalar::leshort(a), Scalar::leshort(b)) => Scalar::leshort(a.$method(b)),
                     (Scalar::lequad(a), Scalar::lequad(b)) => Scalar::lequad(a.$method(b)),
-                    (Scalar::long(a), Scalar::long(b)) => Scalar::long(a.$method(b)),
-                    (Scalar::short(a), Scalar::short(b)) => Scalar::short(a.$method(b)),
+                    (Scalar::ushort(a), Scalar::ushort(b)) => Scalar::ushort(a.$method(b)),
+                    (Scalar::ulong(a), Scalar::ulong(b)) => Scalar::ulong(a.$method(b)),
                     (Scalar::ubelong(a), Scalar::ubelong(b)) => Scalar::ubelong(a.$method(b)),
                     (Scalar::ubequad(a), Scalar::ubequad(b)) => Scalar::ubequad(a.$method(b)),
                     (Scalar::ubeshort(a), Scalar::ubeshort(b)) => Scalar::ubeshort(a.$method(b)),
@@ -396,6 +473,14 @@ macro_rules! impl_op {
                     (Scalar::ulelong(a), Scalar::ulelong(b)) => Scalar::ulelong(a.$method(b)),
                     (Scalar::ulequad(a), Scalar::ulequad(b)) => Scalar::ulequad(a.$method(b)),
                     (Scalar::uleshort(a), Scalar::uleshort(b)) => Scalar::uleshort(a.$method(b)),
+                    (Scalar::uledate(a), Scalar::uledate(b)) => Scalar::uledate(a.$method(b)),
+                    (Scalar::offset(a), Scalar::offset(b)) => Scalar::offset(a.$method(b)),
+                    (Scalar::lemsdosdate(a), Scalar::lemsdosdate(b)) => {
+                        Scalar::lemsdosdate(a.$method(b))
+                    }
+                    (Scalar::lemsdostime(a), Scalar::lemsdostime(b)) => {
+                        Scalar::lemsdostime(a.$method(b))
+                    }
                     _ => panic!("Operation not supported between different Scalar variants"),
                 }
             }
@@ -408,6 +493,7 @@ impl_op!(Sub, sub);
 impl_op!(Mul, mul);
 impl_op!(Div, div);
 impl_op!(BitAnd, bitand);
+impl_op!(BitXor, bitxor);
 impl_op!(Rem, rem);
 
 impl ScalarDataType {
@@ -418,11 +504,15 @@ impl ScalarDataType {
             Rule::bequad => Ok(Self::bequad),
             Rule::beshort => Ok(Self::beshort),
             Rule::byte => Ok(Self::byte),
+            Rule::quad => Ok(Self::quad),
             Rule::lelong => Ok(Self::lelong),
+            Rule::ledate => Ok(Self::ledate),
             Rule::leqdate => Ok(Self::leqdate),
             Rule::leshort => Ok(Self::leshort),
             Rule::long => Ok(Self::long),
             Rule::short => Ok(Self::short),
+            Rule::ushort => Ok(Self::ushort),
+            Rule::ulong => Ok(Self::ulong),
             Rule::ubelong => Ok(Self::ubelong),
             Rule::ubequad => Ok(Self::ubequad),
             Rule::ubeshort => Ok(Self::ubeshort),
@@ -432,6 +522,9 @@ impl ScalarDataType {
             Rule::uleshort => Ok(Self::uleshort),
             Rule::lequad => Ok(Self::lequad),
             Rule::uledate => Ok(Self::uledate),
+            Rule::offset_ty => Ok(Self::offset),
+            Rule::lemsdosdate => Ok(Self::lemsdosdate),
+            Rule::lemsdostime => Ok(Self::lemsdostime),
             _ => Err(Error::parser("unimplemented data type", dt.as_span())),
         }
     }
@@ -439,15 +532,27 @@ impl ScalarDataType {
     fn scalar_from_number(&self, i: i64) -> Result<Scalar, ()> {
         match self {
             Self::byte => Ok(Scalar::byte(i as i8)),
-            Self::ubyte => Ok(Scalar::ubyte(i as u8)),
             Self::short => Ok(Scalar::short(i as i16)),
+            Self::quad => Ok(Scalar::quad(i)),
+            Self::long => Ok(Scalar::long(i as i32)),
+            Self::ledate => Ok(Scalar::ledate(i as i32)),
             Self::leshort => Ok(Scalar::leshort(i as i16)),
             Self::lelong => Ok(Scalar::lelong(i as i32)),
             Self::belong => Ok(Scalar::belong(i as i32)),
+            Self::ubyte => Ok(Scalar::ubyte(i as u8)),
+            Self::ushort => Ok(Scalar::ushort(i as u16)),
+            Self::ulong => Ok(Scalar::ulong(i as u32)),
             Self::uleshort => Ok(Scalar::uleshort(i as u16)),
             Self::ulelong => Ok(Scalar::ulelong(i as u32)),
+            Self::ulequad => Ok(Scalar::ulequad(i as u64)),
+            Self::ubeshort => Ok(Scalar::ubeshort(i as u16)),
+            Self::ubelong => Ok(Scalar::ubelong(i as u32)),
+            Self::ubequad => Ok(Scalar::ubequad(i as u64)),
             Self::bequad => Ok(Scalar::bequad(i)),
             Self::lequad => Ok(Scalar::lequad(i)),
+            Self::offset => Ok(Scalar::offset(i as u64)),
+            Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u32)),
+            Self::lemsdostime => Ok(Scalar::lemsdostime(i as u32)),
             _ => {
                 // unimplemented
                 Err(())
@@ -456,7 +561,7 @@ impl ScalarDataType {
     }
 
     #[inline(always)]
-    fn read<R: Read>(&self, from: &mut R, switch_endianness: bool) -> Result<Scalar, Error> {
+    fn read<R: Read + Seek>(&self, from: &mut R, switch_endianness: bool) -> Result<Scalar, Error> {
         macro_rules! read {
             ($ty: ty) => {{
                 let mut a = [0u8; std::mem::size_of::<$ty>()];
@@ -485,10 +590,21 @@ impl ScalarDataType {
             }};
         }
 
+        macro_rules! read_ne {
+            ($ty: ty) => {{
+                if cfg!(target_endian = "big") {
+                    read_be!($ty)
+                } else {
+                    read_le!($ty)
+                }
+            }};
+        }
+
         Ok(match self {
             // signed
             Self::byte => Scalar::byte(read!(u8)[0] as i8),
-            Self::short => Scalar::short(i16::from_ne_bytes(read!(i16))),
+            Self::short => Scalar::short(read_ne!(i16)),
+            Self::long => Scalar::long(read_ne!(i32)),
             Self::leshort => Scalar::leshort(read_le!(i16)),
             Self::lelong => Scalar::lelong(read_le!(i32)),
             Self::lequad => Scalar::lequad(read_le!(i64)),
@@ -499,12 +615,14 @@ impl ScalarDataType {
             Self::uleshort => Scalar::uleshort(read_le!(u16)),
             Self::ulelong => Scalar::ulelong(read_le!(u32)),
             Self::uledate => Scalar::uledate(read_le!(u32)),
+            Self::ulequad => Scalar::ulequad(read_le!(u64)),
+            Self::offset => Scalar::offset(from.stream_position()?),
             _ => unimplemented!("{:?}", self),
         })
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Op {
     Mul,
     Add,
@@ -521,6 +639,7 @@ enum CmpOp {
     Gt,
     BitAnd,
     Neg,
+    Xor,
 }
 
 impl CmpOp {
@@ -531,7 +650,8 @@ impl CmpOp {
             Rule::op_and => Ok(Self::BitAnd),
             Rule::op_negate => Ok(Self::Neg),
             Rule::op_eq => Ok(Self::Eq),
-            _ => Err(Error::parser("unimplemented operator", value.as_span())),
+            Rule::op_xor => Ok(Self::Xor),
+            _ => Err(Error::parser("unimplemented cmp operator", value.as_span())),
         }
     }
 }
@@ -599,8 +719,9 @@ flags! {
 struct RegexTest {
     re: bytes::Regex,
     length: Option<usize>,
+    n_pos: Option<usize>,
     mods: FlagSet<ReMod>,
-    str_mods: Option<FlagSet<StringMod>>,
+    str_mods: FlagSet<StringMod>,
 }
 
 impl From<RegexTest> for Test {
@@ -613,9 +734,10 @@ impl RegexTest {
     fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str) -> Self {
         let mut length = None;
         let mut mods = FlagSet::empty();
+        let mut str_mods = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
-                Rule::number => length = Some(parse_number(p) as usize),
+                Rule::pos_number => length = Some(parse_pos_number(p) as usize),
                 Rule::regex_mod => {
                     for m in p.as_str().chars() {
                         match m {
@@ -628,6 +750,7 @@ impl RegexTest {
                         }
                     }
                 }
+                Rule::string_mod => str_mods = StringMod::from_str(p.as_str()),
                 // this should never happen
                 _ => unimplemented!(),
             }
@@ -637,8 +760,9 @@ impl RegexTest {
             //FIXME: remove unwrap
             re: bytes::Regex::new(re).unwrap(),
             length,
+            n_pos: None,
             mods,
-            str_mods: None,
+            str_mods,
         }
     }
 }
@@ -653,6 +777,26 @@ flags! {
         ForceText,
         CompactWhitespace,
         OptBlank,
+    }
+}
+
+impl StringMod {
+    fn from_str(s: &str) -> FlagSet<StringMod> {
+        let mut mods = FlagSet::empty();
+        for m in s.chars() {
+            match m {
+                'b' => mods |= StringMod::ForceBin,
+                'C' => mods |= StringMod::UpperInsensitive,
+                'c' => mods |= StringMod::LowerInsensitive,
+                'f' => mods |= StringMod::FullWordMatch,
+                'T' => mods |= StringMod::Trim,
+                't' => mods |= StringMod::ForceText,
+                'W' => mods |= StringMod::CompactWhitespace,
+                'w' => mods |= StringMod::OptBlank,
+                _ => {}
+            }
+        }
+        mods
     }
 }
 
@@ -675,22 +819,8 @@ impl StringTest {
         let mut mods = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
-                Rule::number => length = Some(parse_number(p) as usize),
-                Rule::string_mod => {
-                    for m in p.as_str().chars() {
-                        match m {
-                            'b' => mods |= StringMod::ForceBin,
-                            'C' => mods |= StringMod::UpperInsensitive,
-                            'c' => mods |= StringMod::LowerInsensitive,
-                            'f' => mods |= StringMod::FullWordMatch,
-                            'T' => mods |= StringMod::Trim,
-                            't' => mods |= StringMod::ForceText,
-                            'W' => mods |= StringMod::CompactWhitespace,
-                            'w' => mods |= StringMod::OptBlank,
-                            _ => {}
-                        }
-                    }
-                }
+                Rule::pos_number => length = Some(parse_pos_number(p) as usize),
+                Rule::string_mod => mods = StringMod::from_str(p.as_str()),
                 // this should never happen
                 _ => unimplemented!(),
             }
@@ -720,10 +850,10 @@ impl From<SearchTest> for Test {
 impl SearchTest {
     fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str) -> Self {
         let mut length = None;
-        let mut mods = FlagSet::empty();
+        let mut mods: FlagSet<StringMod> = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
-                Rule::number => length = Some(parse_number(p) as usize),
+                Rule::pos_number => length = Some(parse_pos_number(p) as usize),
                 Rule::string_mod => {
                     for m in p.as_str().chars() {
                         match m {
@@ -758,18 +888,6 @@ struct ScalarTest {
     transform: Option<Transform>,
     cmp_op: CmpOp,
     value: Scalar,
-}
-
-#[derive(Debug, Clone)]
-enum Test {
-    Scalar(ScalarTest),
-    Read(MagicDataType),
-    String(StringTest),
-    Search(SearchTest),
-    PString(String),
-    Regex(RegexTest),
-    Clear,
-    Default,
 }
 
 // the value read from the haystack we want to
@@ -831,6 +949,19 @@ impl DynDisplay for MatchRes {
     }
 }
 
+#[derive(Debug, Clone)]
+enum Test {
+    Scalar(ScalarTest),
+    Read(MagicDataType),
+    String(StringTest),
+    Search(SearchTest),
+    PString(String),
+    Regex(RegexTest),
+    Clear,
+    Default,
+    Indirect,
+}
+
 impl Test {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let t = match pair.as_rule() {
@@ -854,7 +985,7 @@ impl Test {
                     transform = Some(Transform {
                         op,
                         num: ty
-                            .scalar_from_number(parse_number(number))
+                            .scalar_from_number(parse_pos_number(number))
                             .map_err(|_| Error::parser("unimplemented scalar", span))?,
                     });
                     next = pairs.next().expect("expect token pair");
@@ -878,7 +1009,7 @@ impl Test {
                             .next()
                             .expect("number pair expected");
 
-                        ty.scalar_from_number(parse_number(number_pair))
+                        ty.scalar_from_number(parse_number_pair(number_pair))
                             .map_err(|_| Error::parser("unimplemented scalar", ty_span))?
                     }
                     _ => unimplemented!(),
@@ -924,6 +1055,7 @@ impl Test {
             }
             Rule::clear_test => Self::Clear,
             Rule::default_test => Self::Default,
+            Rule::indirect_test => Self::Indirect,
             _ => unimplemented!(),
         };
 
@@ -1003,7 +1135,7 @@ impl Test {
                 // we handle cases where we wanna match more positions
                 if let Some(n_pos) = s.n_pos {
                     if n_pos > 1 {
-                        pattern.insert_str(0, &format!("^.{{0,{}}}?", n_pos - 1));
+                        pattern.insert_str(0, "^.*?");
                     }
                 }
 
@@ -1011,8 +1143,9 @@ impl Test {
                     // FIXME: remove unwrap
                     re: Regex::new(&pattern).unwrap(),
                     length: None,
+                    n_pos: s.n_pos,
                     mods: FlagSet::empty(),
-                    str_mods: Some(s.mods),
+                    str_mods: s.mods,
                 }
                 .into()
             }
@@ -1029,8 +1162,9 @@ impl Test {
                         re: Regex::new(&Self::string_to_re_pattern(&st.str, st.mods, true))
                             .unwrap(),
                         length: st.length,
+                        n_pos: None,
                         mods: FlagSet::empty(),
-                        str_mods: Some(st.mods),
+                        str_mods: st.mods,
                     }
                     .into()
                 } else {
@@ -1042,7 +1176,7 @@ impl Test {
     }
 
     // read the value to test from the haystack
-    fn read_test_value<R: Read>(
+    fn read_test_value<R: Read + Seek>(
         &self,
         haystack: &mut R,
         switch_endianness: bool,
@@ -1109,7 +1243,6 @@ impl Test {
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
                 }
-                _ => unimplemented!(),
             },
 
             _ => unimplemented!(),
@@ -1145,7 +1278,7 @@ impl Test {
                         return Some(MatchRes::Scalar(ts));
                     }
 
-                    let tv = t.transform.as_ref().map(|t| t.apply(ts)).unwrap_or(ts);
+                    let tv: Scalar = t.transform.as_ref().map(|t| t.apply(ts)).unwrap_or(ts);
 
                     let ok = match t.cmp_op {
                         CmpOp::Eq => tv == t.value,
@@ -1153,6 +1286,7 @@ impl Test {
                         CmpOp::Gt => tv > t.value,
                         CmpOp::Neg => tv != t.value,
                         CmpOp::BitAnd => tv & t.value == t.value,
+                        CmpOp::Xor => (tv ^ t.value).is_zero(),
                     };
 
                     if ok {
@@ -1177,6 +1311,13 @@ impl Test {
             TestValue::Bytes(buf) => {
                 if let Self::Regex(r) = self {
                     if let Some(re_match) = r.re.find(&buf) {
+                        if let Some(n_pos) = r.n_pos {
+                            // we check for positinal match inherited from search conversion
+                            if re_match.start() >= n_pos {
+                                return None;
+                            }
+                        }
+
                         return Some(MatchRes::String(
                             std::str::from_utf8(re_match.as_bytes()).unwrap().into(),
                         ));
@@ -1190,33 +1331,323 @@ impl Test {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Offset {
-    Start(i64),
-    Current(i64),
-    End(i64),
+enum OffsetType {
+    Byte,
+    DoubleLe,
+    DoubleBe,
+    ShortLe,
+    ShortBe,
+    Id3Le,
+    Id3Be,
+    LongLe,
+    LongBe,
+    Middle,
+    Octal,
+    QuadBe,
+    QuadLe,
 }
 
-impl Display for Offset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Offset::Start(i) => write!(f, "{i}"),
-            Offset::Current(c) => write!(f, "&{c}"),
-            Offset::End(e) => write!(f, "-{e}"),
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Shift {
+    Direct(u64),
+    Indirect(i64),
+}
+
+impl Shift {
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        assert_eq!(pair.as_rule(), Rule::shift);
+        let shift_variant = pair.into_inner().next().expect("shift cannot be empty");
+        match shift_variant.as_rule() {
+            Rule::ind_shift => Self::Indirect(parse_number_pair(
+                shift_variant
+                    .into_inner()
+                    .next()
+                    .expect("indirect shift must contain number"),
+            )),
+            Rule::dir_shift => Self::Direct(parse_number_pair(
+                shift_variant
+                    .into_inner()
+                    .next()
+                    .expect("direct shift must contain number"),
+            ) as u64),
+            _ => {
+                panic!("unknown shift pair")
+            }
         }
     }
 }
 
-impl Default for Offset {
-    fn default() -> Self {
-        Self::Current(0)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct IndOffset {
+    // where to find the offset
+    off_addr: DirOffset,
+    // signed or unsigned
+    signed: bool,
+    // type of the offset
+    ty: OffsetType,
+    op: Option<Op>,
+    shift: Option<Shift>,
+}
+
+impl IndOffset {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+        let mut pairs = pair.into_inner();
+
+        let offset_pair = pairs.next().expect("offset is expected");
+        let offset = DirOffset::from_pair(offset_pair);
+
+        let signed_pair = pairs.next().expect("sign must be specified");
+
+        let signed = match signed_pair.as_str() {
+            "," => true,
+            "." => false,
+            _ => return Err(Error::parser("invalid sign", signed_pair.as_span())),
+        };
+
+        let type_pair = pairs.next().expect("offset type must be specified");
+
+        let ot = match type_pair.as_str() {
+            "b" | "c" | "B" | "C" => OffsetType::Byte,
+            "e" | "f" | "g" => OffsetType::DoubleLe,
+            "E" | "F" | "G" => OffsetType::DoubleBe,
+            "h" | "s" => OffsetType::ShortLe,
+            "H" | "S" => OffsetType::ShortBe,
+            "i" => OffsetType::Id3Le,
+            "I" => OffsetType::Id3Be,
+            "l" => OffsetType::LongLe,
+            "L" => OffsetType::LongBe,
+            "m" => OffsetType::Middle,
+            "o" => OffsetType::Octal,
+            "q" => OffsetType::QuadLe,
+            "Q" => OffsetType::QuadBe,
+            _ => return Err(Error::parser("unknown offset type", type_pair.as_span())),
+        };
+
+        let mut op = None;
+        let mut shift = None;
+        if let (Some(op_pair), Some(shift_pair)) = (pairs.next(), pairs.next()) {
+            op = Some(Op::from_pair(op_pair)?);
+
+            shift = Some(Shift::from_pair(shift_pair));
+        }
+
+        Ok(Self {
+            off_addr: offset,
+            signed,
+            ty: ot,
+            op,
+            shift,
+        })
+    }
+
+    // if we overflow we must not return an offset
+    fn get_offset<R: Read + Seek>(&self, haystack: &mut R) -> Result<Option<u64>, io::Error> {
+        let _ = match self.off_addr {
+            DirOffset::Start(s) => haystack.seek(SeekFrom::Start(s as u64))?,
+            DirOffset::LastUpper(c) => {
+                // implement this stuff properly
+                if cfg!(debug_assertions) {
+                    haystack.seek(SeekFrom::Current(c))?
+                } else {
+                    unimplemented!()
+                }
+            }
+            DirOffset::End(e) => haystack.seek(SeekFrom::End(e as i64))?,
+        };
+
+        macro_rules! read_buf {
+            ($ty: ty) => {{
+                let mut a = [0u8; std::mem::size_of::<$ty>()];
+                haystack.read_exact(&mut a)?;
+                a
+            }};
+        }
+
+        macro_rules! read_le {
+            ($ty: ty ) => {{ <$ty>::from_le_bytes(read_buf!($ty)) }};
+        }
+
+        macro_rules! read_be {
+            ($ty: ty ) => {{ <$ty>::from_be_bytes(read_buf!($ty)) }};
+        }
+
+        // in theory every offset read should end up in something seekable from start, so we can use u64 to store the result
+        let mut o = match self.ty {
+            OffsetType::Byte => {
+                if self.signed {
+                    read_le!(u8) as u64
+                } else {
+                    read_le!(i8) as u64
+                }
+            }
+            OffsetType::DoubleLe => read_le!(f64) as u64,
+            OffsetType::DoubleBe => read_be!(f64) as u64,
+            OffsetType::ShortLe => {
+                if self.signed {
+                    read_le!(i16) as u64
+                } else {
+                    read_le!(u16) as u64
+                }
+            }
+            OffsetType::ShortBe => {
+                if self.signed {
+                    read_be!(i16) as u64
+                } else {
+                    read_be!(u16) as u64
+                }
+            }
+            OffsetType::Id3Le => unimplemented!(),
+            OffsetType::Id3Be => unimplemented!(),
+            OffsetType::LongLe => {
+                if self.signed {
+                    read_le!(i32) as u64
+                } else {
+                    read_le!(u32) as u64
+                }
+            }
+            OffsetType::LongBe => {
+                if self.signed {
+                    read_be!(i32) as u64
+                } else {
+                    read_be!(u32) as u64
+                }
+            }
+            OffsetType::Middle => unimplemented!(),
+            OffsetType::Octal => unimplemented!(),
+            OffsetType::QuadLe => {
+                if self.signed {
+                    read_le!(i64) as u64
+                } else {
+                    read_le!(u64)
+                }
+            }
+            OffsetType::QuadBe => {
+                if self.signed {
+                    read_be!(i64) as u64
+                } else {
+                    read_be!(u64)
+                }
+            }
+        };
+
+        trace!(
+            "computing offset base={o} op={:?} shift={:?}",
+            self.op, self.shift
+        );
+
+        // apply transformation
+        if let (Some(op), Some(shift)) = (self.op, self.shift) {
+            let shift = match shift {
+                Shift::Direct(i) => i,
+                Shift::Indirect(_) => unimplemented!(),
+            };
+
+            match op {
+                Op::Add => return Ok(o.checked_add(shift)),
+                Op::Mul => return Ok(o.checked_mul(shift)),
+                Op::Sub => return Ok(o.checked_sub(shift)),
+                Op::Div => return Ok(o.checked_div(shift)),
+                Op::Mod => return Ok(o.checked_rem(shift)),
+                Op::And => return Ok(Some(o & shift)),
+            }
+        }
+
+        Ok(Some(o))
     }
 }
 
-fn parse_number(number_pair: Pair<'_, Rule>) -> i64 {
-    let number_token = number_pair
-        .into_inner()
-        .next()
-        .expect("expect number kind pair");
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DirOffset {
+    Start(u64),
+    // relative to the last up-level field
+    LastUpper(i64),
+    End(i64),
+}
+
+impl DirOffset {
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        match pair.as_rule() {
+            Rule::abs_offset => {
+                let number_pair = pair.into_inner().next().expect("number pair expected");
+
+                let offset = parse_number_pair(number_pair);
+
+                if offset.is_negative() {
+                    DirOffset::End(offset)
+                } else {
+                    DirOffset::Start(offset as u64)
+                }
+            }
+            Rule::rel_offset => {
+                let number_pair = pair.into_inner().next().expect("number pair expected");
+
+                let offset = parse_number_pair(number_pair);
+
+                DirOffset::LastUpper(offset)
+            }
+            _ => panic!("unexpected offset pair"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Offset {
+    Direct(DirOffset),
+    Indirect(IndOffset),
+}
+
+impl Offset {
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        let mut pairs = pair.into_inner();
+        let pair = pairs.next().expect("offset must have token");
+
+        match pair.as_rule() {
+            Rule::abs_offset => {
+                let number_pair = pair.into_inner().next().expect("number pair expected");
+
+                let offset = parse_number_pair(number_pair);
+
+                if offset.is_negative() {
+                    Self::Direct(DirOffset::End(offset))
+                } else {
+                    Self::Direct(DirOffset::Start(offset as u64))
+                }
+            }
+            Rule::rel_offset => {
+                let number_pair = pair.into_inner().next().expect("number pair expected");
+
+                let offset = parse_number_pair(number_pair);
+
+                Self::Direct(DirOffset::LastUpper(offset))
+            }
+
+            // FIXME: remove unwrap, this function must return Result
+            Rule::indirect_offset => Self::Indirect(IndOffset::from_pair(pair).unwrap()),
+
+            _ => panic!("unexpected token"),
+        }
+    }
+}
+
+impl Display for DirOffset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DirOffset::Start(i) => write!(f, "{i}"),
+            DirOffset::LastUpper(c) => write!(f, "&{c}"),
+            DirOffset::End(e) => write!(f, "-{e}"),
+        }
+    }
+}
+
+impl Default for DirOffset {
+    fn default() -> Self {
+        Self::LastUpper(0)
+    }
+}
+
+#[inline]
+fn parse_pos_number(pair: Pair<'_, Rule>) -> i64 {
+    let number_token = pair.into_inner().next().expect("expect number kind pair");
     match number_token.as_rule() {
         Rule::b10_number => number_token.as_str().parse::<i64>().unwrap(),
         Rule::b16_number => {
@@ -1227,48 +1658,29 @@ fn parse_number(number_pair: Pair<'_, Rule>) -> i64 {
     }
 }
 
-impl Offset {
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
-        let mut pairs = pair.into_inner();
-        let pair = pairs.next().expect("offset must have token");
+#[inline]
+fn parse_number_pair(pair: Pair<'_, Rule>) -> i64 {
+    assert_eq!(pair.as_rule(), Rule::number);
+    let inner = pair
+        .into_inner()
+        .next()
+        .expect("positive or negative number expected");
 
-        match pair.as_rule() {
-            Rule::abs_offset => {
-                let number_pairs = pair.into_inner().next().expect("number pair expected");
-
-                match number_pairs.as_rule() {
-                    Rule::neg_number => {
-                        let number_pair = number_pairs
-                            .into_inner()
-                            .next()
-                            .expect("number pair expected");
-                        Self::End(-parse_number(number_pair))
-                    }
-                    Rule::number => Self::Start(parse_number(number_pairs)),
-                    _ => unimplemented!(),
-                }
-            }
-            Rule::rel_offset => {
-                let number_pairs = pair.into_inner().next().expect("number pair expected");
-                match number_pairs.as_rule() {
-                    Rule::neg_number => {
-                        let number_pair = number_pairs
-                            .into_inner()
-                            .next()
-                            .expect("number pair expected");
-                        Self::Current(-parse_number(number_pair))
-                    }
-                    Rule::number => Self::Current(parse_number(number_pairs)),
-                    _ => unimplemented!(),
-                }
-            }
-            _ => panic!("unexpected token"),
-        }
+    match inner.as_rule() {
+        Rule::pos_number => parse_pos_number(inner),
+        Rule::neg_number => -parse_pos_number(
+            inner
+                .into_inner()
+                .next()
+                .expect("expecting positive number"),
+        ),
+        _ => panic!("unexpected number inner pair"),
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Match {
+    line: usize,
     depth: u8,
     offset: Offset,
     test: Test,
@@ -1276,8 +1688,9 @@ pub struct Match {
 }
 
 impl Match {
-    fn from_pairs(pairs: Pairs<'_, Rule>) -> Result<Self, Error> {
-        let mut pairs = pairs;
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+        let (line, _) = pair.line_col();
+        let mut pairs = pair.into_inner();
 
         // first token might be a depth or an offset
         let token = pairs.next().expect("expecting a depth or offset");
@@ -1301,6 +1714,7 @@ impl Match {
         let message = pairs.next().map(|p| Message::from_str(p.as_str()));
 
         Ok(Self {
+            line,
             depth,
             offset,
             test,
@@ -1312,6 +1726,7 @@ impl Match {
     fn matches<'a, R: Read + Seek>(
         &'a self,
         magic: &mut Magic<'a>,
+
         state: &mut MatchState,
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
@@ -1319,20 +1734,28 @@ impl Match {
     ) -> Result<bool, Error> {
         // handle clear and default tests
         if matches!(self.test, Test::Clear) {
-            trace!("clear");
+            trace!("line={} clear", self.line);
             state.clear_continuation_level(&self.continuation_level());
             return Ok(true);
         }
 
-        // we don't continue if we already
-        if state.get_continuation_level(&self.continuation_level()) {
-            return Ok(false);
-        }
-
         if matches!(self.test, Test::Default) {
-            trace!("default");
+            // we don't continue if we already
+            if state.get_continuation_level(&self.continuation_level()) {
+                trace!("line={} skip", self.line);
+                return Ok(false);
+            }
+
+            trace!("line={} default", self.line);
+            if let Some(msg) = self.message.as_ref() {
+                magic.push_message(msg.format_with(None));
+            }
             state.set_continuation_level(self.continuation_level());
             return Ok(true);
+        }
+
+        if matches!(self.test, Test::Indirect) {
+            unimplemented!()
         }
 
         // FIXME: handle better
@@ -1340,25 +1763,41 @@ impl Match {
 
         let i = opt_start_offset
             .map(|so| match so {
-                Offset::Start(s) => s,
+                Offset::Direct(DirOffset::Start(s)) => s as i64,
                 // FIXME: this is relative to previous match so we need to carry up this information
-                Offset::Current(_) => unimplemented!(),
-                Offset::End(e) => e,
+                Offset::Direct(DirOffset::LastUpper(_)) => {
+                    if cfg!(debug_assertions) {
+                        haystack.stream_position().unwrap() as i64
+                    } else {
+                        unimplemented!()
+                    }
+                }
+                Offset::Direct(DirOffset::End(e)) => e,
+                // FIXME: do not unwrap
+                Offset::Indirect(io) => io.get_offset(haystack).unwrap().unwrap() as i64,
             })
             .unwrap_or_default();
 
         match self.offset {
-            Offset::Start(s) => haystack.seek(SeekFrom::Start((s + i) as u64))?,
+            Offset::Direct(DirOffset::Start(s)) => haystack.seek(SeekFrom::Start(s + i as u64))?,
             // FIXME: this is relative to previous match so we need to carry up this information
-            Offset::Current(c) => haystack.seek(SeekFrom::Current(c))?,
-            Offset::End(e) => haystack.seek(SeekFrom::End(e + i))?,
+            Offset::Direct(DirOffset::LastUpper(c)) => haystack.seek(SeekFrom::Current(c))?,
+            Offset::Direct(DirOffset::End(e)) => haystack.seek(SeekFrom::End(e + i))?,
+            Offset::Indirect(io) => {
+                let Some(o) = io.get_offset(haystack)? else {
+                    return Ok(false);
+                };
+
+                haystack.seek(SeekFrom::Start(o + i as u64))?
+            }
         };
 
         let mut trace_msg = None;
 
         if enabled!(Level::DEBUG) {
             trace_msg = Some(vec![format!(
-                "stream offset={} ",
+                "line={} stream_offset={} ",
+                self.line,
                 haystack.stream_position().unwrap_or_default()
             )])
         }
@@ -1389,7 +1828,7 @@ impl Match {
 
             if let Some(mr) = match_res {
                 if let Some(s) = self.message.as_ref() {
-                    magic.push_message(s.format_with(&mr))
+                    magic.push_message(s.format_with(Some(&mr)))
                 }
                 // we re-ajust the stream offset only if we have a match
                 if adjust_stream_offset {
@@ -1407,7 +1846,8 @@ impl Match {
 
     #[inline(always)]
     fn continuation_level(&self) -> ContinuationLevel {
-        ContinuationLevel(self.depth, self.offset)
+        //ContinuationLevel(self.depth, self.offset)
+        ContinuationLevel(self.depth)
     }
 }
 
@@ -1506,6 +1946,7 @@ pub enum Flag {
     Mime(String),
     Ext(HashSet<String>),
     Strength(Strength),
+    Apple(String),
 }
 
 impl Flag {
@@ -1526,6 +1967,11 @@ impl Flag {
                 assert_eq!(exts.as_rule(), Rule::exts);
                 Self::Ext(exts.as_str().split('/').map(|s| s.into()).collect())
             }
+            Rule::apple_flag => {
+                let creatype = flag.into_inner().next().expect("expecting a creatype");
+                assert_eq!(creatype.as_rule(), Rule::printable_no_ws);
+                Self::Apple(creatype.as_str().to_string())
+            }
             _ => unimplemented!(),
         }
     }
@@ -1535,6 +1981,7 @@ impl Flag {
 pub struct Name {
     offset: Offset,
     name: String,
+    message: Option<Message>,
 }
 
 #[derive(Debug, Clone)]
@@ -1548,6 +1995,8 @@ pub enum Entry {
 #[derive(Debug, Clone)]
 pub enum MatchEntry {
     Match(Match),
+    // FIXME: move Use and Name in Match structure
+    // those should be specific Test types
     Use(Use),
     Name(Name),
 }
@@ -1667,6 +2116,9 @@ impl EntryNode {
             MatchEntry::Name(n) => {
                 debug!("running dependency: {}", n.name);
                 let mut state = MatchState::default();
+                if let Some(message) = n.message.as_ref() {
+                    magic.push_message(message.format_with(None));
+                }
                 for e in self.children.iter() {
                     e.matches(
                         magic,
@@ -1689,6 +2141,9 @@ impl EntryNode {
                     if let Some(mimetype) = self.mimetype.as_ref() {
                         magic.insert_mimetype(Cow::Borrowed(mimetype));
                     }
+
+                    let end_upper_level = haystack.stream_position()?;
+
                     for e in self.children.iter() {
                         e.matches(
                             magic,
@@ -1713,8 +2168,6 @@ impl EntryNode {
 pub struct MagicRule {
     entries: EntryNode,
 }
-
-impl MagicRule {}
 
 #[derive(Debug, Clone)]
 pub struct DependencyRule {
@@ -1757,18 +2210,26 @@ impl MagicRule {
         for pair in pair.into_inner() {
             match pair.as_rule() {
                 Rule::name_entry => {
-                    let name = pair
-                        .into_inner()
-                        .find(|p| p.as_rule() == Rule::rule_name)
-                        .expect("rule must have a name");
+                    let mut pairs = pair.into_inner();
+
+                    pairs.next().expect("name entry must have offset");
+
+                    let name = pairs.next().expect("rule must have a name");
+                    assert_eq!(Rule::rule_name, name.as_rule());
+
+                    let mut message = None;
+                    if let Some(msg) = pairs.next() {
+                        message = Some(Message::from_pair(msg))
+                    }
 
                     items.push(Entry::Name(Name {
-                        offset: Offset::Start(0),
+                        offset: Offset::Direct(DirOffset::Start(0)),
                         name: name.as_str().into(),
+                        message,
                     }))
                 }
                 Rule::r#match_depth | Rule::r#match_no_depth => {
-                    items.push(Entry::Match(Match::from_pairs(pair.into_inner())?));
+                    items.push(Entry::Match(Match::from_pair(pair)?));
                 }
                 Rule::r#use => {
                     items.push(Entry::Use(Use::from_pairs(pair.into_inner())));
@@ -1812,11 +2273,13 @@ pub struct MagicFile {
     dependencies: HashMap<String, DependencyRule>,
 }
 
-#[derive(Debug, Default, Hash, PartialEq, Eq, Clone, Copy)]
-struct ContinuationLevel(u8, Offset);
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+//struct ContinuationLevel(u8, Offset);
+struct ContinuationLevel(u8);
 
 #[derive(Debug, Default)]
 struct MatchState {
+    // FIXME: this can be implemented as a bitset
     continuation_levels: HashSet<ContinuationLevel>,
 }
 

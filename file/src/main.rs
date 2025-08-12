@@ -63,6 +63,7 @@ fn main() -> Result<(), anyhow::Error> {
                         println!("{:?}", e)
                     }
                     println!()
+
                 }
 
                 for d in m.dep_rules() {
@@ -76,6 +77,7 @@ fn main() -> Result<(), anyhow::Error> {
         }
         Some(Command::Test(o)) => {
             let m = MagicFile::open(o.rule)?;
+            println!("rules loaded: {}", m.rules().len());
             for f in o.files {
                 let mut file = File::open(&f).unwrap();
                 let magic = m.magic(&mut file);
