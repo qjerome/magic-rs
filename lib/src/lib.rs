@@ -2267,7 +2267,6 @@ pub struct MagicFile {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-//struct ContinuationLevel(u8, Offset);
 struct ContinuationLevel(u8);
 
 #[derive(Debug)]
