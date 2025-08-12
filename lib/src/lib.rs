@@ -1992,35 +1992,6 @@ impl Use {
             switch_endianness: endianness_switch,
         }
     }
-
-    fn matches<'a, R: Read + Seek>(
-        &'a self,
-        magic: &mut Magic<'a>,
-        haystack: &mut R,
-        deps: &'a HashMap<String, DependencyRule>,
-    ) -> Result<(), Error> {
-        debug!(
-            "matching use {} endianness={:?}",
-            self.rule_name, self.switch_endianness
-        );
-
-        // FIXME: this sucks as we are copying a String
-        // probably a better way can be found
-        let dr: &DependencyRule = deps
-            .get(&self.rule_name)
-            .ok_or(Error::MissingRule(self.rule_name.clone()))?;
-
-        let m = dr.rule.magic(
-            magic,
-            Some(self.start_offset),
-            haystack,
-            deps,
-            false,
-            self.switch_endianness,
-        );
-
-        m
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -2277,7 +2248,7 @@ impl MagicRule {
         self.entries
             .matches(
                 magic,
-                &mut MatchState::default(),
+                &mut MatchState::empty(),
                 None,
                 opt_start_offset,
                 haystack,
@@ -2299,26 +2270,38 @@ pub struct MagicFile {
 //struct ContinuationLevel(u8, Offset);
 struct ContinuationLevel(u8);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct MatchState {
-    // FIXME: this can be implemented as a bitset
-    continuation_levels: HashSet<ContinuationLevel>,
+    continuation_levels: [bool; 256],
 }
 
 impl MatchState {
+    fn empty() -> Self {
+        MatchState {
+            continuation_levels: [false; 256],
+        }
+    }
+
     #[inline(always)]
     fn get_continuation_level(&mut self, level: &ContinuationLevel) -> bool {
-        self.continuation_levels.contains(level)
+        self.continuation_levels
+            .get(level.0 as usize)
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[inline(always)]
     fn set_continuation_level(&mut self, level: ContinuationLevel) {
-        self.continuation_levels.insert(level);
+        self.continuation_levels
+            .get_mut(level.0 as usize)
+            .map(|b| *b = true);
     }
 
     #[inline(always)]
     fn clear_continuation_level(&mut self, level: &ContinuationLevel) {
-        self.continuation_levels.remove(level);
+        self.continuation_levels
+            .get_mut(level.0 as usize)
+            .map(|b| *b = false);
     }
 }
 
