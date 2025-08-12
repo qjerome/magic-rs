@@ -17,7 +17,8 @@ test = ${ clear_test | scalar_test | default_test | string_test | indirect_test 
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
-use               = ${ depth+ ~ offset ~ WHITESPACE+ ~ "use" ~ WHITESPACE+ ~ endianness_switch? ~ rule_name }
+// use must be defined completely as it doesn't expect a message
+use = ${ depth+ ~ offset ~ WHITESPACE+ ~ "use" ~ WHITESPACE+ ~ endianness_switch? ~ rule_name }
 
 // operators
 op_add    = ${ "+" }

@@ -20,7 +20,7 @@ use std::{
     string::FromUtf8Error,
 };
 use thiserror::Error;
-use tracing::{Level, debug, enabled, error, field::debug, trace};
+use tracing::{Level, debug, enabled, error, trace};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -951,6 +951,8 @@ impl DynDisplay for MatchRes {
 
 #[derive(Debug, Clone)]
 enum Test {
+    Name(String),
+    Use(bool, String),
     Scalar(ScalarTest),
     Read(MagicDataType),
     String(StringTest),
@@ -1207,6 +1209,7 @@ impl Test {
                     .map(TestValue::String)
                     .map_err(Error::from)
             }
+
             Self::PString(s) => {
                 // FIXME: maybe we could optimize here by reading testing on size
                 let pstring_len = 1;
@@ -1218,12 +1221,14 @@ impl Test {
                     .map(TestValue::PString)
                     .map_err(Error::from)
             }
+
             Self::Regex(r) => {
                 let mut buf = vec![0u8; r.length.unwrap_or(8192)];
                 let n = haystack.read(buf.as_mut_slice())?;
                 buf.truncate(n);
                 Ok(TestValue::Bytes(buf))
             }
+
             Self::Read(t) => match t {
                 MagicDataType::String => {
                     let mut r = BufReader::new(haystack);
@@ -1441,17 +1446,16 @@ impl IndOffset {
     }
 
     // if we overflow we must not return an offset
-    fn get_offset<R: Read + Seek>(&self, haystack: &mut R) -> Result<Option<u64>, io::Error> {
+    fn get_offset<R: Read + Seek>(
+        &self,
+        haystack: &mut R,
+        last_upper_match_offset: Option<u64>,
+    ) -> Result<Option<u64>, io::Error> {
         let _ = match self.off_addr {
             DirOffset::Start(s) => haystack.seek(SeekFrom::Start(s as u64))?,
-            DirOffset::LastUpper(c) => {
-                // implement this stuff properly
-                if cfg!(debug_assertions) {
-                    haystack.seek(SeekFrom::Current(c))?
-                } else {
-                    unimplemented!()
-                }
-            }
+            DirOffset::LastUpper(c) => haystack.seek(SeekFrom::Start(
+                (last_upper_match_offset.unwrap_or_default() as i64 + c) as u64,
+            ))?,
             DirOffset::End(e) => haystack.seek(SeekFrom::End(e as i64))?,
         };
 
@@ -1596,6 +1600,18 @@ enum Offset {
     Indirect(IndOffset),
 }
 
+impl From<DirOffset> for Offset {
+    fn from(value: DirOffset) -> Self {
+        Self::Direct(value)
+    }
+}
+
+impl From<IndOffset> for Offset {
+    fn from(value: IndOffset) -> Self {
+        Self::Indirect(value)
+    }
+}
+
 impl Offset {
     fn from_pair(pair: Pair<'_, Rule>) -> Self {
         let mut pairs = pair.into_inner();
@@ -1687,6 +1703,30 @@ pub struct Match {
     message: Option<Message>,
 }
 
+impl From<Use> for Match {
+    fn from(value: Use) -> Self {
+        Self {
+            line: value.line,
+            depth: value.depth,
+            offset: value.start_offset,
+            test: Test::Use(value.switch_endianness, value.rule_name),
+            message: None,
+        }
+    }
+}
+
+impl From<Name> for Match {
+    fn from(value: Name) -> Self {
+        Self {
+            line: value.line,
+            depth: 0,
+            offset: Offset::Direct(DirOffset::Start(0)),
+            test: Test::Name(value.name),
+            message: value.message,
+        }
+    }
+}
+
 impl Match {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let (line, _) = pair.line_col();
@@ -1726,11 +1766,12 @@ impl Match {
     fn matches<'a, R: Read + Seek>(
         &'a self,
         magic: &mut Magic<'a>,
-
         state: &mut MatchState,
+        last_level_offset: Option<u64>,
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
         switch_endianness: bool,
+        deps: &'a HashMap<String, DependencyRule>,
     ) -> Result<bool, Error> {
         // handle clear and default tests
         if matches!(self.test, Test::Clear) {
@@ -1739,19 +1780,61 @@ impl Match {
             return Ok(true);
         }
 
+        if let Test::Name(name) = &self.test {
+            trace!("line={} running rule {name}", self.line);
+            return Ok(true);
+        }
+
+        if let Test::Use(switch_endianness, rule_name) = &self.test {
+            trace!(
+                "line={} use {rule_name} switch_endianness={switch_endianness}",
+                self.line
+            );
+            let dr: &DependencyRule = deps
+                .get(rule_name)
+                .ok_or(Error::MissingRule(rule_name.clone()))?;
+
+            let offset = match self.offset {
+                Offset::Direct(dir_offset) => match dir_offset {
+                    DirOffset::Start(s) => Offset::from(DirOffset::Start(s)),
+                    DirOffset::LastUpper(shift) => Offset::from(DirOffset::Start(
+                        (last_level_offset.unwrap_or_default() as i64 + shift) as u64,
+                    )),
+                    DirOffset::End(e) => Offset::from(DirOffset::End(e)),
+                },
+                Offset::Indirect(ind_offset) => {
+                    let Some(o) = ind_offset.get_offset(haystack, last_level_offset)? else {
+                        return Ok(false);
+                    };
+                    Offset::from(DirOffset::Start(o))
+                }
+            };
+
+            dr.rule.magic(
+                magic,
+                Some(offset),
+                haystack,
+                deps,
+                false,
+                *switch_endianness,
+            )?;
+
+            return Ok(false);
+        }
+
         if matches!(self.test, Test::Default) {
-            // we don't continue if we already
-            if state.get_continuation_level(&self.continuation_level()) {
-                trace!("line={} skip", self.line);
-                return Ok(false);
+            // default matches if nothing else at the continuation level matched
+            let ok = !state.get_continuation_level(&self.continuation_level());
+
+            trace!("line={} default match={ok}", self.line);
+            if ok {
+                if let Some(msg) = self.message.as_ref() {
+                    magic.push_message(msg.format_with(None));
+                }
+                state.set_continuation_level(self.continuation_level());
             }
 
-            trace!("line={} default", self.line);
-            if let Some(msg) = self.message.as_ref() {
-                magic.push_message(msg.format_with(None));
-            }
-            state.set_continuation_level(self.continuation_level());
-            return Ok(true);
+            return Ok(ok);
         }
 
         if matches!(self.test, Test::Indirect) {
@@ -1766,25 +1849,26 @@ impl Match {
                 Offset::Direct(DirOffset::Start(s)) => s as i64,
                 // FIXME: this is relative to previous match so we need to carry up this information
                 Offset::Direct(DirOffset::LastUpper(_)) => {
-                    if cfg!(debug_assertions) {
-                        haystack.stream_position().unwrap() as i64
-                    } else {
-                        unimplemented!()
-                    }
+                    // offset from last upper is resolved upstream in use test
+                    panic!("this should never happen")
                 }
                 Offset::Direct(DirOffset::End(e)) => e,
-                // FIXME: do not unwrap
-                Offset::Indirect(io) => io.get_offset(haystack).unwrap().unwrap() as i64,
+                Offset::Indirect(_) => {
+                    // indirect offset is resolved upstream when use test
+                    panic!("this should never happen")
+                }
             })
             .unwrap_or_default();
 
         match self.offset {
             Offset::Direct(DirOffset::Start(s)) => haystack.seek(SeekFrom::Start(s + i as u64))?,
             // FIXME: this is relative to previous match so we need to carry up this information
-            Offset::Direct(DirOffset::LastUpper(c)) => haystack.seek(SeekFrom::Current(c))?,
+            Offset::Direct(DirOffset::LastUpper(c)) => haystack.seek(SeekFrom::Start(
+                (i + c + last_level_offset.unwrap_or_default() as i64) as u64,
+            ))?,
             Offset::Direct(DirOffset::End(e)) => haystack.seek(SeekFrom::End(e + i))?,
             Offset::Indirect(io) => {
-                let Some(o) = io.get_offset(haystack)? else {
+                let Some(o) = io.get_offset(haystack, last_level_offset)? else {
                     return Ok(false);
                 };
 
@@ -1853,6 +1937,7 @@ impl Match {
 
 #[derive(Debug, Clone)]
 pub struct Use {
+    line: usize,
     depth: u8,
     start_offset: Offset,
     rule_name: String,
@@ -1860,8 +1945,10 @@ pub struct Use {
 }
 
 impl Use {
-    fn from_pairs(pairs: Pairs<'_, Rule>) -> Self {
-        let mut pairs = pairs;
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+        assert_eq!(pair.as_rule(), Rule::r#use);
+        let (line, _) = pair.line_col();
+        let mut pairs = pair.into_inner();
 
         // first token might be a depth or an offset
         let token = pairs.next().expect("expecting depth");
@@ -1898,6 +1985,7 @@ impl Use {
         );
 
         Self {
+            line,
             depth,
             start_offset: offset,
             rule_name: rule_name_token.as_str().to_string(),
@@ -1979,6 +2067,7 @@ impl Flag {
 
 #[derive(Debug, Clone)]
 pub struct Name {
+    line: usize,
     offset: Offset,
     name: String,
     message: Option<Message>,
@@ -1986,60 +2075,13 @@ pub struct Name {
 
 #[derive(Debug, Clone)]
 pub enum Entry {
-    Name(Name),
     Match(Match),
     Flag(Flag),
-    Use(Use),
-}
-
-#[derive(Debug, Clone)]
-pub enum MatchEntry {
-    Match(Match),
-    // FIXME: move Use and Name in Match structure
-    // those should be specific Test types
-    Use(Use),
-    Name(Name),
-}
-
-impl From<Match> for MatchEntry {
-    fn from(value: Match) -> Self {
-        Self::Match(value)
-    }
-}
-
-impl From<Use> for MatchEntry {
-    fn from(value: Use) -> Self {
-        Self::Use(value)
-    }
-}
-
-impl From<Name> for MatchEntry {
-    fn from(value: Name) -> Self {
-        Self::Name(value)
-    }
-}
-
-impl MatchEntry {
-    fn depth(&self) -> u8 {
-        match self {
-            MatchEntry::Match(m) => m.depth,
-            MatchEntry::Use(u) => u.depth,
-            MatchEntry::Name(_) => 0,
-        }
-    }
-
-    fn offset(&self) -> Offset {
-        match self {
-            MatchEntry::Match(m) => m.offset,
-            MatchEntry::Use(u) => u.start_offset,
-            MatchEntry::Name(n) => n.offset,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct EntryNode {
-    entry: MatchEntry,
+    entry: Match,
     children: Vec<EntryNode>,
     mimetype: Option<String>,
 }
@@ -2051,9 +2093,8 @@ impl EntryNode {
 
     fn from_peekable(entries: &mut Peekable<impl Iterator<Item = Entry>>) -> Self {
         let root = match entries.next().unwrap() {
-            Entry::Match(m) => MatchEntry::from(m),
-            Entry::Use(u) => MatchEntry::from(u),
-            Entry::Name(n) => MatchEntry::from(n),
+            Entry::Match(m) => m,
+
             // FIXME: rm dumb panic msg
             Entry::Flag(_) => panic!("should never happen"),
         };
@@ -2064,21 +2105,14 @@ impl EntryNode {
         while let Some(e) = entries.peek() {
             match e {
                 Entry::Match(m) => {
-                    if m.depth <= root.depth() {
+                    if m.depth <= root.depth {
                         break;
                     }
-                    if m.depth == root.depth() + 1 {
+                    if m.depth == root.depth + 1 {
                         children.push(EntryNode::from_peekable(entries))
                     }
                 }
-                Entry::Use(u) => {
-                    if u.depth <= root.depth() {
-                        break;
-                    }
-                    if u.depth == root.depth() + 1 {
-                        children.push(EntryNode::from_peekable(entries))
-                    }
-                }
+
                 Entry::Flag(_) => {
                     // it cannot be otherwise
                     if let Some(Entry::Flag(f)) = entries.next() {
@@ -2090,8 +2124,6 @@ impl EntryNode {
                         }
                     }
                 }
-                // FIXME: rm dumb panic msg
-                Entry::Name(_) => panic!("should never happen"),
             }
         }
 
@@ -2106,61 +2138,45 @@ impl EntryNode {
         &'r self,
         magic: &mut Magic<'r>,
         state: &mut MatchState,
+        last_level_offset: Option<u64>,
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
         deps: &'r HashMap<String, DependencyRule>,
         abort_first_no_match: bool,
         switch_endianness: bool,
     ) -> Result<(), Error> {
-        match &self.entry {
-            MatchEntry::Name(n) => {
-                debug!("running dependency: {}", n.name);
-                let mut state = MatchState::default();
-                if let Some(message) = n.message.as_ref() {
-                    magic.push_message(message.format_with(None));
-                }
-                for e in self.children.iter() {
-                    e.matches(
-                        magic,
-                        &mut state,
-                        opt_start_offset,
-                        haystack,
-                        deps,
-                        abort_first_no_match,
-                        switch_endianness,
-                    )?
-                }
+        let ok = self.entry.matches(
+            magic,
+            state,
+            last_level_offset,
+            opt_start_offset,
+            haystack,
+            switch_endianness,
+            deps,
+        )?;
 
-                Ok(())
+        if ok {
+            if let Some(mimetype) = self.mimetype.as_ref() {
+                magic.insert_mimetype(Cow::Borrowed(mimetype));
             }
 
-            MatchEntry::Match(m) => {
-                let ok = m.matches(magic, state, opt_start_offset, haystack, switch_endianness)?;
+            let end_upper_level = haystack.stream_position()?;
 
-                if ok {
-                    if let Some(mimetype) = self.mimetype.as_ref() {
-                        magic.insert_mimetype(Cow::Borrowed(mimetype));
-                    }
-
-                    let end_upper_level = haystack.stream_position()?;
-
-                    for e in self.children.iter() {
-                        e.matches(
-                            magic,
-                            state,
-                            opt_start_offset,
-                            haystack,
-                            deps,
-                            abort_first_no_match,
-                            switch_endianness,
-                        )?
-                    }
-                }
-
-                Ok(())
+            for e in self.children.iter() {
+                e.matches(
+                    magic,
+                    state,
+                    Some(end_upper_level),
+                    opt_start_offset,
+                    haystack,
+                    deps,
+                    abort_first_no_match,
+                    switch_endianness,
+                )?
             }
-            MatchEntry::Use(u) => u.matches(magic, haystack, deps),
         }
+
+        Ok(())
     }
 }
 
@@ -2210,6 +2226,7 @@ impl MagicRule {
         for pair in pair.into_inner() {
             match pair.as_rule() {
                 Rule::name_entry => {
+                    let (line, _) = pair.line_col();
                     let mut pairs = pair.into_inner();
 
                     pairs.next().expect("name entry must have offset");
@@ -2222,17 +2239,21 @@ impl MagicRule {
                         message = Some(Message::from_pair(msg))
                     }
 
-                    items.push(Entry::Name(Name {
-                        offset: Offset::Direct(DirOffset::Start(0)),
-                        name: name.as_str().into(),
-                        message,
-                    }))
+                    items.push(Entry::Match(
+                        Name {
+                            line,
+                            offset: Offset::Direct(DirOffset::Start(0)),
+                            name: name.as_str().into(),
+                            message,
+                        }
+                        .into(),
+                    ))
                 }
                 Rule::r#match_depth | Rule::r#match_no_depth => {
                     items.push(Entry::Match(Match::from_pair(pair)?));
                 }
                 Rule::r#use => {
-                    items.push(Entry::Use(Use::from_pairs(pair.into_inner())));
+                    items.push(Entry::Match(Use::from_pair(pair).into()));
                 }
                 Rule::flag => items.push(Entry::Flag(Flag::from_pairs(pair.into_inner()))),
                 _ => panic!("unexpected parsing rule"),
@@ -2257,6 +2278,7 @@ impl MagicRule {
             .matches(
                 magic,
                 &mut MatchState::default(),
+                None,
                 opt_start_offset,
                 haystack,
                 deps,
