@@ -22,6 +22,8 @@ use std::{
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
 
+mod utils;
+
 const MAX_RECURSION: usize = 128;
 
 #[derive(Parser)]
