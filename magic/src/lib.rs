@@ -10,6 +10,7 @@ use pest_derive::Parser;
 use regex::bytes::{self, Regex};
 use std::{
     borrow::Cow,
+    cmp::max,
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
     fs,
@@ -21,6 +22,8 @@ use std::{
 };
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
+
+use crate::utils::nonmagic;
 
 mod utils;
 
@@ -325,6 +328,7 @@ enum Scalar {
     // value read such as
     // >18	default		x
     // >>18	leshort		x		*unknown arch %#x*
+    // FIXME: consider implementing this as a match any operator as in libmagic
     read,
     byte(i8),
     long(i32),
@@ -349,8 +353,8 @@ enum Scalar {
     // FIXME: guessed
     uledate(u32),
     offset(u64),
-    lemsdosdate(u32),
-    lemsdostime(u32),
+    lemsdosdate(u16),
+    lemsdostime(u16),
 }
 
 impl Scalar {
@@ -557,12 +561,42 @@ impl ScalarDataType {
             Self::bequad => Ok(Scalar::bequad(i)),
             Self::lequad => Ok(Scalar::lequad(i)),
             Self::offset => Ok(Scalar::offset(i as u64)),
-            Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u32)),
-            Self::lemsdostime => Ok(Scalar::lemsdostime(i as u32)),
+            Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u16)),
+            Self::lemsdostime => Ok(Scalar::lemsdostime(i as u16)),
             _ => {
                 // unimplemented
                 Err(())
             }
+        }
+    }
+
+    const fn type_size(&self) -> usize {
+        match self {
+            Self::belong => 4,
+            Self::bequad => 8,
+            Self::beshort => 2,
+            Self::byte => 1,
+            Self::quad => 4,
+            Self::lelong => 4,
+            Self::ledate => 4,
+            Self::leqdate => 8,
+            Self::leshort => 2,
+            Self::long => 4,
+            Self::short => 2,
+            Self::ushort => 2,
+            Self::ulong => 2,
+            Self::ubelong => 2,
+            Self::ubequad => 8,
+            Self::ubeshort => 2,
+            Self::ubyte => 1,
+            Self::ulelong => 4,
+            Self::ulequad => 8,
+            Self::uleshort => 2,
+            Self::uledate => 4,
+            Self::lequad => 8,
+            Self::lemsdosdate => 2,
+            Self::lemsdostime => 2,
+            Self::offset => 4,
         }
     }
 
@@ -640,7 +674,20 @@ enum Op {
     And,
 }
 
-#[derive(Debug, Clone)]
+impl Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Op::Mul => write!(f, "*"),
+            Op::Add => write!(f, "+"),
+            Op::Sub => write!(f, "-"),
+            Op::Div => write!(f, "/"),
+            Op::Mod => write!(f, "%"),
+            Op::And => write!(f, "&"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 enum CmpOp {
     Eq,
     Lt,
@@ -811,6 +858,7 @@ impl StringMod {
     }
 }
 
+// FIXME: implement string operators
 #[derive(Debug, Clone)]
 struct StringTest {
     str: String,
@@ -965,6 +1013,7 @@ enum Test {
     Name(String),
     Use(bool, String),
     Scalar(ScalarTest),
+    // FIXME: consider implementing this as a match any operator as in libmagic
     Read(MagicDataType),
     String(StringTest),
     Search(SearchTest),
@@ -973,6 +1022,9 @@ enum Test {
     Clear,
     Default,
     Indirect,
+    // FIXME: placeholders for strength computation
+    LeString16,
+    Der,
 }
 
 impl Test {
@@ -1344,6 +1396,14 @@ impl Test {
         }
 
         None
+    }
+
+    //FIXME: complete with all possible operators
+    fn cmp_op(&self) -> Option<CmpOp> {
+        match self {
+            Self::Scalar(s) => Some(s.cmp_op),
+            _ => None,
+        }
     }
 }
 
@@ -1763,7 +1823,17 @@ impl Match {
         assert_eq!(test_pair.as_rule(), Rule::test, "wrong token");
         let test = Test::from_pair(test_pair.into_inner().next().unwrap())?;
 
-        let message = pairs.next().map(|p| Message::from_str(p.as_str()));
+        // parsing the message
+        let message = match pairs.next() {
+            Some(msg_pair) => {
+                if !msg_pair.as_str().is_empty() {
+                    Some(Message::from_pair(msg_pair))
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
 
         Ok(Self {
             line,
@@ -1928,11 +1998,15 @@ impl Match {
             });
 
             // trace message
-            trace_msg.map(|m| trace!("{}", m.join(" ")));
+            if enabled!(Level::DEBUG) && !enabled!(Level::TRACE) && match_res.is_some() {
+                trace_msg.map(|m| debug!("{}", m.join(" ")));
+            } else if enabled!(Level::TRACE) {
+                trace_msg.map(|m| trace!("{}", m.join(" ")));
+            }
 
             if let Some(mr) = match_res {
                 if let Some(s) = self.message.as_ref() {
-                    magic.push_message(s.format_with(Some(&mr)))
+                    magic.push_message(s.format_with(Some(&mr)));
                 }
                 // we re-ajust the stream offset only if we have a match
                 if adjust_stream_offset {
@@ -1952,6 +2026,50 @@ impl Match {
     fn continuation_level(&self) -> ContinuationLevel {
         //ContinuationLevel(self.depth, self.offset)
         ContinuationLevel(self.depth)
+    }
+
+    #[inline(always)]
+    fn strength(&self) -> u64 {
+        const MULT: usize = 10;
+
+        let mut out = 2 * MULT;
+
+        // NB: octal is missing but it is not used in practice ...
+        match &self.test {
+            Test::Default => return 0,
+            Test::Scalar(s) => match s.ty {
+                ScalarDataType::lemsdostime => {
+                    out += ScalarDataType::lemsdostime.type_size() * MULT;
+                }
+
+                _ => {}
+            },
+            Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
+
+            Test::Regex(r) => {
+                let v = nonmagic(r.re.as_str());
+                out += v * max(MULT / v, 1);
+            }
+
+            Test::LeString16 | Test::Der => {
+                unimplemented!()
+            }
+
+            Test::Read(_) => out = 0,
+
+            _ => {}
+        }
+
+        if let Some(op) = self.test.cmp_op() {
+            match op {
+                CmpOp::Neg => out = 0,
+                CmpOp::Eq => out += MULT,
+                CmpOp::Lt | CmpOp::Gt => out -= 2 * MULT,
+                CmpOp::Xor | CmpOp::BitAnd => out -= MULT,
+            }
+        }
+
+        out as u64
     }
 }
 
@@ -2015,41 +2133,81 @@ impl Use {
 }
 
 #[derive(Debug, Clone)]
-struct Strength {
+struct StrengthMod {
     op: Op,
     by: u8,
 }
 
+impl StrengthMod {
+    fn apply(&self, strength: u64) -> u64 {
+        let by = self.by as u64;
+        debug!("applying strength modifier: {strength} {} {}", self.op, by);
+        match self.op {
+            Op::Mul => strength.saturating_mul(by),
+            Op::Add => strength.saturating_add(by),
+            Op::Sub => strength.saturating_sub(by),
+            Op::Div => {
+                if by > 0 {
+                    strength.saturating_div(by)
+                } else {
+                    strength
+                }
+            }
+            Op::Mod => strength % by,
+            Op::And => strength & by,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub enum Flag {
+enum Flag {
     Mime(String),
     Ext(HashSet<String>),
-    Strength(Strength),
+    Strength(StrengthMod),
     Apple(String),
 }
 
 impl Flag {
-    fn from_pairs(mut pairs: Pairs<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+        assert_eq!(pair.as_rule(), Rule::flag);
+        let mut pairs = pair.into_inner();
         let flag = pairs.next().expect("expecting a valid flag");
 
         match flag.as_rule() {
-            Rule::mime_flag => Self::Mime(
+            Rule::mime_flag => Ok(Self::Mime(
                 flag.into_inner()
                     .next()
                     .expect("expecting mime type")
                     .as_str()
                     .into(),
-            ),
-            Rule::strength_flag => Self::Strength(Strength { op: Op::Add, by: 0 }),
+            )),
+            Rule::strength_flag => {
+                let mut pairs = flag.into_inner();
+                // parsing operator
+                let op_pair = pairs.next().expect("strength entry must have operator");
+                let op = Op::from_pair(op_pair)?;
+
+                // parsing value
+                let number_pair = pairs.next().expect("strength entry must have a value");
+
+                let span = number_pair.as_span();
+                let by: u8 = parse_pos_number(number_pair)
+                    .try_into()
+                    .map_err(|_| Error::parser("value must be u8", span))?;
+
+                Ok(Self::Strength(StrengthMod { op, by }))
+            }
             Rule::ext_flag => {
                 let exts = flag.into_inner().next().expect("expecting extension list");
                 assert_eq!(exts.as_rule(), Rule::exts);
-                Self::Ext(exts.as_str().split('/').map(|s| s.into()).collect())
+                Ok(Self::Ext(
+                    exts.as_str().split('/').map(|s| s.into()).collect(),
+                ))
             }
             Rule::apple_flag => {
                 let creatype = flag.into_inner().next().expect("expecting a creatype");
                 assert_eq!(creatype.as_rule(), Rule::printable_no_ws);
-                Self::Apple(creatype.as_str().to_string())
+                Ok(Self::Apple(creatype.as_str().to_string()))
             }
             _ => unimplemented!(),
         }
@@ -2075,6 +2233,7 @@ pub struct EntryNode {
     entry: Match,
     children: Vec<EntryNode>,
     mimetype: Option<String>,
+    strength_mod: Option<StrengthMod>,
 }
 
 impl EntryNode {
@@ -2092,6 +2251,7 @@ impl EntryNode {
 
         let mut children = vec![];
         let mut mimetype = None;
+        let mut strength_mod = None;
 
         while let Some(e) = entries.peek() {
             match e {
@@ -2109,6 +2269,8 @@ impl EntryNode {
                     if let Some(Entry::Flag(f)) = entries.next() {
                         match f {
                             Flag::Mime(m) => mimetype = Some(m),
+
+                            Flag::Strength(s) => strength_mod = Some(s),
                             _ => {
                                 // FIXME: implement other flags
                             }
@@ -2122,6 +2284,7 @@ impl EntryNode {
             entry: root,
             children,
             mimetype,
+            strength_mod,
         }
     }
 
@@ -2151,6 +2314,13 @@ impl EntryNode {
             if let Some(mimetype) = self.mimetype.as_ref() {
                 magic.insert_mimetype(Cow::Borrowed(mimetype));
             }
+
+            let strength = match self.strength_mod.as_ref() {
+                Some(sm) => sm.apply(self.entry.strength()),
+                None => self.entry.strength(),
+            };
+
+            magic.update_strength(strength);
 
             let end_upper_level = haystack.stream_position()?;
 
@@ -2247,7 +2417,7 @@ impl MagicRule {
                 Rule::r#use => {
                     items.push(Entry::Match(Use::from_pair(pair).into()));
                 }
-                Rule::flag => items.push(Entry::Flag(Flag::from_pairs(pair.into_inner()))),
+                Rule::flag => items.push(Entry::Flag(Flag::from_pair(pair)?)),
                 Rule::EOI => {}
                 _ => panic!("unexpected parsing rule"),
             }
@@ -2352,12 +2522,22 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
+    pub fn update_strength(&mut self, value: u64) {
+        match self.strength.as_mut() {
+            Some(s) => *s = (*s).saturating_add(value),
+            None => self.strength = Some(value),
+        }
+        debug!("updated strength = {:?}", self.strength)
+    }
+
+    #[inline(always)]
     pub fn mimetype(&self) -> &str {
         self.mime.as_deref().unwrap_or("application/octet-stream")
     }
 
     #[inline(always)]
     fn push_message<'a: 'm>(&mut self, msg: Cow<'a, str>) {
+        debug!("pushing message: msg={msg} len={}", msg.len());
         self.message.push(msg);
     }
 
@@ -2402,9 +2582,8 @@ impl MagicDb {
             let mut magic = Magic::default();
             r.magic(&mut magic, None, &mut br, &self, false, 0)?;
 
-            // FIXME: when strength is implement this must be replaced by
-            //if let Some(strength) = magic.strength {
-            if !magic.is_empty() {
+            // it is possible we have a strength with no message
+            if !magic.message.is_empty() {
                 out.push((magic.strength.unwrap_or_default(), magic));
             }
         }

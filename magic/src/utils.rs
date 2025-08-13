@@ -1,22 +1,72 @@
-use std::time;
 
 use chrono::{NaiveDate, NaiveTime};
 
 /// Parses a u16 FAT/DOS date into a `NaiveDate`.
 // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-dosdatetimetofiletime?redirectedfrom=MSDN
-pub fn parse_fat_date(fat_date: u16) -> Option<NaiveDate> {
+pub(crate) fn parse_fat_date(fat_date: u16) -> Option<NaiveDate> {
     let day = (fat_date & 0x1f) as u32; // Bits 0-4
     let month = ((fat_date >> 5) & 0xf) as u32; // Bits 5-8
     let year = (fat_date >> 9) as i32 + 1980; // Bits 9-15 + 1980
     NaiveDate::from_ymd_opt(year, month, day)
 }
 
-pub fn parse_fat_time(fat_time: u16) -> Option<NaiveTime> {
+pub(crate) fn parse_fat_time(fat_time: u16) -> Option<NaiveTime> {
     // time is encoded in 2 sec
     let sec = (fat_time & 0x1f) * 2;
     let min = (fat_time >> 5) & 0b111111;
     let hour = (fat_time >> 11) & 0b11111;
     NaiveTime::from_hms_opt(hour as u32, min as u32, sec as u32)
+}
+
+// test this properly
+pub(crate) fn nonmagic(str: &str) -> usize {
+    let mut rv = 0;
+    let mut chars = str.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // Escaped anything counts 1
+                if chars.peek().is_none() {
+                    rv += 1; // Handle trailing backslash
+                } else {
+                    chars.next(); // Skip the escaped character
+                    rv += 1;
+                }
+            }
+            '?' | '*' | '.' | '+' | '^' | '$' => {
+                // Magic characters count 0
+                continue;
+            }
+            '[' => {
+                // Bracketed expressions count 1
+                rv += 1;
+                // Skip until closing ']' or end of string
+                while let Some(&ch) = chars.peek() {
+                    chars.next();
+                    if ch == ']' {
+                        break;
+                    }
+                }
+            }
+            '{' => {
+                // Braced expressions count 0
+                // Skip until closing '}' or end of string
+                while let Some(&ch) = chars.peek() {
+                    chars.next();
+                    if ch == '}' {
+                        break;
+                    }
+                }
+            }
+            _ => {
+                // Anything else counts 1
+                rv += 1;
+            }
+        }
+    }
+
+    if rv == 0 { 1 } else { rv }
 }
 
 #[cfg(test)]

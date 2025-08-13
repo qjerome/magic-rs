@@ -90,11 +90,9 @@ fn main() -> Result<(), anyhow::Error> {
                 let mut file = File::open(&f).unwrap();
                 let magics = db.magic(&mut file)?;
 
-                if let Some((_, magic)) =
-                    magics.iter().find(|(_, magic)| !magic.message().is_empty())
-                {
+                for (strength, magic) in magics {
                     println!(
-                        "file:{} mime:{} magic:{}",
+                        "file:{} strength:{strength} mime:{} magic:{}",
                         f.to_string_lossy(),
                         magic.mimetype(),
                         magic.message()
