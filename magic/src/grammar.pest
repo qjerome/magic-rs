@@ -65,7 +65,7 @@ indirect_offset = ${ "&"? ~ "(" ~ (abs_offset | rel_offset) ~ ind_offset_sign ~ 
 
 offset = ${ rel_offset | abs_offset | indirect_offset }
 
-// all data types
+/// All test types
 bedate      = @{ "bedate" }
 bedouble    = @{ "bedouble" }
 befloat     = @{ "befloat" }
@@ -74,7 +74,6 @@ belong      = @{ "belong" }
 beqdate     = @{ "beqdate" }
 bequad      = @{ "bequad" }
 beshort     = @{ "beshort" }
-bestring16  = @{ "bestring16" }
 byte        = @{ "byte" }
 der         = @{ "der" }
 guid        = @{ "guid" }
@@ -95,16 +94,9 @@ lestring16  = @{ "lestring16" }
 long        = @{ "long" }
 medate      = @{ "medate" }
 melong      = @{ "melong" }
-pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
-pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
 quad        = @{ "quad" }
 qwdate      = @{ "qwdate" }
-regex_mod   = @{ "c" | "s" | "l" }
-regex       =  { "regex" ~ ("/" ~ pos_number)? ~ ("/" ~ (regex_mod | string_mod)+)? }
-search      =  { "search" ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
 short       = @{ "short" }
-string_mod  = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
-string      =  { "string" ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
 u4          = @{ "u4" }
 ubelong     = @{ "ubelong" }
 ubequad     = @{ "ubequad" }
@@ -117,14 +109,23 @@ uleshort    = @{ "uleshort" }
 ulong       = @{ "ulong" }
 uquad       = @{ "uquad" }
 ushort      = @{ "ushort" }
-ustring     = @{ "ustring" }
 
-// special keywords
-default = { "default" }
-clear   = { "clear" }
-// current stream position
-offset_ty = { "offset" }
+/// string related test types
+string_mod  = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
+string      =  { "string" ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
+pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
+pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
+search      =  { "search" ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
+regex_mod   = @{ "c" | "s" | "l" }
+regex       =  { "regex" ~ ("/" ~ pos_number)? ~ ("/" ~ (regex_mod | string_mod)+)? }
+ustring     = @{ "ustring" }
+bestring16  = @{ "bestring16" }
+
+/// special tests types
+default   = { "default" }
+clear     = { "clear" }
 indirect  = { "indirect" }
+offset_ty = { "offset" }
 
 value_read = { "x" }
 
