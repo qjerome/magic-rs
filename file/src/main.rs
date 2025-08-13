@@ -1,7 +1,8 @@
 use std::{fs::File, path::PathBuf};
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
-use magic_rs::MagicFile;
+use magic_rs::{MagicDb, MagicFile};
+use tracing::{debug, info};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -23,7 +24,8 @@ struct ParseOpt {
 
 #[derive(Debug, Parser)]
 struct TestOpt {
-    rule: PathBuf,
+    #[arg(short, long)]
+    rules: Vec<PathBuf>,
     files: Vec<PathBuf>,
 }
 
@@ -76,17 +78,28 @@ fn main() -> Result<(), anyhow::Error> {
             }
         }
         Some(Command::Test(o)) => {
-            let m = MagicFile::open(o.rule)?;
-            println!("rules loaded: {}", m.rules().len());
+            let mut db = MagicDb::new();
+
+            for rule in o.rules {
+                info!("loading magic rule: {}", rule.to_string_lossy());
+
+                db.load(MagicFile::open(rule)?)?;
+            }
+
             for f in o.files {
                 let mut file = File::open(&f).unwrap();
-                let magic = m.magic(&mut file);
-                println!(
-                    "file:{} mime:{} magic:{}",
-                    f.to_string_lossy(),
-                    magic.mimetype(),
-                    magic.message()
-                )
+                let magics = db.magic(&mut file)?;
+
+                if let Some((_, magic)) =
+                    magics.iter().find(|(_, magic)| !magic.message().is_empty())
+                {
+                    println!(
+                        "file:{} mime:{} magic:{}",
+                        f.to_string_lossy(),
+                        magic.mimetype(),
+                        magic.message()
+                    )
+                }
             }
         }
         None => {}

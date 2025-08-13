@@ -612,11 +612,13 @@ impl ScalarDataType {
             Self::belong => Scalar::belong(read_be!(i32)),
             // unsigned
             Self::ubyte => Scalar::ubyte(read!(u8)[0]),
+            Self::ushort => Scalar::ushort(read_ne!(u16)),
             Self::uleshort => Scalar::uleshort(read_le!(u16)),
             Self::ulelong => Scalar::ulelong(read_le!(u32)),
             Self::uledate => Scalar::uledate(read_le!(u32)),
             Self::ulequad => Scalar::ulequad(read_le!(u64)),
             Self::offset => Scalar::offset(from.stream_position()?),
+            Self::ubequad => Scalar::ubequad(read_be!(u64)),
             _ => unimplemented!("{:?}", self),
         })
     }
@@ -2308,7 +2310,7 @@ impl MatchState {
 pub struct Magic<'m> {
     message: Vec<Cow<'m, str>>,
     mime: Option<Cow<'m, str>>,
-    strength: u64,
+    strength: Option<u64>,
 }
 
 impl<'m> Magic<'m> {
@@ -2344,8 +2346,8 @@ impl<'m> Magic<'m> {
         self.mime = Some(mime)
     }
 
-    fn is_empty(&self) -> bool {
-        self.message.is_empty() && self.mime.is_none()
+    pub fn is_empty(&self) -> bool {
+        self.message.is_empty() && self.mime.is_none() && self.strength.is_none()
     }
 }
 
@@ -2354,7 +2356,7 @@ impl MagicFile {
         FileMagicParser::parse_file(p)
     }
 
-    pub fn magic<R: Read + Seek>(&self, haystack: &mut R) -> Magic<'_> {
+    fn magic<R: Read + Seek>(&self, haystack: &mut R) -> Magic<'_> {
         // using a BufReader to gain speed
         let mut br = io::BufReader::new(haystack);
         for r in self.rules.iter() {
@@ -2369,13 +2371,41 @@ impl MagicFile {
 
         Magic::default()
     }
+}
 
-    pub fn rules(&self) -> &[MagicRule] {
-        &self.rules
+#[derive(Debug, Default)]
+pub struct MagicDb {
+    rules: Vec<MagicRule>,
+    dependencies: HashMap<String, DependencyRule>,
+}
+
+impl MagicDb {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn dep_rules(&self) -> impl Iterator<Item = &DependencyRule> {
-        self.dependencies.values().map(|v| v)
+    pub fn load(&mut self, mf: MagicFile) -> Result<&mut Self, Error> {
+        self.rules.extend(mf.rules);
+        self.dependencies.extend(mf.dependencies);
+        Ok(self)
+    }
+
+    pub fn magic<R: Read + Seek>(&self, haystack: &mut R) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+        let mut out = Vec::new();
+        // using a BufReader to gain speed
+        let mut br = io::BufReader::new(haystack);
+        for r in self.rules.iter() {
+            let mut magic = Magic::default();
+            r.magic(&mut magic, None, &mut br, &self.dependencies, true, false)?;
+
+            // FIXME: when strength is implement this must be replaced by
+            //if let Some(strength) = magic.strength {
+            if !magic.is_empty() {
+                out.push((magic.strength.unwrap_or_default(), magic));
+            }
+        }
+
+        Ok(out)
     }
 }
 

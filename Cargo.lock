@@ -231,6 +231,7 @@ dependencies = [
  "anyhow",
  "clap",
  "magic-rs",
+ "tracing",
  "tracing-subscriber",
 ]
 
