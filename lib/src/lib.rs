@@ -22,6 +22,8 @@ use std::{
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
 
+const MAX_RECURSION: usize = 128;
+
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
 struct FileMagicParser;
@@ -226,6 +228,8 @@ pub enum Error {
     Parse(#[from] Box<pest::error::Error<Rule>>),
     #[error("from-utf8: {0}")]
     FromUtf8(#[from] FromUtf8Error),
+    #[error("maximum recursion reached: {0}")]
+    MaximumRecursion(usize),
 }
 
 impl Error {
@@ -687,7 +691,6 @@ impl Transform {
             Op::Div => s.div(self.num),
             Op::Mod => s.rem(self.num),
             Op::And => s.bitand(self.num),
-            _ => panic!("unknown transform"),
         }
     }
 }
@@ -733,7 +736,7 @@ impl From<RegexTest> for Test {
 }
 
 impl RegexTest {
-    fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str) -> Self {
+    fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
         let mut str_mods = FlagSet::empty();
@@ -752,20 +755,20 @@ impl RegexTest {
                         }
                     }
                 }
-                Rule::string_mod => str_mods = StringMod::from_str(p.as_str()),
+                Rule::string_mod => str_mods |= StringMod::from_pair(p)?,
                 // this should never happen
                 _ => unimplemented!(),
             }
         }
 
-        Self {
+        Ok(Self {
             //FIXME: remove unwrap
             re: bytes::Regex::new(re).unwrap(),
             length,
             n_pos: None,
             mods,
             str_mods,
-        }
+        })
     }
 }
 
@@ -783,22 +786,26 @@ flags! {
 }
 
 impl StringMod {
-    fn from_str(s: &str) -> FlagSet<StringMod> {
-        let mut mods = FlagSet::empty();
-        for m in s.chars() {
-            match m {
-                'b' => mods |= StringMod::ForceBin,
-                'C' => mods |= StringMod::UpperInsensitive,
-                'c' => mods |= StringMod::LowerInsensitive,
-                'f' => mods |= StringMod::FullWordMatch,
-                'T' => mods |= StringMod::Trim,
-                't' => mods |= StringMod::ForceText,
-                'W' => mods |= StringMod::CompactWhitespace,
-                'w' => mods |= StringMod::OptBlank,
-                _ => {}
-            }
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<StringMod, Error> {
+        if !matches!(pair.as_rule(), Rule::string_mod) {
+            return Err(Error::parser("unknown string mod", pair.as_span()));
         }
-        mods
+
+        // this shouldn't panic as our parser guarantee there
+        // is one element in the pair
+        let c = pair.as_str().chars().next().unwrap();
+
+        match c {
+            'b' => Ok(StringMod::ForceBin),
+            'C' => Ok(StringMod::UpperInsensitive),
+            'c' => Ok(StringMod::LowerInsensitive),
+            'f' => Ok(StringMod::FullWordMatch),
+            'T' => Ok(StringMod::Trim),
+            't' => Ok(StringMod::ForceText),
+            'W' => Ok(StringMod::CompactWhitespace),
+            'w' => Ok(StringMod::OptBlank),
+            _ => Err(Error::parser("unknown string mod", pair.as_span())),
+        }
     }
 }
 
@@ -816,23 +823,23 @@ impl From<StringTest> for Test {
 }
 
 impl StringTest {
-    fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str) -> Self {
+    fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
                 Rule::pos_number => length = Some(parse_pos_number(p) as usize),
-                Rule::string_mod => mods = StringMod::from_str(p.as_str()),
+                Rule::string_mod => mods |= StringMod::from_pair(p)?,
                 // this should never happen
                 _ => unimplemented!(),
             }
         }
-        Self {
+        Ok(Self {
             //FIXME: remove unwrap
             str: str.to_string(),
             length,
             mods,
-        }
+        })
     }
 }
 
@@ -1038,7 +1045,7 @@ impl Test {
                         Rule::string => StringTest::from_pair_with_str(
                             test_type,
                             &unescape_string(test_value.as_str()),
-                        )
+                        )?
                         .into(),
                         Rule::search => SearchTest::from_pair_with_str(
                             test_type,
@@ -1049,7 +1056,7 @@ impl Test {
                         Rule::regex => RegexTest::from_pair_with_re(
                             test_type,
                             &unescape_string(test_value.as_str()),
-                        )
+                        )?
                         .into(),
                         _ => unimplemented!(),
                     },
@@ -1214,7 +1221,8 @@ impl Test {
 
             Self::PString(s) => {
                 // FIXME: maybe we could optimize here by reading testing on size
-                let pstring_len = 1;
+                // this is the size of the pstring
+                // FIXME: adjust the size function of pstring mods
                 let _ = read_le!(u8);
                 let mut buf = vec![0u8; s.len()];
                 haystack.read_exact(buf.as_mut_slice())?;
@@ -1773,8 +1781,13 @@ impl Match {
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
         switch_endianness: bool,
-        deps: &'a HashMap<String, DependencyRule>,
+        db: &'a MagicDb,
+        depth: usize,
     ) -> Result<bool, Error> {
+        if depth >= MAX_RECURSION {
+            return Err(Error::MaximumRecursion(MAX_RECURSION));
+        }
+
         // handle clear and default tests
         if matches!(self.test, Test::Clear) {
             trace!("line={} clear", self.line);
@@ -1792,7 +1805,8 @@ impl Match {
                 "line={} use {rule_name} switch_endianness={switch_endianness}",
                 self.line
             );
-            let dr: &DependencyRule = deps
+            let dr: &DependencyRule = db
+                .dependencies
                 .get(rule_name)
                 .ok_or(Error::MissingRule(rule_name.clone()))?;
 
@@ -1816,9 +1830,9 @@ impl Match {
                 magic,
                 Some(offset),
                 haystack,
-                deps,
-                false,
+                db,
                 *switch_endianness,
+                depth.wrapping_add(1),
             )?;
 
             return Ok(false);
@@ -1840,7 +1854,9 @@ impl Match {
         }
 
         if matches!(self.test, Test::Indirect) {
-            unimplemented!()
+            for r in db.rules.iter() {
+                r.magic(magic, None, haystack, db, false, depth.wrapping_add(1))?;
+            }
         }
 
         // FIXME: handle better
@@ -2114,9 +2130,9 @@ impl EntryNode {
         last_level_offset: Option<u64>,
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
-        deps: &'r HashMap<String, DependencyRule>,
-        abort_first_no_match: bool,
+        db: &'r MagicDb,
         switch_endianness: bool,
+        depth: usize,
     ) -> Result<(), Error> {
         let ok = self.entry.matches(
             magic,
@@ -2125,7 +2141,8 @@ impl EntryNode {
             opt_start_offset,
             haystack,
             switch_endianness,
-            deps,
+            db,
+            depth,
         )?;
 
         if ok {
@@ -2142,9 +2159,9 @@ impl EntryNode {
                     Some(end_upper_level),
                     opt_start_offset,
                     haystack,
-                    deps,
-                    abort_first_no_match,
+                    db,
                     switch_endianness,
+                    depth,
                 )?
             }
         }
@@ -2229,6 +2246,7 @@ impl MagicRule {
                     items.push(Entry::Match(Use::from_pair(pair).into()));
                 }
                 Rule::flag => items.push(Entry::Flag(Flag::from_pairs(pair.into_inner()))),
+                Rule::EOI => {}
                 _ => panic!("unexpected parsing rule"),
             }
         }
@@ -2243,9 +2261,9 @@ impl MagicRule {
         magic: &mut Magic<'r>,
         opt_start_offset: Option<Offset>,
         haystack: &mut R,
-        deps: &'r HashMap<String, DependencyRule>,
-        abort_first_no_match: bool,
+        db: &'r MagicDb,
         switch_endianness: bool,
+        depth: usize,
     ) -> Result<(), Error> {
         self.entries
             .matches(
@@ -2254,9 +2272,9 @@ impl MagicRule {
                 None,
                 opt_start_offset,
                 haystack,
-                deps,
-                abort_first_no_match,
+                db,
                 switch_endianness,
+                depth,
             )
             .map(|_| ())
     }
@@ -2355,22 +2373,6 @@ impl MagicFile {
     pub fn open<P: AsRef<Path>>(p: P) -> Result<Self, Error> {
         FileMagicParser::parse_file(p)
     }
-
-    fn magic<R: Read + Seek>(&self, haystack: &mut R) -> Magic<'_> {
-        // using a BufReader to gain speed
-        let mut br = io::BufReader::new(haystack);
-        for r in self.rules.iter() {
-            let mut magic = Magic::default();
-            // FIXME: this is bad this function should return Result<Option<Magic>, Error>
-            r.magic(&mut magic, None, &mut br, &self.dependencies, true, false)
-                .unwrap();
-            if !magic.is_empty() {
-                return magic;
-            }
-        }
-
-        Magic::default()
-    }
 }
 
 #[derive(Debug, Default)]
@@ -2396,7 +2398,7 @@ impl MagicDb {
         let mut br = io::BufReader::new(haystack);
         for r in self.rules.iter() {
             let mut magic = Magic::default();
-            r.magic(&mut magic, None, &mut br, &self.dependencies, true, false)?;
+            r.magic(&mut magic, None, &mut br, &self, false, 0)?;
 
             // FIXME: when strength is implement this must be replaced by
             //if let Some(strength) = magic.strength {
@@ -2415,7 +2417,7 @@ mod tests {
 
     use super::*;
 
-    fn parse_rule(rule: &str) -> MagicFile {
+    fn parse_rule(rule: &str) -> MagicDb {
         let pairs = FileMagicParser::parse(Rule::file, rule).unwrap_or_else(|e| panic!("{}", e));
 
         for rules in pairs {
@@ -2434,9 +2436,10 @@ mod tests {
             }
         }
 
-        let me = FileMagicParser::parse_str(rule).unwrap();
-        println!("{:#?}", me);
-        me
+        let mut md = MagicDb::new();
+        md.load(FileMagicParser::parse_str(rule).unwrap());
+        println!("{:#?}", md);
+        md
     }
 
     #[test]
@@ -2542,399 +2545,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_full_file() {
-        let file = r#"0	name		elf-mips
->0	lelong&0xf0000000	0x00000000	MIPS-I
->0	lelong&0xf0000000	0x10000000	MIPS-II
->0	lelong&0xf0000000	0x20000000	MIPS-III
->0	lelong&0xf0000000	0x30000000	MIPS-IV
->0	lelong&0xf0000000	0x40000000	MIPS-V
->0	lelong&0xf0000000	0x50000000	MIPS32
->0	lelong&0xf0000000	0x60000000	MIPS64
->0	lelong&0xf0000000	0x70000000	MIPS32 rel2
->0	lelong&0xf0000000	0x80000000	MIPS64 rel2
->0	lelong&0xf0000000	0x90000000	MIPS32 rel6
->0	lelong&0xf0000000	0xa0000000	MIPS64 rel6
-
-0	name		elf-sparc
->0	lelong&0x00ffff00	0x00000100	V8+ Required,
->0	lelong&0x00ffff00	0x00000200	Sun UltraSPARC1 Extensions Required,
->0	lelong&0x00ffff00	0x00000400	HaL R1 Extensions Required,
->0	lelong&0x00ffff00	0x00000800	Sun UltraSPARC3 Extensions Required,
->0	lelong&0x3		0		total store ordering,
->0	lelong&0x3		1		partial store ordering,
->0	lelong&0x3		2		relaxed memory ordering,
-
-0	name		elf-pa-risc
->2	leshort		0x020b		1.0
->2	leshort		0x0210		1.1
->2	leshort		0x0214		2.0
->0	leshort		&0x0008		(LP64)
-
-0	name		elf-riscv
->0	lelong&0x00000001	0x00000001	RVC,
->0	lelong&0x00000008	0x00000008	RVE,
->0	lelong&0x00000006	0x00000000	soft-float ABI,
->0	lelong&0x00000006	0x00000002	single-float ABI,
->0	lelong&0x00000006	0x00000004	double-float ABI,
->0	lelong&0x00000006	0x00000006	quad-float ABI,
-
-0	name		elf-le
->16	leshort		0		no file type,
-!:mime	application/octet-stream
->16	leshort		1		relocatable,
-!:mime	application/x-object
->16	leshort		2		executable,
-!:mime	application/x-executable
->16	leshort		3		pie executable,
->16	leshort		!3		shared object,
->16	leshort		4		core file,
-!:mime	application/x-coredump
-# OS-specific
->7	byte		202
->>16	leshort		0xFE01		executable,
-!:mime	application/x-executable
-# Core file detection is not reliable.
-#>>>(0x38+0xcc) string	>\0		of '%s'
-#>>>(0x38+0x10) lelong	>0		(signal %d),
->16	leshort		&0xff00
->>18	leshort		!8		processor-specific,
->>18	leshort		8
->>>16	leshort		0xFF80		PlayStation 2 IOP module,
-!:mime	application/x-sharedlib
->>>16	leshort		!0xFF80		processor-specific,
->18	clear		x
->18	leshort		0		no machine,
->18	leshort		1		AT&T WE32100,
->18	leshort		2		SPARC,
->18	leshort		3		Intel i386,
->18	leshort		4		Motorola m68k,
->>4	byte		1
->>>36	lelong		&0x01000000	68000,
->>>36	lelong		&0x00810000	CPU32,
->>>36	lelong		0		68020,
->18	leshort		5		Motorola m88k,
->18	leshort		6		Intel i486,
->18	leshort		7		Intel i860,
-# The official e_machine number for MIPS is now #8, regardless of endianness.
-# The second number (#10) will be deprecated later. For now, we still
-# say something if #10 is encountered, but only gory details for #8.
->18	leshort		8		MIPS,
->>4	byte		1
->>>36	lelong		&0x20		N32
->18	leshort		10		MIPS,
->>4	byte		1
->>>36	lelong		&0x20		N32
->18	leshort		8
-# only for 32-bit
->>4	byte		1
->>>36	use		elf-mips
-# only for 64-bit
->>4	byte		2
->>>48	use		elf-mips
->18	leshort		9		Amdahl,
->18	leshort		10		MIPS (deprecated),
->18	leshort		11		RS6000,
->18	leshort		15		PA-RISC,
-# only for 32-bit
->>4	byte		1
->>>36	use		elf-pa-risc
-# only for 64-bit
->>4	byte		2
->>>48	use		elf-pa-risc
->18	leshort		16		nCUBE,
->18	leshort		17		Fujitsu VPP500,
->18	leshort		18		SPARC32PLUS,
-# only for 32-bit
->>4	byte		1
->>>36	use		elf-sparc
->18	leshort		19		Intel 80960,
->18	leshort		20		PowerPC or cisco 4500,
->18	leshort		21		64-bit PowerPC or cisco 7500,
->>48	lelong		0		Unspecified or Power ELF V1 ABI,
->>48	lelong		1		Power ELF V1 ABI,
->>48	lelong		2		OpenPOWER ELF V2 ABI,
->18	leshort		22		IBM S/390,
->18	leshort		23		Cell SPU,
->18	leshort		24		cisco SVIP,
->18	leshort		25		cisco 7200,
->18	leshort		36		NEC V800 or cisco 12000,
->18	leshort		37		Fujitsu FR20,
->18	leshort		38		TRW RH-32,
->18	leshort		39		Motorola RCE,
->18	leshort		40		ARM,
->>4	byte		1
->>>36	lelong&0xff000000	0x04000000	EABI4
->>>36	lelong&0xff000000	0x05000000	EABI5
->>>36	lelong		&0x00800000	BE8
->>>36	lelong		&0x00400000	LE8
->18	leshort		41		Alpha,
->18	leshort		42		Renesas SH,
->18	leshort		43		SPARC V9,
->>4	byte		2
->>>48	use		elf-sparc
->18	leshort		44		Siemens Tricore Embedded Processor,
->18	leshort		45		Argonaut RISC Core, Argonaut Technologies Inc.,
->18	leshort		46		Renesas H8/300,
->18	leshort		47		Renesas H8/300H,
->18	leshort		48		Renesas H8S,
->18	leshort		49		Renesas H8/500,
->18	leshort		50		IA-64,
->18	leshort		51		Stanford MIPS-X,
->18	leshort		52		Motorola Coldfire,
->18	leshort		53		Motorola M68HC12,
->18	leshort		54		Fujitsu MMA,
->18	leshort		55		Siemens PCP,
->18	leshort		56		Sony nCPU,
->18	leshort		57		Denso NDR1,
->18	leshort		58		Start*Core,
->18	leshort		59		Toyota ME16,
->18	leshort		60		ST100,
->18	leshort		61		Tinyj emb.,
->18	leshort		62		x86-64,
->18	leshort		63		Sony DSP,
->18	leshort		64		DEC PDP-10,
->18	leshort		65		DEC PDP-11,
->18	leshort		66		FX66,
->18	leshort		67		ST9+ 8/16 bit,
->18	leshort		68		ST7 8 bit,
->18	leshort		69		MC68HC16,
->18	leshort		70		MC68HC11,
->18	leshort		71		MC68HC08,
->18	leshort		72		MC68HC05,
->18	leshort		73		SGI SVx or Cray NV1,
->18	leshort		74		ST19 8 bit,
->18	leshort		75		Digital VAX,
->18	leshort		76		Axis cris,
->18	leshort		77		Infineon 32-bit embedded,
->18	leshort		78		Element 14 64-bit DSP,
->18	leshort		79		LSI Logic 16-bit DSP,
->18	leshort		80		MMIX,
->18	leshort		81		Harvard machine-independent,
->18	leshort		82		SiTera Prism,
->18	leshort		83		Atmel AVR 8-bit,
->18	leshort		84		Fujitsu FR30,
->18	leshort		85		Mitsubishi D10V,
->18	leshort		86		Mitsubishi D30V,
->18	leshort		87		NEC v850,
->18	leshort		88		Renesas M32R,
->18	leshort		89		Matsushita MN10300,
->18	leshort		90		Matsushita MN10200,
->18	leshort		91		picoJava,
->18	leshort		92		OpenRISC,
->18	leshort		93		Synopsys ARCompact ARC700 cores,
->18	leshort		94		Tensilica Xtensa,
->18	leshort		95		Alphamosaic VideoCore,
->18	leshort		96		Thompson Multimedia,
->18	leshort		97		NatSemi 32k,
->18	leshort		98		Tenor Network TPC,
->18	leshort		99		Trebia SNP 1000,
->18	leshort		100		STMicroelectronics ST200,
->18	leshort		101		Ubicom IP2022,
->18	leshort		102		MAX Processor,
->18	leshort		103		NatSemi CompactRISC,
->18	leshort		104		Fujitsu F2MC16,
->18	leshort		105		TI msp430,
->18	leshort		106		Analog Devices Blackfin,
->18	leshort		107		S1C33 Family of Seiko Epson,
->18	leshort		108		Sharp embedded,
->18	leshort		109		Arca RISC,
->18	leshort		110		PKU-Unity Ltd.,
->18	leshort		111		eXcess: 16/32/64-bit,
->18	leshort		112		Icera Deep Execution Processor,
->18	leshort		113		Altera Nios II,
->18	leshort		114		NatSemi CRX,
->18	leshort		115		Motorola XGATE,
->18	leshort		116		Infineon C16x/XC16x,
->18	leshort		117		Renesas M16C series,
->18	leshort		118		Microchip dsPIC30F,
->18	leshort		119		Freescale RISC core,
->18	leshort		120		Renesas M32C series,
->18	leshort		131		Altium TSK3000 core,
->18	leshort		132		Freescale RS08,
->18	leshort		134		Cyan Technology eCOG2,
->18	leshort		135		Sunplus S+core7 RISC,
->18	leshort		136		New Japan Radio (NJR) 24-bit DSP,
->18	leshort		137		Broadcom VideoCore III,
->18	leshort		138		LatticeMico32,
->18	leshort		139		Seiko Epson C17 family,
->18	leshort		140		TI TMS320C6000 DSP family,
->18	leshort		141		TI TMS320C2000 DSP family,
->18	leshort		142		TI TMS320C55x DSP family,
->18	leshort		144		TI Programmable Realtime Unit
->18	leshort		160		STMicroelectronics 64bit VLIW DSP,
->18	leshort		161		Cypress M8C,
->18	leshort		162		Renesas R32C series,
->18	leshort		163		NXP TriMedia family,
->18	leshort		164		QUALCOMM DSP6,
->18	leshort		165		Intel 8051 and variants,
->18	leshort		166		STMicroelectronics STxP7x family,
->18	leshort		167		Andes embedded RISC,
->18	leshort		168		Cyan eCOG1X family,
->18	leshort		169		Dallas MAXQ30,
->18	leshort		170		New Japan Radio (NJR) 16-bit DSP,
->18	leshort		171		M2000 Reconfigurable RISC,
->18	leshort		172		Cray NV2 vector architecture,
->18	leshort		173		Renesas RX family,
->18	leshort		174		META,
->18	leshort		175		MCST Elbrus,
->18	leshort		176		Cyan Technology eCOG16 family,
->18	leshort		177		NatSemi CompactRISC,
->18	leshort		178		Freescale Extended Time Processing Unit,
->18	leshort		179		Infineon SLE9X,
->18	leshort		180		Intel L1OM,
->18	leshort		181		Intel K1OM,
->18	leshort		183		ARM aarch64,
->18	leshort		185		Atmel 32-bit family,
->18	leshort		186		STMicroeletronics STM8 8-bit,
->18	leshort		187		Tilera TILE64,
->18	leshort		188		Tilera TILEPro,
->18	leshort		189		Xilinx MicroBlaze 32-bit RISC,
->18	leshort		190		NVIDIA CUDA architecture,
->18	leshort		191		Tilera TILE-Gx,
->18	leshort		195		Synopsys ARCv2/HS3x/HS4x cores,
->18	leshort		197		Renesas RL78 family,
->18	leshort		199		Renesas 78K0R,
->18	leshort		200		Freescale 56800EX,
->18	leshort		201		Beyond BA1,
->18	leshort		202		Beyond BA2,
->18	leshort		203		XMOS xCORE,
->18	leshort		204		Microchip 8-bit PIC(r),
->18	leshort		210		KM211 KM32,
->18	leshort		211		KM211 KMX32,
->18	leshort		212		KM211 KMX16,
->18	leshort		213		KM211 KMX8,
->18	leshort		214		KM211 KVARC,
->18	leshort		215		Paneve CDP,
->18	leshort		216		Cognitive Smart Memory,
->18	leshort		217		iCelero CoolEngine,
->18	leshort		218		Nanoradio Optimized RISC,
->18	leshort		219		CSR Kalimba architecture family
->18	leshort		220		Zilog Z80
->18	leshort		221		Controls and Data Services VISIUMcore processor
->18	leshort		222		FTDI Chip FT32 high performance 32-bit RISC architecture
->18	leshort		223		Moxie processor family
->18	leshort		224		AMD GPU architecture
->18	leshort		243		UCB RISC-V,
-# only for 32-bit
->>4	byte		1
->>>36	use		elf-riscv
-# only for 64-bit
->>4	byte		2
->>>48	use		elf-riscv
->18	leshort		244		Lanai 32-bit processor,
->18	leshort		245		CEVA Processor Architecture Family,
->18	leshort		246		CEVA X2 Processor Family,
->18	leshort		247		eBPF,
->18	leshort		248		Graphcore Intelligent Processing Unit,
->18	leshort		249		Imagination Technologies,
->18	leshort		250		Netronome Flow Processor,
->18	leshort		251             NEC Vector Engine,
->18	leshort		252		C-SKY processor family,
->18	leshort		253		Synopsys ARCv3 64-bit ISA/HS6x cores,
->18	leshort		254		MOS Technology MCS 6502 processor,
->18	leshort		255		Synopsys ARCv3 32-bit,
->18	leshort		256		Kalray VLIW core of the MPPA family,
->18	leshort		257		WDC 65816/65C816,
->18	leshort		258		LoongArch,
->18	leshort		259		ChipON KungFu32,
->18	leshort		0x1057		AVR (unofficial),
->18	leshort		0x1059		MSP430 (unofficial),
->18	leshort		0x1223		Adapteva Epiphany (unofficial),
->18	leshort		0x2530		Morpho MT (unofficial),
->18	leshort		0x3330		FR30 (unofficial),
->18	leshort		0x3426		OpenRISC (obsolete),
->18	leshort		0x4688		Infineon C166 (unofficial),
->18	leshort		0x5441		Cygnus FRV (unofficial),
->18	leshort		0x5aa5		DLX (unofficial),
->18	leshort		0x7650		Cygnus D10V (unofficial),
->18	leshort		0x7676		Cygnus D30V (unofficial),
->18	leshort		0x8217		Ubicom IP2xxx (unofficial),
->18	leshort		0x8472		OpenRISC (obsolete),
->18	leshort		0x9025		Cygnus PowerPC (unofficial),
->18	leshort		0x9026		Alpha (unofficial),
->18	leshort		0x9041		Cygnus M32R (unofficial),
->18	leshort		0x9080		Cygnus V850 (unofficial),
->18	leshort		0xa390		IBM S/390 (obsolete),
->18	leshort		0xabc7		Old Xtensa (unofficial),
->18	leshort		0xad45		xstormy16 (unofficial),
->18	leshort		0xbaab		Old MicroBlaze (unofficial),,
->18	leshort		0xbeef		Cygnus MN10300 (unofficial),
->18	leshort		0xdead		Cygnus MN10200 (unofficial),
->18	leshort		0xf00d		Toshiba MeP (unofficial),
->18	leshort		0xfeb0		Renesas M32C (unofficial),
->18	leshort		0xfeba		Vitesse IQ2000 (unofficial),
->18	leshort		0xfebb		NIOS (unofficial),
->18	leshort		0xfeed		Moxie (unofficial),
->18	default		x
->>18	leshort		x		*unknown arch %#x*
->20	lelong		0		invalid version
->20	lelong		1		version 1
-
-0	string		\177ELF		ELF
-!:strength *2
->4	byte		0		invalid class
->4	byte		1		32-bit
->4	byte		2		64-bit
->5	byte		0		invalid byte order
->5	byte		1		LSB
->>0	use		elf-le
->5	byte		2		MSB
->>0	use		\^elf-le
->7	byte		0		(SYSV)
->7	byte		1		(HP-UX)
->7	byte		2		(NetBSD)
->7	byte		3		(GNU/Linux)
->7	byte		4		(GNU/Hurd)
->7	byte		5		(86Open)
->7	byte		6		(Solaris)
->7	byte		7		(Monterey)
->7	byte		8		(IRIX)
->7	byte		9		(FreeBSD)
->7	byte		10		(Tru64)
->7	byte		11		(Novell Modesto)
->7	byte		12		(OpenBSD)
->7	byte		13		(OpenVMS)
->7	byte		14		(HP NonStop Kernel)
->7	byte		15		(AROS Research Operating System)
->7	byte		16		(FenixOS)
->7	byte		17		(Nuxi CloudABI)
->7	byte		97		(ARM)
->7	byte		102		(Cell LV2)
->7	byte		202		(Cafe OS)
->7	byte		255		(embedded)
-
-# SELF Signed ELF used on the playstation
-# https://www.psdevwiki.com/ps4/SELF_File_Format#make_fself_by_flatz
-# https://www.psdevwiki.com/ps3/SELF_-_SPRX
-0	lelong		0x4F153D1D
->4	lelong		0x00010112	PS4 Signed ELF file
->8	byte		1		\b, SELF/SPRX signed-elf/prx
->8	byte		2		\b, SRVK signed-revoke-list
->8	byte		3		\b, SPKG signed-package
->8	byte		4		\b, SSPP signed-security-policy-profile
->8	byte		5		\b, SDIFF signed-diff
->8	byte		6		\b, SPSFO signed-param-sfo
->9	byte&0xf0	x		\b, version %#x	
->9	byte&0x0f	4		\b, game
->9	byte&0x0f	5		\b, module
->9	byte&0x0f	6		\b, video app
->9	byte&0x0f	8		\b, System/EX application
->9	byte&0x0f	9		\b, System/EX module/dll
-#>&-9	byte&0x0f	9		\b, System/EX module/dll
-#>12	leshort		x		\b, header size %d
-#>14	leshort		x		\b, signature size %d
-#>16	lelong		x		\b, file size %d
-#>18	leshort		x		\b, number of segments %d
-#>20	leshort		22
-        "#;
-        let me = parse_rule(&file);
-        let mut cursor = Cursor::new(r#"\177ELF\x00"#);
-        println!("magic: {}", me.magic(&mut cursor).message());
-        println!("finished")
-    }
-
-    #[test]
     fn test_unescape() {
         assert_eq!(unescape_string(r#"\ hello"#), " hello");
         assert_eq!(unescape_string(r#"hello\ world"#), "hello world");
@@ -2946,124 +2556,74 @@ mod tests {
     }
 
     #[test]
-    fn test_elf_match() {
-        let me = FileMagicParser::parse_file("./magdir/elf").unwrap();
-        let realpath = fs::canonicalize("/proc/self/exe").unwrap();
-        let mut rs = File::open(&realpath).unwrap();
-        let mazic = me.magic(&mut rs);
-        println!("magic: {}", mazic.message());
-        println!("mimetype: {}", mazic.mimetype());
-        println!(
-            "magic file command: {}",
-            String::from_utf8(
-                Command::new("file")
-                    .arg(realpath.to_string_lossy().to_string())
-                    .output()
-                    .unwrap()
-                    .stdout
-            )
-            .unwrap()
-        );
-        println!(
-            "magic file command: {}",
-            String::from_utf8(
-                Command::new("file")
-                    .arg("--mime-type")
-                    .arg(realpath.to_string_lossy().to_string())
-                    .output()
-                    .unwrap()
-                    .stdout
-            )
-            .unwrap()
-        );
-        println!("finished")
-    }
-
-    #[test]
-    fn test_rust_match() {
-        let test_file = "./target/debug/deps/libpest_meta-9f140d66dcb06b7c.rmeta";
-        let me = FileMagicParser::parse_file("./magdir/rust").unwrap();
-        let realpath = fs::canonicalize(test_file).unwrap();
-        let mut rs = File::open(&realpath).unwrap();
-        let mazic = me.magic(&mut rs);
-        println!("magic: {}", mazic.message());
-        println!("mimetype: {}", mazic.mimetype());
-        println!(
-            "magic file command: {}",
-            String::from_utf8(
-                Command::new("file")
-                    .arg(realpath.to_string_lossy().to_string())
-                    .output()
-                    .unwrap()
-                    .stdout
-            )
-            .unwrap()
-        );
-        println!(
-            "magic file command: {}",
-            String::from_utf8(
-                Command::new("file")
-                    .arg("--mime-type")
-                    .arg(realpath.to_string_lossy().to_string())
-                    .output()
-                    .unwrap()
-                    .stdout
-            )
-            .unwrap()
-        );
-        println!("finished")
-    }
-
-    #[test]
     fn parse_regex() {
-        let me = FileMagicParser::parse_str(
+        let me = parse_rule(
             r#"
 0	regex/1024 #![[:space:]]*/usr/bin/env[[:space:]]+
 !:mime	text/x-shellscript
 >&0  regex/64 .*($|\\b) %s shell script text executable
     "#,
-        )
-        .inspect_err(|e| println!("{e}"))
-        .unwrap();
+        );
         let mut bash = Cursor::new(
             r#"#!/usr/bin/env bash
         echo hello world"#,
         );
-        let mazic = me.magic(&mut bash);
-        println!("magic: {}", mazic.message());
-        println!("mimetype: {}", mazic.mimetype());
+        let magics = me.magic(&mut bash).unwrap();
+        let magic = magics
+            .iter()
+            .find(|(_, m)| !m.is_empty())
+            .map(|(_, m)| m)
+            .unwrap();
+        println!("magic: {}", magic.message());
+        println!("mimetype: {}", magic.mimetype());
     }
 
     #[test]
     fn test_string_with_mods() {
-        let me = FileMagicParser::parse_str(
+        let me = parse_rule(
             r#"0	string/fwt	#!\ \ \ /usr/bin/env\ bash	Bourne-Again shell script text executable
 !:mime	text/x-shellscript
 "#,
-        )
-        .inspect_err(|e| println!("{e}"))
-        .unwrap();
+        );
         let mut bash = Cursor::new(
             r#"#!/usr/bin/env bash i 
         echo hello world"#,
         );
-        let mazic = me.magic(&mut bash);
-        println!("magic: {}", mazic.message());
-        println!("mimetype: {}", mazic.mimetype());
+        let magics = me.magic(&mut bash).unwrap();
+        let magic = magics
+            .iter()
+            .find(|(_, m)| !m.is_empty())
+            .map(|(_, m)| m)
+            .unwrap();
+        println!("magic: {}", magic.message());
+        println!("mimetype: {}", magic.mimetype());
     }
 
     #[test]
     fn test_search_with_mods() {
-        let me = FileMagicParser::parse_str(
+        let me = parse_rule(
             r#"0	search/1/fwt	#!\ /usr/bin/luatex	LuaTex script text executable
 !:mime	text/x-luatex
 "#,
-        )
-        .inspect_err(|e| println!("{e}"))
-        .unwrap();
+        );
         let mut bash = Cursor::new(r#"#!          /usr/bin/luatex "#);
-        let mazic = me.magic(&mut bash);
-        println!("magic: {}", mazic.message());
-        println!("mimetype: {}", mazic.mimetype());
+        let magics = me.magic(&mut bash).unwrap();
+        let magic = magics
+            .iter()
+            .find(|(_, m)| !m.is_empty())
+            .map(|(_, m)| m)
+            .unwrap();
+        println!("magic: {}", magic.message());
+        println!("mimetype: {}", magic.mimetype());
+    }
+
+    #[test]
+    fn test_max_recursion() {
+        let me = parse_rule(r#"0	indirect x"#);
+        let mut bash = Cursor::new(r#"#!          /usr/bin/luatex "#);
+        assert!(matches!(
+            me.magic(&mut bash),
+            Err(Error::MaximumRecursion(MAX_RECURSION))
+        ));
     }
 }

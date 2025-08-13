@@ -10,8 +10,8 @@ name_entry      = { offset ~ "name" ~ rule_name ~ message? }
 rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWLINE | EOI) | NEWLINE)* }
 
 // we need the both to be able to match
-match_no_depth = ${ offset ~ WHITESPACE+ ~ test ~ (WHITESPACE+ ~ message){,1} }
-match_depth    = ${ depth+ ~ offset ~ WHITESPACE+ ~ test ~ (WHITESPACE+ ~ message){,1} }
+match_no_depth = ${ offset ~ WHITESPACE+ ~ test ~ (WHITESPACE+ ~ message)* }
+match_depth    = ${ depth+ ~ offset ~ WHITESPACE+ ~ test ~ (WHITESPACE+ ~ message)* }
 
 test = ${ clear_test | scalar_test | default_test | string_test | indirect_test }
 
@@ -157,7 +157,7 @@ depth = @{ ">"+ }
 
 // Parses comments
 // see pest doc to define COMMENT
-COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ (NEWLINE | EOI) }
 
 // Special characters
 NEWLINE = _{ "\n" | "\r\n" }
