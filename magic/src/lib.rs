@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 use chrono::DateTime;
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
