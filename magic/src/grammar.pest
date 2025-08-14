@@ -126,26 +126,26 @@ clear     = { "clear" }
 indirect  = { "indirect" }
 offset_ty = { "offset" }
 
-value_read = { "x" }
+any_value = { "x" }
 
 // tests on scalar data types
 scalar_type      = ${ bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | u4 | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
 scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and }
-scalar_test      = ${ scalar_type ~ scalar_transform{,1} ~ WHITESPACE+ ~ ((scalar_condition{,1} ~ scalar_value) | value_read) }
+scalar_test      = ${ scalar_type ~ scalar_transform{,1} ~ WHITESPACE+ ~ ((scalar_condition? ~ scalar_value) | any_value) }
 
 // corresponds to `clear x` test
-clear_test = ${ clear ~ WHITESPACE+ ~ value_read }
+clear_test = ${ clear ~ WHITESPACE+ ~ any_value }
 
 // corresponds to `default x` test
-default_test = ${ default ~ WHITESPACE+ ~ value_read }
+default_test = ${ default ~ WHITESPACE+ ~ any_value }
 
-indirect_test = ${ indirect ~ WHITESPACE+ ~ value_read }
+indirect_test = ${ indirect ~ WHITESPACE+ ~ any_value }
 
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
-string_test  = ${ (string | pstring | regex | search) ~ WHITESPACE+ ~ "="? ~ (value_read | string_value) }
+string_test  = ${ (string | pstring | regex | search) ~ WHITESPACE+ ~ "="? ~ (any_value | string_value) }
 
 // Test value (could be a hex, string, or integer)
 // test = ${ (b16_number ~ ASCII_DIGIT* | (PUNCTUATION | ASCII_ALPHANUMERIC | ("\\x" ~ ASCII_HEX_DIGIT{2}))+) | "x" }

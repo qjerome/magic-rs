@@ -325,11 +325,6 @@ enum ScalarDataType {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 #[allow(non_camel_case_types)]
 enum Scalar {
-    // value read such as
-    // >18	default		x
-    // >>18	leshort		x		*unknown arch %#x*
-    // FIXME: consider implementing this as a match any operator as in libmagic
-    read,
     byte(i8),
     long(i32),
     short(i16),
@@ -360,7 +355,6 @@ enum Scalar {
 impl Scalar {
     fn is_zero(&self) -> bool {
         match self {
-            Scalar::read => false,
             Scalar::quad(x) => *x == 0,
             Scalar::belong(x) => *x == 0,
             Scalar::bequad(x) => *x == 0,
@@ -392,7 +386,6 @@ impl Scalar {
 impl DynDisplay for Scalar {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
-            Scalar::read => unimplemented!(),
             Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
@@ -428,7 +421,6 @@ impl DynDisplay for Scalar {
 impl fmt::Display for Scalar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Scalar::read => unimplemented!(),
             Scalar::quad(value) => write!(f, "{}", value),
             Scalar::belong(value) => write!(f, "{}", value),
             Scalar::bequad(value) => write!(f, "{}", value),
@@ -746,16 +738,17 @@ impl Transform {
 
 // Any Magic Data type
 #[derive(Debug, Clone)]
-enum MagicDataType {
+enum Any {
     String,
     PString,
+    Scalar(ScalarDataType),
 }
 
-impl MagicDataType {
+impl Any {
     fn from_rule(r: Rule) -> Self {
         match r {
-            Rule::string => MagicDataType::String,
-            Rule::pstring => MagicDataType::PString,
+            Rule::string => Any::String,
+            Rule::pstring => Any::PString,
             _ => unimplemented!(),
         }
     }
@@ -1010,11 +1003,11 @@ impl DynDisplay for MatchRes {
 
 #[derive(Debug, Clone)]
 enum Test {
+    /// This corresponds to a DATATYPE x test
+    Any(Any),
     Name(String),
     Use(bool, String),
     Scalar(ScalarTest),
-    // FIXME: consider implementing this as a match any operator as in libmagic
-    Read(MagicDataType),
     String(StringTest),
     Search(SearchTest),
     PString(String),
@@ -1067,7 +1060,6 @@ impl Test {
                 let value_pair = next;
 
                 let value = match value_pair.as_rule() {
-                    Rule::value_read => Scalar::read,
                     Rule::scalar_value => {
                         let number_pair = value_pair
                             .into_inner()
@@ -1077,6 +1069,7 @@ impl Test {
                         ty.scalar_from_number(parse_number_pair(number_pair))
                             .map_err(|_| Error::parser("unimplemented scalar", ty_span))?
                     }
+                    Rule::any_value => return Ok(Self::Any(Any::Scalar(ty))),
                     _ => unimplemented!(),
                 };
 
@@ -1114,7 +1107,7 @@ impl Test {
                         .into(),
                         _ => unimplemented!(),
                     },
-                    Rule::value_read => Self::Read(MagicDataType::from_rule(test_type.as_rule())),
+                    Rule::any_value => Self::Any(Any::from_rule(test_type.as_rule())),
                     _ => unimplemented!(),
                 }
             }
@@ -1293,8 +1286,8 @@ impl Test {
                 Ok(TestValue::Bytes(buf))
             }
 
-            Self::Read(t) => match t {
-                MagicDataType::String => {
+            Self::Any(t) => match t {
+                Any::String => {
                     let mut r = BufReader::new(haystack);
                     let mut buf = vec![];
                     r.read_until(b'\0', &mut buf)?;
@@ -1303,7 +1296,7 @@ impl Test {
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
                 }
-                MagicDataType::PString => {
+                Any::PString => {
                     let slen = read_le!(u8) as usize;
                     let mut buf = vec![0u8; slen];
                     haystack.read_exact(&mut buf)?;
@@ -1312,6 +1305,7 @@ impl Test {
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
                 }
+                Any::Scalar(d) => d.read(haystack, switch_endianness).map(TestValue::Scalar),
             },
 
             _ => unimplemented!(),
@@ -1321,16 +1315,21 @@ impl Test {
     #[inline(always)]
     fn match_value(&self, tv: TestValue) -> Option<MatchRes> {
         // always true when we want to read value
-        if let Self::Read(v) = self {
+        if let Self::Any(v) = self {
             match tv {
                 TestValue::PString(ps) => {
-                    if matches!(v, MagicDataType::PString) {
+                    if matches!(v, Any::PString) {
                         return Some(MatchRes::String(ps));
                     }
                 }
                 TestValue::String(s) => {
-                    if matches!(v, MagicDataType::String) {
+                    if matches!(v, Any::String) {
                         return Some(MatchRes::String(s));
+                    }
+                }
+                TestValue::Scalar(s) => {
+                    if matches!(v, Any::Scalar(_)) {
+                        return Some(MatchRes::Scalar(s));
                     }
                 }
                 _ => panic!("not good"),
@@ -1343,10 +1342,6 @@ impl Test {
         match tv {
             TestValue::Scalar(ts) => {
                 if let Self::Scalar(t) = self {
-                    if matches!(t.value, Scalar::read) {
-                        return Some(MatchRes::Scalar(ts));
-                    }
-
                     let tv: Scalar = t.transform.as_ref().map(|t| t.apply(ts)).unwrap_or(ts);
 
                     let ok = match t.cmp_op {
@@ -1976,6 +1971,9 @@ impl Match {
             )])
         }
 
+        // FIXME: we may have a way to optimize here. In case we do a Any
+        // test and we don't use the value to format the message, we don't
+        // need to read the value.
         if let Ok(tv) = self.test.read_test_value(haystack, switch_endianness) {
             // we need to adjust stream offset if this is a regex test since we read beyond the match
             let adjust_stream_offset = matches!(&self.test, Test::Regex(_));
@@ -2055,13 +2053,15 @@ impl Match {
                 unimplemented!()
             }
 
-            Test::Read(_) => out = 0,
+            // matching any output gets penalty
+            Test::Any(_) => out = 0,
 
             _ => {}
         }
 
         if let Some(op) = self.test.cmp_op() {
             match op {
+                // matching almost any gets penalty
                 CmpOp::Neg => out = 0,
                 CmpOp::Eq => out += MULT,
                 CmpOp::Lt | CmpOp::Gt => out -= 2 * MULT,
