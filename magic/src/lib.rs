@@ -880,7 +880,6 @@ impl StringTest {
             }
         }
         Ok(Self {
-            //FIXME: remove unwrap
             str: str.to_string(),
             length,
             mods,
@@ -928,7 +927,6 @@ impl SearchTest {
             }
         }
         Self {
-            //FIXME: remove unwrap
             str: str.to_string(),
             n_pos: length,
             mods,
@@ -1082,6 +1080,29 @@ impl Test {
                     value,
                 })
             }
+            Rule::search_test => {
+                let mut search_test = pair.into_inner();
+
+                let test_type = search_test.next().expect("expecting a string type");
+
+                let test_value = search_test.next().expect("expecting a string value");
+                assert_eq!(test_value.as_rule(), Rule::string_value);
+
+                match test_type.as_rule() {
+                    Rule::search => SearchTest::from_pair_with_str(
+                        test_type,
+                        &unescape_string(test_value.as_str()),
+                    )
+                    .into(),
+
+                    Rule::regex => RegexTest::from_pair_with_re(
+                        test_type,
+                        &unescape_string(test_value.as_str()),
+                    )?
+                    .into(),
+                    _ => unimplemented!(),
+                }
+            }
             Rule::string_test => {
                 let mut string_test = pair.into_inner();
 
@@ -1096,17 +1117,9 @@ impl Test {
                             &unescape_string(test_value.as_str()),
                         )?
                         .into(),
-                        Rule::search => SearchTest::from_pair_with_str(
-                            test_type,
-                            &unescape_string(test_value.as_str()),
-                        )
-                        .into(),
+
                         Rule::pstring => Self::PString(unescape_string(test_value.as_str())),
-                        Rule::regex => RegexTest::from_pair_with_re(
-                            test_type,
-                            &unescape_string(test_value.as_str()),
-                        )?
-                        .into(),
+
                         _ => unimplemented!(),
                     },
                     Rule::any_value => Self::Any(Any::from_rule(test_type.as_rule())),
@@ -2506,6 +2519,19 @@ pub struct Magic<'m> {
 }
 
 impl<'m> Magic<'m> {
+    fn into_static(self) -> Magic<'static> {
+        Magic {
+            message: self
+                .message
+                .into_iter()
+                .map(Cow::into_owned)
+                .map(Cow::Owned)
+                .collect(),
+            mime: self.mime.map(|cow| Cow::Owned(cow.into_owned())),
+            strength: self.strength,
+        }
+    }
+
     #[inline(always)]
     pub fn message(&self) -> String {
         let mut out = String::new();
@@ -2559,7 +2585,7 @@ impl MagicFile {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MagicDb {
     rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
@@ -2596,135 +2622,22 @@ impl MagicDb {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Cursor, process::Command};
+    use std::io::Cursor;
 
     use super::*;
 
-    fn parse_rule(rule: &str) -> MagicDb {
-        let pairs = FileMagicParser::parse(Rule::file, rule).unwrap_or_else(|e| panic!("{}", e));
-
-        for rules in pairs {
-            for pair in rules.into_inner() {
-                // A pair is a combination of the rule which matched and a span of input
-                println!("Rule:    {:?}", pair.as_rule());
-                println!("Span:    {:?}", pair.as_span());
-                println!("Text:    {}", pair.as_str());
-                println!();
-                for pair in pair.into_inner() {
-                    println!("\tRule:    {:?}", pair.as_rule());
-                    println!("\tSpan:    {:?}", pair.as_span());
-                    println!("\tText:    {}", pair.as_str());
-                    println!();
-                }
-            }
-        }
-
+    fn first_magic(rule: &str, content: &str) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
-        md.load(FileMagicParser::parse_str(rule).unwrap());
-        println!("{:#?}", md);
-        md
+        md.load(FileMagicParser::parse_str(rule).unwrap()).unwrap();
+        let mut reader = Cursor::new(content);
+        let v = md.magic(&mut reader)?;
+        Ok(v.into_iter().next().map(|(_, m)| m.into_static()))
     }
 
-    #[test]
-    fn one_liners() {
-        let tests = [
-            "0 string GIF89a GIF image data",
-            "0 string %PDF PDF document",
-            "0 byte 0x00 NULL byte found",
-            r#"0   string   \x89PNG    PNG image data"#,
-        ];
-
-        for t in tests {
-            let pairs = FileMagicParser::parse(Rule::rule, t).unwrap_or_else(|e| panic!("{}", e));
-
-            for pair in pairs {
-                // A pair is a combination of the rule which matched and a span of input
-                println!("Rule:    {:?}", pair.as_rule());
-                println!("Span:    {:?}", pair.as_span());
-                println!("Text:    {}", pair.as_str());
-                println!()
-            }
-        }
-    }
-
-    #[test]
-    fn full_rule() {
-        let rule = r#"0	lelong		0x4F153D1D
->4	lelong		0x00010112	PS4 Signed ELF file
->8	byte		1		\b, SELF/SPRX signed-elf/prx
->8	byte		2		\b, SRVK signed-revoke-list
->8	byte		3		\b, SPKG signed-package
->8	byte		4		\b, SSPP signed-security-policy-profile
->8	byte		5		\b, SDIFF signed-diff
->8	byte		6		\b, SPSFO signed-param-sfo
->42	leshort		x		\b, header size %d
->>0	use		elf-le
->9	byte&0xf0	x		\b, version %#x	
->9	byte&0x0f	4		\b, game
->9	byte&0x0f	5		\b, module
->9	byte&0x0f	6		\b, video app
->9	byte&0x0f	8		\b, System/EX application
->9	byte&0x0f	9		\b, System/EX module/dll
-!:strength +20
-!:strength - 15
-!:strength / 2
-!:strength *3
-!:mime model/e57
-!:mime	image/x-canon-crw
-!:mime	application/vnd.stardivision.writer
-!:mime		application/x-blender
-!:mime	application/x-freemind
-!:mime	audio/x-musepack
-!:mime	application/x-mobipocket-ebook
-!:mime	application/x-fzip
-!:mime application/x-epoc-data
-!:mime  application/x-freeplane
-!:ext hdt
-!:ext	aml
-!:ext	doc/dot/
-!:ext	ico
-!:ext		cel
-!:ext	rds
-!:ext	dmg/iso
-!:ext	xla
-!:ext	ini/inf
-!:ext	wc
-!:apple	EMAxTEXT
-!:apple	????XLS9
-!:apple							????iCal
-!:apple	????JIFf
-!:apple	????XLS5
-!:apple	????L123
-!:apple	????amrw
-!:apple	ALB3ALD3
-!:apple	LZIVZIVU
-!:apple	ALD5ALB5
-#>12	leshort		x		\b, header size %d
-#>14	leshort		x		\b, signature size %d
-#>16	lelong		x		\b, file size %d
-#>18	leshort		x		\b, number of segments %d
-#>20	leshort		22"#;
-
-        parse_rule(rule);
-    }
-
-    #[test]
-    fn test_parse_dep_rule() {
-        let dep = r#"0	name		elf-mips
->0	lelong&0xf0000000	0x00000000	MIPS-I
->0	lelong&0xf0000000	0x10000000	MIPS-II
->0	lelong&0xf0000000	0x20000000	MIPS-III
->0	lelong&0xf0000000	0x30000000	MIPS-IV
->0	lelong&0xf0000000	0x40000000	MIPS-V
-# this is a comment
->0	lelong&0xf0000000	0x50000000	MIPS32
->0	lelong&0xf0000000	0x60000000	MIPS64
->0	lelong&0xf0000000	0x70000000	MIPS32 rel2
->0	lelong&0xf0000000	0x80000000	MIPS64 rel2
->0	lelong&0xf0000000	0x90000000	MIPS32 rel6
->0	lelong&0xf0000000	0xa0000000	MIPS64 rel6
-"#;
-        parse_rule(dep);
+    macro_rules! assert_magic_match {
+        ($rule: literal, $content:literal) => {{
+            first_magic($rule, $content).unwrap().unwrap();
+        }};
     }
 
     #[test]
@@ -2739,74 +2652,49 @@ mod tests {
     }
 
     #[test]
-    fn parse_regex() {
-        let me = parse_rule(
+    fn test_regex() {
+        assert_magic_match!(
             r#"
 0	regex/1024 #![[:space:]]*/usr/bin/env[[:space:]]+
 !:mime	text/x-shellscript
 >&0  regex/64 .*($|\\b) %s shell script text executable
     "#,
-        );
-        let mut bash = Cursor::new(
             r#"#!/usr/bin/env bash
-        echo hello world"#,
-        );
-        let magics = me.magic(&mut bash).unwrap();
-        let magic = magics
-            .iter()
-            .find(|(_, m)| !m.is_empty())
-            .map(|(_, m)| m)
-            .unwrap();
-        println!("magic: {}", magic.message());
-        println!("mimetype: {}", magic.mimetype());
+        echo hello world"#
+        )
     }
 
     #[test]
     fn test_string_with_mods() {
-        let me = parse_rule(
+        assert_magic_match!(
             r#"0	string/fwt	#!\ \ \ /usr/bin/env\ bash	Bourne-Again shell script text executable
 !:mime	text/x-shellscript
 "#,
+            "#!/usr/bin/env bash i 
+        echo hello world"
         );
-        let mut bash = Cursor::new(
-            r#"#!/usr/bin/env bash i 
-        echo hello world"#,
-        );
-        let magics = me.magic(&mut bash).unwrap();
-        let magic = magics
-            .iter()
-            .find(|(_, m)| !m.is_empty())
-            .map(|(_, m)| m)
-            .unwrap();
-        println!("magic: {}", magic.message());
-        println!("mimetype: {}", magic.mimetype());
     }
 
     #[test]
     fn test_search_with_mods() {
-        let me = parse_rule(
-            r#"0	search/1/fwt	#!\ /usr/bin/luatex	LuaTex script text executable
-!:mime	text/x-luatex
-"#,
+        assert_magic_match!(
+            r#"0	search/1/fwt	#!\ /usr/bin/luatex	LuaTex script text executable"#,
+            "#!          /usr/bin/luatex "
         );
-        let mut bash = Cursor::new(r#"#!          /usr/bin/luatex "#);
-        let magics = me.magic(&mut bash).unwrap();
-        let magic = magics
-            .iter()
-            .find(|(_, m)| !m.is_empty())
-            .map(|(_, m)| m)
-            .unwrap();
-        println!("magic: {}", magic.message());
-        println!("mimetype: {}", magic.mimetype());
     }
 
     #[test]
     fn test_max_recursion() {
-        let me = parse_rule(r#"0	indirect x"#);
-        let mut bash = Cursor::new(r#"#!          /usr/bin/luatex "#);
-        assert!(matches!(
-            me.magic(&mut bash),
-            Err(Error::MaximumRecursion(MAX_RECURSION))
-        ));
+        let res = first_magic(r#"0	indirect x"#, r#"#!          /usr/bin/luatex "#);
+        assert!(matches!(res, Err(Error::MaximumRecursion(MAX_RECURSION))));
+    }
+
+    #[test]
+    fn test_any_string() {
+        let res = first_magic(
+            "0	string =This\\ should\\ match Any String",
+            "This should match",
+        );
+        res.unwrap().unwrap();
     }
 }

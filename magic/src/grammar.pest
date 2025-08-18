@@ -13,7 +13,7 @@ rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWL
 match_no_depth = { offset ~ test ~ message? }
 match_depth    = { depth+ ~ offset ~ test ~ message? }
 
-test = ${ clear_test | scalar_test | default_test | string_test | indirect_test }
+test = ${ clear_test | scalar_test | default_test | string_test | search_test | indirect_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
@@ -141,11 +141,15 @@ clear_test = ${ clear ~ WHITESPACE+ ~ any_value }
 // corresponds to `default x` test
 default_test = ${ default ~ WHITESPACE+ ~ any_value }
 
+// `indirect x` test
 indirect_test = ${ indirect ~ WHITESPACE+ ~ any_value }
+
+// regex / search test
+search_test = ${ (regex | search) ~ WHITESPACE+ ~ string_value }
 
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
-string_test  = ${ (string | pstring | regex | search) ~ WHITESPACE+ ~ "="? ~ (any_value | string_value) }
+string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ "="? ~ (any_value | string_value) }
 
 // Test value (could be a hex, string, or integer)
 // test = ${ (b16_number ~ ASCII_DIGIT* | (PUNCTUATION | ASCII_ALPHANUMERIC | ("\\x" ~ ASCII_HEX_DIGIT{2}))+) | "x" }
