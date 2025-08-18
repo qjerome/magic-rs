@@ -31,6 +31,14 @@ mod utils;
 
 const MAX_RECURSION: usize = 128;
 
+macro_rules! debug_panic {
+    ($($arg:tt)*) => {
+        if cfg!(debug_assertions) {
+            panic!($($arg)*);
+        }
+    };
+}
+
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
 struct FileMagicParser;
@@ -38,11 +46,16 @@ struct FileMagicParser;
 fn unescape_string(s: &str) -> String {
     let mut result = String::new();
     let mut chars = s.chars().peekable();
-
     while let Some(c) = chars.next() {
+        // string termination
+        if c == '\0' {
+            return result;
+        }
+
         if c == '\\' {
             if let Some(next_char) = chars.peek() {
                 match next_char {
+                    // string termination
                     'n' => {
                         result.push('\n');
                         chars.next(); // Skip the 'n'
@@ -857,6 +870,7 @@ impl StringMod {
 #[derive(Debug, Clone)]
 struct StringTest {
     str: String,
+    cmp_op: CmpOp,
     length: Option<usize>,
     mods: FlagSet<StringMod>,
 }
@@ -868,7 +882,7 @@ impl From<StringTest> for Test {
 }
 
 impl StringTest {
-    fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str) -> Result<Self, Error> {
+    fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str, cmp_op: CmpOp) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
         for p in pair.into_inner() {
@@ -881,6 +895,7 @@ impl StringTest {
         }
         Ok(Self {
             str: str.to_string(),
+            cmp_op,
             length,
             mods,
         })
@@ -1108,13 +1123,30 @@ impl Test {
 
                 let test_type = string_test.next().expect("expecting a string type");
 
-                let test_value = string_test.next().expect("expecting a string value");
+                let pair = string_test
+                    .next()
+                    .expect("expecting operator or string value");
+
+                let cmp_op = match pair.as_rule() {
+                    Rule::op_eq => Some(CmpOp::Eq),
+                    Rule::op_lt => Some(CmpOp::Lt),
+                    Rule::op_gt => Some(CmpOp::Gt),
+                    _ => None,
+                };
+
+                // if there was an operator we need to iterate
+                let test_value = if cmp_op.is_some() {
+                    string_test.next().expect("expecting a string value")
+                } else {
+                    pair
+                };
 
                 match test_value.as_rule() {
                     Rule::string_value => match test_type.as_rule() {
                         Rule::string => StringTest::from_pair_with_str(
                             test_type,
                             &unescape_string(test_value.as_str()),
+                            cmp_op.unwrap_or(CmpOp::Eq),
                         )?
                         .into(),
 
@@ -1273,9 +1305,22 @@ impl Test {
                 t.ty.read(haystack, switch_endianness)
                     .map(TestValue::Scalar)
             }
-            Self::String(s) => {
-                let mut buf = vec![0u8; s.length.unwrap_or(s.str.len())];
-                haystack.read_exact(buf.as_mut_slice())?;
+            Self::String(t) => {
+                let mut r = BufReader::new(haystack);
+
+                let buf = if let Some(length) = t.length {
+                    // if there is a length specified
+                    let mut buf = vec![0u8; length];
+                    r.read_exact(&mut buf)?;
+                    buf
+                } else {
+                    // no length specified we read until end of string
+                    let mut buf = vec![];
+                    r.read_until(b'\0', &mut buf)?;
+                    // we pop the trailing \0 if any
+                    buf.pop();
+                    buf
+                };
                 String::from_utf8(buf)
                     .map(TestValue::String)
                     .map_err(Error::from)
@@ -1303,6 +1348,7 @@ impl Test {
 
             Self::Any(t) => match t {
                 Any::String => {
+                    // FIXME: unify reader
                     let mut r = BufReader::new(haystack);
                     let mut buf = vec![];
                     r.read_until(b'\0', &mut buf)?;
@@ -1375,8 +1421,26 @@ impl Test {
             }
             TestValue::String(tv) => {
                 if let Self::String(m) = self {
-                    if tv == m.str {
-                        return Some(MatchRes::String(tv));
+                    match m.cmp_op {
+                        CmpOp::Eq => {
+                            if tv == m.str {
+                                return Some(MatchRes::String(tv));
+                            }
+                        }
+                        CmpOp::Gt => {
+                            if tv.len() > m.str.len() {
+                                return Some(MatchRes::String(tv));
+                            }
+                        }
+                        CmpOp::Lt => {
+                            if tv.len() < m.str.len() {
+                                return Some(MatchRes::String(tv));
+                            }
+                        }
+                        // unsupported for strings
+                        _ => {
+                            debug_panic!("unsupported cmp operator for string")
+                        }
                     }
                 }
             }
@@ -2640,6 +2704,12 @@ mod tests {
         }};
     }
 
+    macro_rules! assert_magic_not_match {
+        ($rule: literal, $content:literal) => {{
+            assert!(first_magic($rule, $content).unwrap().is_none());
+        }};
+    }
+
     #[test]
     fn test_unescape() {
         assert_eq!(unescape_string(r#"\ hello"#), " hello");
@@ -2690,11 +2760,10 @@ mod tests {
     }
 
     #[test]
-    fn test_any_string() {
-        let res = first_magic(
-            "0	string =This\\ should\\ match Any String",
-            "This should match",
-        );
-        res.unwrap().unwrap();
+    fn test_string_ops() {
+        assert_magic_match!("0	string >\0 Any String", "A\0");
+        assert_magic_match!("0	string >Test Any String", "Test 1\0");
+        assert_magic_match!("0	string <Test Any String", "\0");
+        assert_magic_not_match!("0	string >Test Any String", "\0");
     }
 }

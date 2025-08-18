@@ -149,7 +149,7 @@ search_test = ${ (regex | search) ~ WHITESPACE+ ~ string_value }
 
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
-string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ "="? ~ (any_value | string_value) }
+string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ (any_value | ((op_eq | op_lt | op_gt)? ~ string_value)) }
 
 // Test value (could be a hex, string, or integer)
 // test = ${ (b16_number ~ ASCII_DIGIT* | (PUNCTUATION | ASCII_ALPHANUMERIC | ("\\x" ~ ASCII_HEX_DIGIT{2}))+) | "x" }
