@@ -1,8 +1,9 @@
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, path::PathBuf, time::Instant};
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
+use lazy_cache::LazyCache;
 use magic_rs::{MagicDb, MagicFile};
-use tracing::{debug, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -80,15 +81,18 @@ fn main() -> Result<(), anyhow::Error> {
         Some(Command::Test(o)) => {
             let mut db = MagicDb::new();
 
+            let start = Instant::now();
             for rule in o.rules {
                 info!("loading magic rule: {}", rule.to_string_lossy());
 
                 db.load(MagicFile::open(rule)?)?;
             }
+            println!("Time parse rule files: {:?}", start.elapsed());
 
+            let start = Instant::now();
             for f in o.files {
-                let mut file = File::open(&f).unwrap();
-                let magics = db.magic(&mut file)?;
+                let mut haystack = LazyCache::<File>::open(&f, 4096, 4 << 20).unwrap();
+                let magics = db.magic(&mut haystack)?;
 
                 for (strength, magic) in magics {
                     println!(
@@ -99,6 +103,7 @@ fn main() -> Result<(), anyhow::Error> {
                     )
                 }
             }
+            println!("Time to scan file: {:?}", start.elapsed());
         }
         None => {}
     }

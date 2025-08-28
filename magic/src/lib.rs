@@ -3,11 +3,8 @@
 use chrono::DateTime;
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
-use pest::{
-    Parser, Span,
-    error::ErrorVariant,
-    iterators::{Pair, Pairs},
-};
+use lazy_cache::LazyCache;
+use pest::{Parser, Span, error::ErrorVariant, iterators::Pair};
 use pest_derive::Parser;
 use regex::bytes::{self, Regex};
 use std::{
@@ -16,7 +13,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
     fs,
-    io::{self, BufRead, BufReader, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     iter::Peekable,
     ops::{Add, BitAnd, BitXor, Div, Mul, Rem, Sub},
     path::Path,
@@ -30,6 +27,8 @@ use crate::utils::nonmagic;
 mod utils;
 
 const MAX_RECURSION: usize = 128;
+// constant found in libmagic. It is used to limit for search tests
+const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 
 macro_rules! debug_panic {
     ($($arg:tt)*) => {
@@ -608,11 +607,17 @@ impl ScalarDataType {
     }
 
     #[inline(always)]
-    fn read<R: Read + Seek>(&self, from: &mut R, switch_endianness: bool) -> Result<Scalar, Error> {
+    fn read<R: Read + Seek>(
+        &self,
+        from: &mut LazyCache<R>,
+        switch_endianness: bool,
+    ) -> Result<Scalar, Error> {
         macro_rules! read {
             ($ty: ty) => {{
                 let mut a = [0u8; std::mem::size_of::<$ty>()];
-                from.read_exact(&mut a)?;
+                // it is accepted to copy bytes here as we
+                // handle only primitive types
+                from.read_exact_into(&mut a)?;
                 a
             }};
         }
@@ -752,6 +757,7 @@ impl Transform {
 }
 
 // Any Magic Data type
+// FIXME: Any must carry StringTest so that we know the string mods / length
 #[derive(Debug, Clone)]
 enum Any {
     String,
@@ -1283,13 +1289,13 @@ impl Test {
     // read the value to test from the haystack
     fn read_test_value<R: Read + Seek>(
         &self,
-        haystack: &mut R,
+        haystack: &mut LazyCache<R>,
         switch_endianness: bool,
     ) -> Result<TestValue, Error> {
         macro_rules! read {
             ($ty: ty) => {{
                 let mut a = [0u8; std::mem::size_of::<$ty>()];
-                haystack.read_exact(&mut a)?;
+                haystack.read_exact_into(&mut a)?;
                 a
             }};
         }
@@ -1311,14 +1317,27 @@ impl Test {
                 let buf = if let Some(length) = t.length {
                     // if there is a length specified
                     let mut buf = vec![0u8; length];
-                    r.read_exact(&mut buf)?;
+                    let read = haystack.read_exact(length as u64)?;
+                    // FIXME: optimize this without copying
+                    buf.copy_from_slice(read);
                     buf
                 } else {
                     // no length specified we read until end of string
-                    let mut buf = vec![];
-                    r.read_until(b'\0', &mut buf)?;
-                    // we pop the trailing \0 if any
-                    buf.pop();
+                    let read = match t.cmp_op {
+                        CmpOp::Eq => haystack.read_exact(t.str.len() as u64)?,
+                        CmpOp::Lt | CmpOp::Gt => {
+                            let read = haystack.read_until_limit(b'\0', 8092)?;
+                            if read.len() > 0 {
+                                &read[..read.len() - 1]
+                            } else {
+                                read
+                            }
+                        }
+                        _ => unimplemented!(),
+                    };
+                    let mut buf = vec![0; read.len()];
+                    // FIXME: optimize this without copying
+                    buf.copy_from_slice(read);
                     buf
                 };
                 String::from_utf8(buf)
@@ -1331,8 +1350,10 @@ impl Test {
                 // this is the size of the pstring
                 // FIXME: adjust the size function of pstring mods
                 let _ = read_le!(u8);
-                let mut buf = vec![0u8; s.len()];
-                haystack.read_exact(buf.as_mut_slice())?;
+                let read = haystack.read_exact(s.len() as u64)?;
+                let mut buf = vec![0u8; read.len()];
+                // FIXME: optimize this without copying
+                buf.copy_from_slice(read);
 
                 String::from_utf8(buf)
                     .map(TestValue::PString)
@@ -1340,18 +1361,35 @@ impl Test {
             }
 
             Self::Regex(r) => {
-                let mut buf = vec![0u8; r.length.unwrap_or(8192)];
-                let n = haystack.read(buf.as_mut_slice())?;
-                buf.truncate(n);
+                let length = {
+                    match r.length {
+                        Some(len) => {
+                            if r.mods.contains(ReMod::LineLimit) {
+                                len * 80
+                            } else {
+                                len
+                            }
+                        }
+                        None => 8192,
+                    }
+                };
+
+                let read = haystack.read(length as u64)?;
+                let mut buf = vec![0u8; read.len()];
+                // FIXME: optimize this without copying
+                buf.copy_from_slice(read);
+
                 Ok(TestValue::Bytes(buf))
             }
 
             Self::Any(t) => match t {
                 Any::String => {
-                    // FIXME: unify reader
-                    let mut r = BufReader::new(haystack);
-                    let mut buf = vec![];
-                    r.read_until(b'\0', &mut buf)?;
+                    // FIXME: Any must carry  StringTest information so we must read accordingly
+                    let read = haystack.read_until_limit(b'\0', 8192)?;
+                    let mut buf = vec![0u8; read.len()];
+                    // FIXME: optimize this without copying
+                    buf.copy_from_slice(read);
+
                     String::from_utf8(buf)
                         .map(TestValue::String)
                         .map_err(Error::from)
@@ -1359,8 +1397,11 @@ impl Test {
                 }
                 Any::PString => {
                     let slen = read_le!(u8) as usize;
-                    let mut buf = vec![0u8; slen];
-                    haystack.read_exact(&mut buf)?;
+                    let read = haystack.read_exact(slen as u64)?;
+                    let mut buf = vec![0u8; read.len()];
+                    // FIXME: optimize this without copying
+
+                    buf.copy_from_slice(read);
                     String::from_utf8(buf)
                         .map(TestValue::PString)
                         .map_err(Error::from)
@@ -1420,20 +1461,20 @@ impl Test {
                 }
             }
             TestValue::String(tv) => {
-                if let Self::String(m) = self {
-                    match m.cmp_op {
+                if let Self::String(st) = self {
+                    match st.cmp_op {
                         CmpOp::Eq => {
-                            if tv == m.str {
+                            if tv == st.str {
                                 return Some(MatchRes::String(tv));
                             }
                         }
                         CmpOp::Gt => {
-                            if tv.len() > m.str.len() {
+                            if tv.len() > st.str.len() {
                                 return Some(MatchRes::String(tv));
                             }
                         }
                         CmpOp::Lt => {
-                            if tv.len() < m.str.len() {
+                            if tv.len() < st.str.len() {
                                 return Some(MatchRes::String(tv));
                             }
                         }
@@ -1462,6 +1503,8 @@ impl Test {
                         }
 
                         return Some(MatchRes::String(
+                            // FIXME: we shouldn't unwrap here it may panic because
+                            // we cannot guarantee this is valid UTF8
                             std::str::from_utf8(re_match.as_bytes()).unwrap().into(),
                         ));
                     }
@@ -1594,7 +1637,7 @@ impl IndOffset {
     // if we overflow we must not return an offset
     fn get_offset<R: Read + Seek>(
         &self,
-        haystack: &mut R,
+        haystack: &mut LazyCache<R>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
         let _ = match self.off_addr {
@@ -1608,7 +1651,7 @@ impl IndOffset {
         macro_rules! read_buf {
             ($ty: ty) => {{
                 let mut a = [0u8; std::mem::size_of::<$ty>()];
-                haystack.read_exact(&mut a)?;
+                haystack.read_exact_into(&mut a)?;
                 a
             }};
         }
@@ -1925,7 +1968,7 @@ impl Match {
         state: &mut MatchState,
         last_level_offset: Option<u64>,
         opt_start_offset: Option<Offset>,
-        haystack: &mut R,
+        haystack: &mut LazyCache<R>,
         switch_endianness: bool,
         db: &'a MagicDb,
         depth: usize,
@@ -2053,13 +2096,18 @@ impl Match {
         // FIXME: we may have a way to optimize here. In case we do a Any
         // test and we don't use the value to format the message, we don't
         // need to read the value.
-        if let Ok(tv) = self.test.read_test_value(haystack, switch_endianness) {
+        if let Ok(tv) = self
+            .test
+            .read_test_value(haystack, switch_endianness)
+            .inspect_err(|e| trace!("line={} error while reading test value: {e}", self.line))
+        {
             // we need to adjust stream offset if this is a regex test since we read beyond the match
             let adjust_stream_offset = matches!(&self.test, Test::Regex(_));
 
             trace_msg
                 .as_mut()
                 .map(|v| v.push(format!("test={:?}", self.test)));
+            //.map(|v| v.push(format!("test={:?}", self.test)));
 
             let match_res = self.test.match_value(tv);
 
@@ -2373,7 +2421,7 @@ impl EntryNode {
         state: &mut MatchState,
         last_level_offset: Option<u64>,
         opt_start_offset: Option<Offset>,
-        haystack: &mut R,
+        haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
@@ -2511,7 +2559,7 @@ impl MagicRule {
         &'r self,
         magic: &mut Magic<'r>,
         opt_start_offset: Option<Offset>,
-        haystack: &mut R,
+        haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
@@ -2666,13 +2714,15 @@ impl MagicDb {
         Ok(self)
     }
 
-    pub fn magic<R: Read + Seek>(&self, haystack: &mut R) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+    pub fn magic<R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+    ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let mut out = Vec::new();
         // using a BufReader to gain speed
-        let mut br = io::BufReader::new(haystack);
         for r in self.rules.iter() {
             let mut magic = Magic::default();
-            r.magic(&mut magic, None, &mut br, &self, false, 0)?;
+            r.magic(&mut magic, None, haystack, &self, false, 0)?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
@@ -2693,7 +2743,7 @@ mod tests {
     fn first_magic(rule: &str, content: &str) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
         md.load(FileMagicParser::parse_str(rule).unwrap()).unwrap();
-        let mut reader = Cursor::new(content);
+        let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
         let v = md.magic(&mut reader)?;
         Ok(v.into_iter().next().map(|(_, m)| m.into_static()))
     }
@@ -2761,6 +2811,7 @@ mod tests {
 
     #[test]
     fn test_string_ops() {
+        assert_magic_match!("0	string/b MZ MZ File", "MZ\0");
         assert_magic_match!("0	string >\0 Any String", "A\0");
         assert_magic_match!("0	string >Test Any String", "Test 1\0");
         assert_magic_match!("0	string <Test Any String", "\0");
