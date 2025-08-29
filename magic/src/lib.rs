@@ -968,19 +968,19 @@ struct ScalarTest {
 // 'buf is the lifetime of the buffer we are scanning
 #[derive(Debug, PartialEq, Eq)]
 enum TestValue<'buf> {
-    Scalar(Scalar),
-    String(&'buf str),
-    PString(&'buf str),
-    Bytes(&'buf [u8]),
+    Scalar(u64, Scalar),
+    String(u64, &'buf str),
+    PString(u64, &'buf str),
+    Bytes(u64, &'buf [u8]),
 }
 
 impl DynDisplay for TestValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
-            Self::Scalar(s) => DynDisplay::dyn_fmt(s, f),
-            Self::String(s) => DynDisplay::dyn_fmt(s, f),
-            Self::PString(s) => DynDisplay::dyn_fmt(s, f),
-            Self::Bytes(b) => Ok(format!("{:?}", b)),
+            Self::Scalar(_, s) => DynDisplay::dyn_fmt(s, f),
+            Self::String(_, s) => DynDisplay::dyn_fmt(s, f),
+            Self::PString(_, s) => DynDisplay::dyn_fmt(s, f),
+            Self::Bytes(_, b) => Ok(format!("{:?}", b)),
         }
     }
 }
@@ -995,17 +995,19 @@ impl DynDisplay for &TestValue<'_> {
 impl Display for TestValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Scalar(s) => write!(f, "{}", s),
-            Self::String(s) => write!(f, "{}", s),
-            Self::PString(s) => write!(f, "{}", s),
-            Self::Bytes(b) => write!(f, "{:?}", b),
+            Self::Scalar(_, s) => write!(f, "{}", s),
+            Self::String(_, s) => write!(f, "{}", s),
+            Self::PString(_, s) => write!(f, "{}", s),
+            Self::Bytes(_, b) => write!(f, "{:?}", b),
         }
     }
 }
 
+// Carry the offset of the start of the data in the stream
+// and the data itself
 enum MatchRes<'buf> {
-    String(&'buf str),
-    Scalar(Scalar),
+    String(u64, &'buf str),
+    Scalar(u64, Scalar),
 }
 
 impl DynDisplay for &MatchRes<'_> {
@@ -1017,8 +1019,8 @@ impl DynDisplay for &MatchRes<'_> {
 impl DynDisplay for MatchRes<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
-            Self::Scalar(s) => s.dyn_fmt(f),
-            Self::String(s) => s.dyn_fmt(f),
+            Self::Scalar(_, s) => s.dyn_fmt(f),
+            Self::String(_, s) => s.dyn_fmt(f),
         }
     }
 }
@@ -1307,10 +1309,12 @@ impl Test {
             };
         }
 
+        let test_value_offset = haystack.lazy_stream_position();
+
         match self {
             Self::Scalar(t) => {
                 t.ty.read(haystack, switch_endianness)
-                    .map(TestValue::Scalar)
+                    .map(|s| TestValue::Scalar(test_value_offset, s))
             }
             Self::String(t) => {
                 let buf = if let Some(length) = t.length {
@@ -1334,7 +1338,7 @@ impl Test {
                     read
                 };
                 str::from_utf8(buf)
-                    .map(TestValue::String)
+                    .map(|s| TestValue::String(test_value_offset, s))
                     .map_err(Error::from)
             }
 
@@ -1346,7 +1350,7 @@ impl Test {
                 let read = haystack.read_exact(s.len() as u64)?;
 
                 str::from_utf8(read)
-                    .map(TestValue::PString)
+                    .map(|s| TestValue::PString(test_value_offset, s))
                     .map_err(Error::from)
             }
 
@@ -1365,7 +1369,7 @@ impl Test {
                 };
 
                 let read = haystack.read(length as u64)?;
-                Ok(TestValue::Bytes(read))
+                Ok(TestValue::Bytes(test_value_offset, read))
             }
 
             Self::Any(t) => match t {
@@ -1374,7 +1378,7 @@ impl Test {
                     let read = haystack.read_until_limit(b'\0', 8192)?;
 
                     str::from_utf8(read)
-                        .map(TestValue::String)
+                        .map(|s| TestValue::String(test_value_offset, s))
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
                 }
@@ -1383,11 +1387,13 @@ impl Test {
                     let read = haystack.read_exact(slen as u64)?;
 
                     str::from_utf8(read)
-                        .map(TestValue::PString)
+                        .map(|s| TestValue::PString(test_value_offset, s))
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
                 }
-                Any::Scalar(d) => d.read(haystack, switch_endianness).map(TestValue::Scalar),
+                Any::Scalar(d) => d
+                    .read(haystack, switch_endianness)
+                    .map(|s| TestValue::Scalar(test_value_offset, s)),
             },
 
             _ => unimplemented!(),
@@ -1399,19 +1405,19 @@ impl Test {
         // always true when we want to read value
         if let Self::Any(v) = self {
             match tv {
-                TestValue::PString(ps) => {
+                TestValue::PString(o, ps) => {
                     if matches!(v, Any::PString) {
-                        return Some(MatchRes::String(ps));
+                        return Some(MatchRes::String(*o, ps));
                     }
                 }
-                TestValue::String(s) => {
+                TestValue::String(o, s) => {
                     if matches!(v, Any::String) {
-                        return Some(MatchRes::String(s));
+                        return Some(MatchRes::String(*o, s));
                     }
                 }
-                TestValue::Scalar(s) => {
+                TestValue::Scalar(o, s) => {
                     if matches!(v, Any::Scalar(_)) {
-                        return Some(MatchRes::Scalar(*s));
+                        return Some(MatchRes::Scalar(*o, *s));
                     }
                 }
                 _ => panic!("not good"),
@@ -1422,7 +1428,7 @@ impl Test {
         }
 
         match tv {
-            TestValue::Scalar(ts) => {
+            TestValue::Scalar(o, ts) => {
                 if let Self::Scalar(t) = self {
                     let tv: Scalar = t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
 
@@ -1436,26 +1442,26 @@ impl Test {
                     };
 
                     if ok {
-                        return Some(MatchRes::Scalar(tv));
+                        return Some(MatchRes::Scalar(*o, tv));
                     }
                 }
             }
-            TestValue::String(tv) => {
+            TestValue::String(o, tv) => {
                 if let Self::String(st) = self {
                     match st.cmp_op {
                         CmpOp::Eq => {
                             if *tv == st.str {
-                                return Some(MatchRes::String(tv));
+                                return Some(MatchRes::String(*o, tv));
                             }
                         }
                         CmpOp::Gt => {
                             if tv.len() > st.str.len() {
-                                return Some(MatchRes::String(tv));
+                                return Some(MatchRes::String(*o, tv));
                             }
                         }
                         CmpOp::Lt => {
                             if tv.len() < st.str.len() {
-                                return Some(MatchRes::String(tv));
+                                return Some(MatchRes::String(*o, tv));
                             }
                         }
                         // unsupported for strings
@@ -1465,14 +1471,14 @@ impl Test {
                     }
                 }
             }
-            TestValue::PString(tv) => {
+            TestValue::PString(o, tv) => {
                 if let Self::PString(m) = self {
                     if tv == m {
-                        return Some(MatchRes::String(tv));
+                        return Some(MatchRes::String(*o, tv));
                     }
                 }
             }
-            TestValue::Bytes(buf) => {
+            TestValue::Bytes(o, buf) => {
                 if let Self::Regex(r) = self {
                     if let Some(re_match) = r.re.find(&buf) {
                         if let Some(n_pos) = r.n_pos {
@@ -1483,6 +1489,8 @@ impl Test {
                         }
 
                         return Some(MatchRes::String(
+                            // the offset of the string is computed from the start of the buffer
+                            o + re_match.start() as u64,
                             // FIXME: we shouldn't unwrap here it may panic because
                             // we cannot guarantee this is valid UTF8
                             std::str::from_utf8(re_match.as_bytes()).unwrap().into(),
@@ -1645,7 +1653,7 @@ impl IndOffset {
         }
 
         // in theory every offset read should end up in something seekable from start, so we can use u64 to store the result
-        let mut o = match self.ty {
+        let o = match self.ty {
             OffsetType::Byte => {
                 if self.signed {
                     read_le!(u8) as u64
@@ -2028,9 +2036,6 @@ impl Match {
             }
         }
 
-        // FIXME: handle better
-        let offset_before_match = haystack.stream_position()?;
-
         let i = opt_start_offset
             .map(|so| match so {
                 Offset::Direct(DirOffset::Start(s)) => s as i64,
@@ -2117,8 +2122,8 @@ impl Match {
                     // we need to compute offset before modifying haystack as
                     // match_res holds a reference to the haystack, not satisfying
                     // borrow checking rules
-                    let opt_adjusted_offset = if let MatchRes::String(s) = mr {
-                        Some(offset_before_match + s.len() as u64)
+                    let opt_adjusted_offset = if let MatchRes::String(o, s) = mr {
+                        Some(o + s.len() as u64)
                     } else {
                         None
                     };
