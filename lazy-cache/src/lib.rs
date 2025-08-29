@@ -75,6 +75,11 @@ where
     }
 
     #[inline(always)]
+    pub fn lazy_stream_position(&self) -> u64 {
+        self.stream_pos
+    }
+
+    #[inline(always)]
     fn cleanup_lru_item(&mut self, chunk_id: u64, data: Vec<u8>) {
         let end = chunk_id + data.len() as u64 / self.block_size;
         for cid in chunk_id..end {
