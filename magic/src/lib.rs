@@ -1246,7 +1246,7 @@ impl Test {
                 // we handle cases where we wanna match more positions
                 if let Some(n_pos) = s.n_pos {
                     if n_pos > 1 {
-                        pattern.insert_str(0, "^.*?");
+                        pattern.insert_str(0, ".*?");
                     }
                 }
 
@@ -1312,8 +1312,6 @@ impl Test {
                     .map(TestValue::Scalar)
             }
             Self::String(t) => {
-                let mut r = BufReader::new(haystack);
-
                 let buf = if let Some(length) = t.length {
                     // if there is a length specified
                     let mut buf = vec![0u8; length];
