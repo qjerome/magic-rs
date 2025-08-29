@@ -17,7 +17,7 @@ use std::{
     iter::Peekable,
     ops::{Add, BitAnd, BitXor, Div, Mul, Rem, Sub},
     path::Path,
-    string::FromUtf8Error,
+    str::Utf8Error,
 };
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
@@ -246,7 +246,7 @@ pub enum Error {
     #[error("parser error: {0}")]
     Parse(#[from] Box<pest::error::Error<Rule>>),
     #[error("from-utf8: {0}")]
-    FromUtf8(#[from] FromUtf8Error),
+    Utf8(#[from] Utf8Error),
     #[error("maximum recursion reached: {0}")]
     MaximumRecursion(usize),
 }
@@ -965,15 +965,16 @@ struct ScalarTest {
 
 // the value read from the haystack we want to
 // match against
+// 'buf is the lifetime of the buffer we are scanning
 #[derive(Debug, PartialEq, Eq)]
-enum TestValue {
+enum TestValue<'buf> {
     Scalar(Scalar),
-    String(String),
-    PString(String),
-    Bytes(Vec<u8>),
+    String(&'buf str),
+    PString(&'buf str),
+    Bytes(&'buf [u8]),
 }
 
-impl DynDisplay for TestValue {
+impl DynDisplay for TestValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
             Self::Scalar(s) => DynDisplay::dyn_fmt(s, f),
@@ -984,14 +985,14 @@ impl DynDisplay for TestValue {
     }
 }
 
-impl DynDisplay for &TestValue {
+impl DynDisplay for &TestValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         // Dereference self to get the TestValue and call its fmt method
         DynDisplay::dyn_fmt(*self, f)
     }
 }
 
-impl Display for TestValue {
+impl Display for TestValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Scalar(s) => write!(f, "{}", s),
@@ -1002,18 +1003,18 @@ impl Display for TestValue {
     }
 }
 
-enum MatchRes {
-    String(String),
+enum MatchRes<'buf> {
+    String(&'buf str),
     Scalar(Scalar),
 }
 
-impl DynDisplay for &MatchRes {
+impl DynDisplay for &MatchRes<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         (*self).dyn_fmt(f)
     }
 }
 
-impl DynDisplay for MatchRes {
+impl DynDisplay for MatchRes<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
             Self::Scalar(s) => s.dyn_fmt(f),
@@ -1287,11 +1288,11 @@ impl Test {
     }
 
     // read the value to test from the haystack
-    fn read_test_value<R: Read + Seek>(
+    fn read_test_value<'haystack, R: Read + Seek>(
         &self,
-        haystack: &mut LazyCache<R>,
+        haystack: &'haystack mut LazyCache<R>,
         switch_endianness: bool,
-    ) -> Result<TestValue, Error> {
+    ) -> Result<TestValue<'haystack>, Error> {
         macro_rules! read {
             ($ty: ty) => {{
                 let mut a = [0u8; std::mem::size_of::<$ty>()];
@@ -1314,11 +1315,8 @@ impl Test {
             Self::String(t) => {
                 let buf = if let Some(length) = t.length {
                     // if there is a length specified
-                    let mut buf = vec![0u8; length];
                     let read = haystack.read_exact(length as u64)?;
-                    // FIXME: optimize this without copying
-                    buf.copy_from_slice(read);
-                    buf
+                    read
                 } else {
                     // no length specified we read until end of string
                     let read = match t.cmp_op {
@@ -1333,12 +1331,9 @@ impl Test {
                         }
                         _ => unimplemented!(),
                     };
-                    let mut buf = vec![0; read.len()];
-                    // FIXME: optimize this without copying
-                    buf.copy_from_slice(read);
-                    buf
+                    read
                 };
-                String::from_utf8(buf)
+                str::from_utf8(buf)
                     .map(TestValue::String)
                     .map_err(Error::from)
             }
@@ -1349,11 +1344,8 @@ impl Test {
                 // FIXME: adjust the size function of pstring mods
                 let _ = read_le!(u8);
                 let read = haystack.read_exact(s.len() as u64)?;
-                let mut buf = vec![0u8; read.len()];
-                // FIXME: optimize this without copying
-                buf.copy_from_slice(read);
 
-                String::from_utf8(buf)
+                str::from_utf8(read)
                     .map(TestValue::PString)
                     .map_err(Error::from)
             }
@@ -1373,22 +1365,15 @@ impl Test {
                 };
 
                 let read = haystack.read(length as u64)?;
-                let mut buf = vec![0u8; read.len()];
-                // FIXME: optimize this without copying
-                buf.copy_from_slice(read);
-
-                Ok(TestValue::Bytes(buf))
+                Ok(TestValue::Bytes(read))
             }
 
             Self::Any(t) => match t {
                 Any::String => {
                     // FIXME: Any must carry  StringTest information so we must read accordingly
                     let read = haystack.read_until_limit(b'\0', 8192)?;
-                    let mut buf = vec![0u8; read.len()];
-                    // FIXME: optimize this without copying
-                    buf.copy_from_slice(read);
 
-                    String::from_utf8(buf)
+                    str::from_utf8(read)
                         .map(TestValue::String)
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
@@ -1396,11 +1381,8 @@ impl Test {
                 Any::PString => {
                     let slen = read_le!(u8) as usize;
                     let read = haystack.read_exact(slen as u64)?;
-                    let mut buf = vec![0u8; read.len()];
-                    // FIXME: optimize this without copying
 
-                    buf.copy_from_slice(read);
-                    String::from_utf8(buf)
+                    str::from_utf8(read)
                         .map(TestValue::PString)
                         .map_err(Error::from)
                         .inspect_err(|e| println!("{}", e))
@@ -1413,7 +1395,7 @@ impl Test {
     }
 
     #[inline(always)]
-    fn match_value(&self, tv: TestValue) -> Option<MatchRes> {
+    fn match_value<'s>(&self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
         // always true when we want to read value
         if let Self::Any(v) = self {
             match tv {
@@ -1429,7 +1411,7 @@ impl Test {
                 }
                 TestValue::Scalar(s) => {
                     if matches!(v, Any::Scalar(_)) {
-                        return Some(MatchRes::Scalar(s));
+                        return Some(MatchRes::Scalar(*s));
                     }
                 }
                 _ => panic!("not good"),
@@ -1442,7 +1424,7 @@ impl Test {
         match tv {
             TestValue::Scalar(ts) => {
                 if let Self::Scalar(t) = self {
-                    let tv: Scalar = t.transform.as_ref().map(|t| t.apply(ts)).unwrap_or(ts);
+                    let tv: Scalar = t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
 
                     let ok = match t.cmp_op {
                         CmpOp::Eq => tv == t.value,
@@ -1462,7 +1444,7 @@ impl Test {
                 if let Self::String(st) = self {
                     match st.cmp_op {
                         CmpOp::Eq => {
-                            if tv == st.str {
+                            if *tv == st.str {
                                 return Some(MatchRes::String(tv));
                             }
                         }
@@ -1485,7 +1467,7 @@ impl Test {
             }
             TestValue::PString(tv) => {
                 if let Self::PString(m) = self {
-                    if &tv == m {
+                    if tv == m {
                         return Some(MatchRes::String(tv));
                     }
                 }
@@ -2047,7 +2029,7 @@ impl Match {
         }
 
         // FIXME: handle better
-        let current_offset = haystack.stream_position()?;
+        let offset_before_match = haystack.stream_position()?;
 
         let i = opt_start_offset
             .map(|so| match so {
@@ -2105,9 +2087,8 @@ impl Match {
             trace_msg
                 .as_mut()
                 .map(|v| v.push(format!("test={:?}", self.test)));
-            //.map(|v| v.push(format!("test={:?}", self.test)));
 
-            let match_res = self.test.match_value(tv);
+            let match_res = self.test.match_value(&tv);
 
             trace_msg.as_mut().map(|v| {
                 v.push(format!(
@@ -2133,8 +2114,17 @@ impl Match {
                 }
                 // we re-ajust the stream offset only if we have a match
                 if adjust_stream_offset {
-                    if let MatchRes::String(s) = mr {
-                        haystack.seek(SeekFrom::Start(current_offset + s.len() as u64))?;
+                    // we need to compute offset before modifying haystack as
+                    // match_res holds a reference to the haystack, not satisfying
+                    // borrow checking rules
+                    let opt_adjusted_offset = if let MatchRes::String(s) = mr {
+                        Some(offset_before_match + s.len() as u64)
+                    } else {
+                        None
+                    };
+
+                    if let Some(o) = opt_adjusted_offset {
+                        haystack.seek(SeekFrom::Start(o))?;
                     }
                 }
                 state.set_continuation_level(self.continuation_level());
