@@ -29,6 +29,8 @@ mod utils;
 const MAX_RECURSION: usize = 128;
 // constant found in libmagic. It is used to limit for search tests
 const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
+// constant found in libmagic. It is used to limit for regex tests
+const FILE_REGEX_MAX: usize = 8192;
 
 macro_rules! debug_panic {
     ($($arg:tt)*) => {
@@ -133,23 +135,26 @@ fn unescape_string(s: &str) -> String {
 #[derive(Debug, Clone)]
 enum Message {
     String(String),
-    Format(FormatString),
+    Format {
+        printf_spec: String,
+        fs: FormatString,
+    },
 }
 
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::String(s) => write!(f, "{}", s),
-            Self::Format(fs) => write!(f, "{}", fs.to_string_lossy()),
+            Self::Format { printf_spec: _, fs } => write!(f, "{}", fs.to_string_lossy()),
         }
     }
 }
 
 impl Message {
-    fn convert_printf_to_rust_format(c_format: &str) -> (String, bool) {
+    fn convert_printf_to_rust_format(c_format: &str) -> (String, Option<String>) {
         let mut rust_format = String::new();
         let mut chars = c_format.chars().peekable();
-        let mut replacement_happened = false;
+        let mut printf_spec = None;
 
         while let Some(c) = chars.next() {
             if c == '%' {
@@ -190,15 +195,16 @@ impl Message {
                     _ => "{}", // Default case
                 };
 
+                printf_spec = Some(specifier);
+
                 // Append the converted specifier
                 rust_format.push_str(rust_specifier);
-                replacement_happened = true;
             } else {
                 rust_format.push(c);
             }
         }
 
-        (rust_format, replacement_happened)
+        (rust_format, printf_spec)
     }
 
     fn from_pair(pair: Pair<'_, Rule>) -> Self {
@@ -208,12 +214,17 @@ impl Message {
 
     #[inline]
     fn from_str<S: AsRef<str>>(s: S) -> Message {
-        let (s, _) = Self::convert_printf_to_rust_format(s.as_ref());
+        let (s, printf_spec) = Self::convert_printf_to_rust_format(s.as_ref());
 
         // FIXME: remove unwrap
         let fs = FormatString::from_string(s.to_string()).unwrap();
         if fs.contains_format() {
-            Message::Format(fs)
+            // cannot panic: printf_spec is guaranteed to be Some if fs
+            // contains a format string
+            Message::Format {
+                printf_spec: printf_spec.unwrap(),
+                fs,
+            }
         } else {
             Message::String(fs.into_string())
         }
@@ -223,12 +234,41 @@ impl Message {
     fn format_with(&self, mr: Option<&MatchRes>) -> Cow<'_, str> {
         match self {
             Self::String(s) => Cow::Borrowed(s.as_str()),
-            // FIXME: remove unwrap
-            Self::Format(s) => {
+            Self::Format {
+                printf_spec: c_spec,
+                fs,
+            } => {
                 if let Some(mr) = mr {
-                    Cow::Owned(dformat!(s, mr).unwrap())
+                    match mr {
+                        MatchRes::String(_, _) => {
+                            // FIXME: fix unwrap
+                            Cow::Owned(dformat!(fs, mr).unwrap())
+                        }
+                        MatchRes::Scalar(_, scalar) => {
+                            // we want to print a byte as char
+                            if c_spec.as_str() == "c" {
+                                match scalar {
+                                    Scalar::byte(b) => {
+                                        let b = (*b as u8) as char;
+                                        // FIXME: fix unwrap
+                                        Cow::Owned(dformat!(fs, b).unwrap())
+                                    }
+                                    Scalar::ubyte(b) => {
+                                        let b = *b as char;
+                                        // FIXME: fix unwrap
+                                        Cow::Owned(dformat!(fs, b).unwrap())
+                                    }
+                                    // FIXME: fix unwrap
+                                    _ => Cow::Owned(dformat!(fs, mr).unwrap()),
+                                }
+                            } else {
+                                // FIXME: fix unwrap
+                                Cow::Owned(dformat!(fs, mr).unwrap())
+                            }
+                        }
+                    }
                 } else {
-                    s.to_string_lossy()
+                    fs.to_string_lossy()
                 }
             }
         }
@@ -790,6 +830,9 @@ struct RegexTest {
     n_pos: Option<usize>,
     mods: FlagSet<ReMod>,
     str_mods: FlagSet<StringMod>,
+    // this is actually a search test
+    // converted into a regex
+    search: bool,
 }
 
 impl From<RegexTest> for Test {
@@ -831,6 +874,7 @@ impl RegexTest {
             n_pos: None,
             mods,
             str_mods,
+            search: false,
         })
     }
 }
@@ -1260,6 +1304,7 @@ impl Test {
                     n_pos: s.n_pos,
                     mods: FlagSet::empty(),
                     str_mods: s.mods,
+                    search: true,
                 }
                 .into()
             }
@@ -1279,6 +1324,7 @@ impl Test {
                         n_pos: None,
                         mods: FlagSet::empty(),
                         str_mods: st.mods,
+                        search: false,
                     }
                     .into()
                 } else {
@@ -1364,7 +1410,15 @@ impl Test {
                                 len
                             }
                         }
-                        None => 8192,
+
+                        None => {
+                            // search tests are made of FILE_BYTES_MAX
+                            if r.search {
+                                FILE_BYTES_MAX
+                            } else {
+                                FILE_REGEX_MAX
+                            }
+                        }
                     }
                 };
 
