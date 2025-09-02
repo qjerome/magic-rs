@@ -996,7 +996,10 @@ impl StringTest {
 struct SearchTest {
     str: String,
     n_pos: Option<usize>,
-    mods: FlagSet<StringMod>,
+    // FIXME: handle all string mods
+    str_mods: FlagSet<StringMod>,
+    // FIXME: handle all re mods
+    re_mods: FlagSet<ReMod>,
 }
 
 impl From<SearchTest> for Test {
@@ -1008,21 +1011,34 @@ impl From<SearchTest> for Test {
 impl SearchTest {
     fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str) -> Self {
         let mut length = None;
-        let mut mods: FlagSet<StringMod> = FlagSet::empty();
+        let mut str_mods: FlagSet<StringMod> = FlagSet::empty();
+        let mut re_mods: FlagSet<ReMod> = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
                 Rule::pos_number => length = Some(parse_pos_number(p) as usize),
                 Rule::string_mod => {
                     for m in p.as_str().chars() {
                         match m {
-                            'b' => mods |= StringMod::ForceBin,
-                            'C' => mods |= StringMod::UpperInsensitive,
-                            'c' => mods |= StringMod::LowerInsensitive,
-                            'f' => mods |= StringMod::FullWordMatch,
-                            'T' => mods |= StringMod::Trim,
-                            't' => mods |= StringMod::ForceText,
-                            'W' => mods |= StringMod::CompactWhitespace,
-                            'w' => mods |= StringMod::OptBlank,
+                            'b' => str_mods |= StringMod::ForceBin,
+                            'C' => str_mods |= StringMod::UpperInsensitive,
+                            'c' => str_mods |= StringMod::LowerInsensitive,
+                            'f' => str_mods |= StringMod::FullWordMatch,
+                            'T' => str_mods |= StringMod::Trim,
+                            't' => str_mods |= StringMod::ForceText,
+                            'W' => str_mods |= StringMod::CompactWhitespace,
+                            'w' => str_mods |= StringMod::OptBlank,
+                            _ => {}
+                        }
+                    }
+                }
+                Rule::regex_mod => {
+                    for m in p.as_str().chars() {
+                        match m {
+                            'c' => {
+                                re_mods |= ReMod::CaseInsensitive;
+                            }
+                            's' => re_mods |= ReMod::StartOffsetUpdate,
+                            'l' => re_mods |= ReMod::LineLimit,
                             _ => {}
                         }
                     }
@@ -1034,7 +1050,8 @@ impl SearchTest {
         Self {
             str: str.to_string(),
             n_pos: length,
-            mods,
+            str_mods,
+            re_mods,
         }
     }
 }
@@ -1328,7 +1345,7 @@ impl Test {
                 // if we search only at one position it means we must match
                 // start of string
                 let mut pattern =
-                    Self::string_to_re_pattern(&s.str, s.mods, matches!(s.n_pos, Some(1)));
+                    Self::string_to_re_pattern(&s.str, s.str_mods, matches!(s.n_pos, Some(1)));
 
                 // we handle cases where we wanna match more positions
                 if let Some(n_pos) = s.n_pos {
@@ -1342,8 +1359,8 @@ impl Test {
                     re: Regex::new(&pattern).unwrap(),
                     length: None,
                     n_pos: s.n_pos,
-                    mods: FlagSet::empty(),
-                    str_mods: s.mods,
+                    mods: s.re_mods,
+                    str_mods: s.str_mods,
                     search: true,
                 }
                 .into()
@@ -2882,6 +2899,14 @@ mod tests {
         };
     }
 
+    macro_rules! parse_assert {
+        ($rule:literal) => {
+            FileMagicParser::parse_str($rule)
+                .inspect_err(|e| eprintln!("{e}"))
+                .unwrap();
+        };
+    }
+
     macro_rules! assert_magic_match {
         ($rule: literal, $content:literal) => {{
             first_magic($rule, $content).unwrap().unwrap();
@@ -3007,5 +3032,12 @@ mod tests {
         // Test x operator
         assert_magic_match!("0 belong x Big-endian long", b"\x12\x34\x56\x78");
         assert_magic_match!("0 belong x Big-endian long", b"\x78\x56\x34\x12");
+    }
+
+    #[test]
+    fn test_parse_search() {
+        parse_assert!("0 search test");
+        parse_assert!("0 search/24/s test");
+        parse_assert!("0 search/s/24 test");
     }
 }
