@@ -38,12 +38,12 @@ op_lt     = ${ "<" }
 // flags
 printable_no_ws =  { '\u{21}'..'\u{7E}' }
 mime_type       = @{ (!NEWLINE ~ ANY)+ }
-mime_flag       =  { "mime" ~ WHITESPACE+ ~ mime_type }
+mime_flag       =  { "mime" ~ mime_type }
 exts            = @{ printable_no_ws+ }
-ext_flag        =  { "ext" ~ WHITESPACE+ ~ exts }
-apple_flag      =  { "apple" ~ WHITESPACE+ ~ printable_no_ws{8} }
-strength_flag   =  { "strength" ~ WHITESPACE+ ~ (op_add | op_mul | op_sub | op_div | op_sub) ~ WHITESPACE* ~ pos_number }
-flag            = ${ "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) }
+ext_flag        =  { "ext" ~ exts }
+apple_flag      =  { "apple" ~ printable_no_ws{8} }
+strength_flag   =  { "strength" ~ (op_add | op_mul | op_sub | op_div | op_sub) ~ pos_number }
+flag            =  { "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) }
 
 neg_number = ${ "-" ~ pos_number }
 // hex must be checked first as 0 is also b10 number
