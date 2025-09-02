@@ -589,6 +589,7 @@ impl ScalarDataType {
         match self {
             Self::byte => Ok(Scalar::byte(i as i8)),
             Self::short => Ok(Scalar::short(i as i16)),
+            Self::beshort => Ok(Scalar::beshort(i as i16)),
             Self::quad => Ok(Scalar::quad(i)),
             Self::long => Ok(Scalar::long(i as i32)),
             Self::ledate => Ok(Scalar::ledate(i as i32)),
