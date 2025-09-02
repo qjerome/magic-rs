@@ -36,7 +36,7 @@ op_lt     = ${ "<" }
 
 // flags
 printable_no_ws =  { '\u{21}'..'\u{7E}' }
-mime_type       = @{ (ASCII_ALPHANUMERIC | "-" | "/" | ".")+ }
+mime_type       = @{ (!NEWLINE ~ ANY)+ }
 mime_flag       =  { "mime" ~ WHITESPACE+ ~ mime_type }
 exts            = @{ printable_no_ws+ }
 ext_flag        =  { "ext" ~ WHITESPACE+ ~ exts }
