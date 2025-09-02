@@ -1998,7 +1998,7 @@ impl From<Use> for Match {
             depth: value.depth,
             offset: value.start_offset,
             test: Test::Use(value.switch_endianness, value.rule_name),
-            message: None,
+            message: value.message,
         }
     }
 }
@@ -2060,6 +2060,8 @@ impl Match {
         })
     }
 
+    // FIXME: handle push_message only once based on the success
+    // or not of the test.
     #[inline]
     fn matches<'a, R: Read + Seek>(
         &'a self,
@@ -2085,6 +2087,9 @@ impl Match {
 
         if let Test::Name(name) = &self.test {
             trace!("line={} running rule {name}", self.line);
+            if let Some(msg) = self.message.as_ref() {
+                magic.push_message(msg.format_with(None));
+            }
             return Ok(true);
         }
 
@@ -2113,6 +2118,10 @@ impl Match {
                     Offset::from(DirOffset::Start(o))
                 }
             };
+
+            if let Some(msg) = self.message.as_ref() {
+                magic.push_message(msg.format_with(None));
+            }
 
             dr.rule.magic(
                 magic,
@@ -2311,6 +2320,7 @@ pub struct Use {
     start_offset: Offset,
     rule_name: String,
     switch_endianness: bool,
+    message: Option<Message>,
 }
 
 impl Use {
@@ -2353,12 +2363,15 @@ impl Use {
             "wrong parsing rule"
         );
 
+        let message = pairs.next().map(|m| Message::from_pair(m));
+
         Self {
             line,
             depth,
             start_offset: offset,
             rule_name: rule_name_token.as_str().to_string(),
             switch_endianness: endianness_switch,
+            message,
         }
     }
 }
@@ -2781,8 +2794,10 @@ impl<'m> Magic<'m> {
 
     #[inline(always)]
     fn push_message<'a: 'm>(&mut self, msg: Cow<'a, str>) {
-        debug!("pushing message: msg={msg} len={}", msg.len());
-        self.message.push(msg);
+        if !msg.is_empty() {
+            debug!("pushing message: msg={msg} len={}", msg.len());
+            self.message.push(msg);
+        }
     }
 
     fn insert_mimetype<'a: 'm>(&mut self, mime: Cow<'a, str>) {
@@ -2846,15 +2861,36 @@ mod tests {
 
     fn first_magic(rule: &str, content: &[u8]) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
-        md.load(FileMagicParser::parse_str(rule).unwrap()).unwrap();
+        md.load(
+            FileMagicParser::parse_str(rule)
+                .inspect_err(|e| eprintln!("{e}"))
+                .unwrap(),
+        )
+        .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
         let v = md.magic(&mut reader)?;
         Ok(v.into_iter().next().map(|(_, m)| m.into_static()))
     }
 
+    /// helper macro to debug tests
+    #[allow(unused_macros)]
+    macro_rules! enable_trace {
+        () => {
+            tracing_subscriber::fmt()
+                .with_max_level(tracing_subscriber::filter::LevelFilter::TRACE)
+                .init();
+        };
+    }
+
     macro_rules! assert_magic_match {
         ($rule: literal, $content:literal) => {{
             first_magic($rule, $content).unwrap().unwrap();
+        }};
+        ($rule: literal, $content:literal, $message:literal) => {{
+            assert_eq!(
+                first_magic($rule, $content).unwrap().unwrap().message(),
+                $message
+            );
         }};
     }
 
@@ -2920,6 +2956,21 @@ mod tests {
         assert_magic_match!("0	string >Test Any String", b"Test 1\0");
         assert_magic_match!("0	string <Test Any String", b"\0");
         assert_magic_not_match!("0	string >Test Any String", b"\0");
+    }
+
+    #[test]
+    fn test_use_with_message() {
+        assert_magic_match!(
+            r#"
+0 string MZ
+>0 use mz first match
+
+0 name mz then second match
+>0 string MZ
+"#,
+            b"MZ\0",
+            "first match then second match"
+        );
     }
 
     #[test]
