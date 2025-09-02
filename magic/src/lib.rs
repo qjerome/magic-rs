@@ -26,7 +26,8 @@ use crate::utils::nonmagic;
 
 mod utils;
 
-const MAX_RECURSION: usize = 128;
+// corresponds to FILE_INDIR_MAX constant defined in libmagic
+const MAX_RECURSION: usize = 50;
 // constant found in libmagic. It is used to limit for search tests
 const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
