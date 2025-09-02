@@ -1682,7 +1682,7 @@ impl IndOffset {
         haystack: &mut LazyCache<R>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
-        let _ = match self.off_addr {
+        let main_offset_offset = match self.off_addr {
             DirOffset::Start(s) => haystack.seek(SeekFrom::Start(s as u64))?,
             DirOffset::LastUpper(c) => haystack.seek(SeekFrom::Start(
                 (last_upper_match_offset.unwrap_or_default() as i64 + c) as u64,
@@ -1706,64 +1706,70 @@ impl IndOffset {
             ($ty: ty ) => {{ <$ty>::from_be_bytes(read_buf!($ty)) }};
         }
 
+        macro_rules! read_value {
+            () => {
+                match self.ty {
+                    OffsetType::Byte => {
+                        if self.signed {
+                            read_le!(u8) as u64
+                        } else {
+                            read_le!(i8) as u64
+                        }
+                    }
+                    OffsetType::DoubleLe => read_le!(f64) as u64,
+                    OffsetType::DoubleBe => read_be!(f64) as u64,
+                    OffsetType::ShortLe => {
+                        if self.signed {
+                            read_le!(i16) as u64
+                        } else {
+                            read_le!(u16) as u64
+                        }
+                    }
+                    OffsetType::ShortBe => {
+                        if self.signed {
+                            read_be!(i16) as u64
+                        } else {
+                            read_be!(u16) as u64
+                        }
+                    }
+                    OffsetType::Id3Le => unimplemented!(),
+                    OffsetType::Id3Be => unimplemented!(),
+                    OffsetType::LongLe => {
+                        if self.signed {
+                            read_le!(i32) as u64
+                        } else {
+                            read_le!(u32) as u64
+                        }
+                    }
+                    OffsetType::LongBe => {
+                        if self.signed {
+                            read_be!(i32) as u64
+                        } else {
+                            read_be!(u32) as u64
+                        }
+                    }
+                    OffsetType::Middle => unimplemented!(),
+                    OffsetType::Octal => unimplemented!(),
+                    OffsetType::QuadLe => {
+                        if self.signed {
+                            read_le!(i64) as u64
+                        } else {
+                            read_le!(u64)
+                        }
+                    }
+                    OffsetType::QuadBe => {
+                        if self.signed {
+                            read_be!(i64) as u64
+                        } else {
+                            read_be!(u64)
+                        }
+                    }
+                }
+            };
+        }
+
         // in theory every offset read should end up in something seekable from start, so we can use u64 to store the result
-        let o = match self.ty {
-            OffsetType::Byte => {
-                if self.signed {
-                    read_le!(u8) as u64
-                } else {
-                    read_le!(i8) as u64
-                }
-            }
-            OffsetType::DoubleLe => read_le!(f64) as u64,
-            OffsetType::DoubleBe => read_be!(f64) as u64,
-            OffsetType::ShortLe => {
-                if self.signed {
-                    read_le!(i16) as u64
-                } else {
-                    read_le!(u16) as u64
-                }
-            }
-            OffsetType::ShortBe => {
-                if self.signed {
-                    read_be!(i16) as u64
-                } else {
-                    read_be!(u16) as u64
-                }
-            }
-            OffsetType::Id3Le => unimplemented!(),
-            OffsetType::Id3Be => unimplemented!(),
-            OffsetType::LongLe => {
-                if self.signed {
-                    read_le!(i32) as u64
-                } else {
-                    read_le!(u32) as u64
-                }
-            }
-            OffsetType::LongBe => {
-                if self.signed {
-                    read_be!(i32) as u64
-                } else {
-                    read_be!(u32) as u64
-                }
-            }
-            OffsetType::Middle => unimplemented!(),
-            OffsetType::Octal => unimplemented!(),
-            OffsetType::QuadLe => {
-                if self.signed {
-                    read_le!(i64) as u64
-                } else {
-                    read_le!(u64)
-                }
-            }
-            OffsetType::QuadBe => {
-                if self.signed {
-                    read_be!(i64) as u64
-                } else {
-                    read_be!(u64)
-                }
-            }
-        };
+        let o = read_value!();
 
         trace!(
             "computing offset base={o} op={:?} shift={:?}",
@@ -1774,7 +1780,17 @@ impl IndOffset {
         if let (Some(op), Some(shift)) = (self.op, self.shift) {
             let shift = match shift {
                 Shift::Direct(i) => i,
-                Shift::Indirect(_) => unimplemented!(),
+                Shift::Indirect(i) => {
+                    let tmp = main_offset_offset as i128 + i as i128;
+                    if tmp.is_negative() {
+                        return Ok(None);
+                    } else {
+                        haystack.seek(SeekFrom::Start(tmp as u64))?;
+                    };
+                    // FIXME: here we assume that the shift has the same
+                    // type as the main offset !
+                    read_value!()
+                }
             };
 
             match op {
@@ -2496,7 +2512,7 @@ impl EntryNode {
 
             magic.update_strength(strength);
 
-            let end_upper_level = haystack.stream_position()?;
+            let end_upper_level = haystack.lazy_stream_position();
 
             for e in self.children.iter() {
                 e.matches(
