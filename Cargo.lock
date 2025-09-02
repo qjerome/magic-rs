@@ -324,9 +324,9 @@ dependencies = [
 
 [[package]]
 name = "dyf"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "680d65ef1d156ca3f9813a43145fc4afafa7fb8f6eb9838ceeab33d31d791185"
+checksum = "0080458b2988e572901ab4a0b1b293fd06587467637dfc4d8fb497724cfa3d63"
 dependencies = [
  "pest",
  "pest_derive",
