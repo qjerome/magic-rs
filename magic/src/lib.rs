@@ -759,6 +759,7 @@ enum Op {
     Div,
     Mod,
     And,
+    Xor,
 }
 
 impl Display for Op {
@@ -770,6 +771,7 @@ impl Display for Op {
             Op::Div => write!(f, "/"),
             Op::Mod => write!(f, "%"),
             Op::And => write!(f, "&"),
+            Op::Xor => write!(f, "^"),
         }
     }
 }
@@ -812,6 +814,7 @@ impl Op {
             Rule::op_div => Ok(Self::Div),
             Rule::op_mod => Ok(Self::Mod),
             Rule::op_and => Ok(Self::And),
+            Rule::op_xor => Ok(Self::Xor),
             _ => Err(Error::parser("unimplemented operator", value.as_span())),
         }
     }
@@ -832,6 +835,7 @@ impl Transform {
             Op::Div => s.div(self.num),
             Op::Mod => s.rem(self.num),
             Op::And => s.bitand(self.num),
+            Op::Xor => s.bitxor(self.num),
         }
     }
 }
@@ -1858,6 +1862,7 @@ impl IndOffset {
                 Op::Div => return Ok(o.checked_div(shift)),
                 Op::Mod => return Ok(o.checked_rem(shift)),
                 Op::And => return Ok(Some(o & shift)),
+                Op::Xor => return Ok(Some(o ^ shift)),
             }
         }
 
@@ -2416,6 +2421,9 @@ impl StrengthMod {
             }
             Op::Mod => strength % by,
             Op::And => strength & by,
+            // this should never happen as strength operators
+            // are enforced by our parser
+            Op::Xor => unimplemented!(),
         }
     }
 }
