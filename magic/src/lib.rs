@@ -15,7 +15,7 @@ use std::{
     fs,
     io::{self, Read, Seek, SeekFrom},
     iter::Peekable,
-    ops::{Add, BitAnd, BitXor, Div, Mul, Rem, Sub},
+    ops::{Add, BitAnd, BitXor, Div, Mul, Not, Rem, Sub},
     path::Path,
     str::Utf8Error,
 };
@@ -544,6 +544,39 @@ macro_rules! impl_op {
     };
 }
 
+impl Not for Scalar {
+    type Output = Scalar;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Scalar::byte(value) => Scalar::byte(!value),
+            Scalar::long(value) => Scalar::long(!value),
+            Scalar::short(value) => Scalar::short(!value),
+            Scalar::quad(value) => Scalar::quad(!value),
+            Scalar::belong(value) => Scalar::belong(!value),
+            Scalar::bequad(value) => Scalar::bequad(!value),
+            Scalar::beshort(value) => Scalar::beshort(!value),
+            Scalar::ledate(value) => Scalar::ledate(!value),
+            Scalar::lelong(value) => Scalar::lelong(!value),
+            Scalar::leshort(value) => Scalar::leshort(!value),
+            Scalar::lequad(value) => Scalar::lequad(!value),
+            Scalar::ushort(value) => Scalar::ushort(!value),
+            Scalar::ulong(value) => Scalar::ulong(!value),
+            Scalar::ubelong(value) => Scalar::ubelong(!value),
+            Scalar::ubequad(value) => Scalar::ubequad(!value),
+            Scalar::ubeshort(value) => Scalar::ubeshort(!value),
+            Scalar::ubyte(value) => Scalar::ubyte(!value),
+            Scalar::ulelong(value) => Scalar::ulelong(!value),
+            Scalar::ulequad(value) => Scalar::ulequad(!value),
+            Scalar::uleshort(value) => Scalar::uleshort(!value),
+            Scalar::uledate(value) => Scalar::uledate(!value),
+            Scalar::offset(value) => Scalar::offset(!value),
+            Scalar::lemsdosdate(value) => Scalar::lemsdosdate(!value),
+            Scalar::lemsdostime(value) => Scalar::lemsdostime(!value),
+        }
+    }
+}
+
 impl_op!(Add, add);
 impl_op!(Sub, sub);
 impl_op!(Mul, mul);
@@ -746,8 +779,12 @@ enum CmpOp {
     Lt,
     Gt,
     BitAnd,
-    Neg,
+    Neg, // ! operator
     Xor,
+    // FIXME: this operator might be useless
+    // it could be turned into Eq and transforming
+    // the test value
+    Not, // ~ operator
 }
 
 impl CmpOp {
@@ -759,6 +796,7 @@ impl CmpOp {
             Rule::op_negate => Ok(Self::Neg),
             Rule::op_eq => Ok(Self::Eq),
             Rule::op_xor => Ok(Self::Xor),
+            Rule::op_not => Ok(Self::Not),
             _ => Err(Error::parser("unimplemented cmp operator", value.as_span())),
         }
     }
@@ -1488,12 +1526,13 @@ impl Test {
                     let tv: Scalar = t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
 
                     let ok = match t.cmp_op {
+                        CmpOp::Not => tv == !t.value,
                         CmpOp::Eq => tv == t.value,
                         CmpOp::Lt => tv < t.value,
                         CmpOp::Gt => tv > t.value,
                         CmpOp::Neg => tv != t.value,
-                        CmpOp::BitAnd => tv & t.value == t.value,
-                        CmpOp::Xor => (tv ^ t.value).is_zero(),
+                        CmpOp::BitAnd => tv & t.value == tv,
+                        CmpOp::Xor => (tv & t.value).is_zero(),
                     };
 
                     if ok {
@@ -2254,7 +2293,7 @@ impl Match {
             match op {
                 // matching almost any gets penalty
                 CmpOp::Neg => out = 0,
-                CmpOp::Eq => out += MULT,
+                CmpOp::Eq | CmpOp::Not => out += MULT,
                 CmpOp::Lt | CmpOp::Gt => out -= 2 * MULT,
                 CmpOp::Xor | CmpOp::BitAnd => out -= MULT,
             }
@@ -2804,7 +2843,7 @@ mod tests {
 
     use super::*;
 
-    fn first_magic(rule: &str, content: &str) -> Result<Option<Magic<'static>>, Error> {
+    fn first_magic(rule: &str, content: &[u8]) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
         md.load(FileMagicParser::parse_str(rule).unwrap()).unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
@@ -2843,7 +2882,7 @@ mod tests {
 !:mime	text/x-shellscript
 >&0  regex/64 .*($|\\b) %s shell script text executable
     "#,
-            r#"#!/usr/bin/env bash
+            br#"#!/usr/bin/env bash
         echo hello world"#
         )
     }
@@ -2854,7 +2893,7 @@ mod tests {
             r#"0	string/fwt	#!\ \ \ /usr/bin/env\ bash	Bourne-Again shell script text executable
 !:mime	text/x-shellscript
 "#,
-            "#!/usr/bin/env bash i 
+            b"#!/usr/bin/env bash i 
         echo hello world"
         );
     }
@@ -2863,22 +2902,58 @@ mod tests {
     fn test_search_with_mods() {
         assert_magic_match!(
             r#"0	search/1/fwt	#!\ /usr/bin/luatex	LuaTex script text executable"#,
-            "#!          /usr/bin/luatex "
+            b"#!          /usr/bin/luatex "
         );
     }
 
     #[test]
     fn test_max_recursion() {
-        let res = first_magic(r#"0	indirect x"#, r#"#!          /usr/bin/luatex "#);
+        let res = first_magic(r#"0	indirect x"#, b"#!          /usr/bin/luatex ");
         assert!(matches!(res, Err(Error::MaximumRecursion(MAX_RECURSION))));
     }
 
     #[test]
     fn test_string_ops() {
-        assert_magic_match!("0	string/b MZ MZ File", "MZ\0");
-        assert_magic_match!("0	string >\0 Any String", "A\0");
-        assert_magic_match!("0	string >Test Any String", "Test 1\0");
-        assert_magic_match!("0	string <Test Any String", "\0");
-        assert_magic_not_match!("0	string >Test Any String", "\0");
+        assert_magic_match!("0	string/b MZ MZ File", b"MZ\0");
+        assert_magic_match!("0	string >\0 Any String", b"A\0");
+        assert_magic_match!("0	string >Test Any String", b"Test 1\0");
+        assert_magic_match!("0	string <Test Any String", b"\0");
+        assert_magic_not_match!("0	string >Test Any String", b"\0");
+    }
+
+    #[test]
+    fn test_belong() {
+        // Test that a file with a four-byte value at offset 0 that matches the given value in big-endian byte order
+        assert_magic_match!("0 belong 0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+        // Test that a file with a four-byte value at offset 0 that does not match the given value in big-endian byte order
+        assert_magic_not_match!("0 belong 0x12345678 Big-endian long", b"\x78\x56\x34\x12");
+        // Test that a file with a four-byte value at a non-zero offset that matches the given value in big-endian byte order
+        assert_magic_match!(
+            "4 belong 0x12345678 Big-endian long",
+            b"\x00\x00\x00\x00\x12\x34\x56\x78"
+        );
+        // Test < operator
+        assert_magic_match!("0 belong <0x12345678 Big-endian long", b"\x12\x34\x56\x77");
+        assert_magic_not_match!("0 belong <0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+
+        // Test > operator
+        assert_magic_match!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x79");
+        assert_magic_not_match!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+
+        // Test & operator
+        assert_magic_match!("0 belong &0x0000FFFF Big-endian long", b"\x00\x00\x56\x78");
+        assert_magic_not_match!("0 belong &0x0000FFFF Big-endian long", b"\x12\x34\x56\x78");
+
+        // Test ^ operator (bitwise AND with complement)
+        assert_magic_match!("0 belong ^0xFFFF0000 Big-endian long", b"\x00\x00\x56\x78");
+        assert_magic_not_match!("0 belong ^0xFFFF0000 Big-endian long", b"\x00\x01\x56\x78");
+
+        // Test ~ operator
+        assert_magic_match!("0 belong ~0x12345678 Big-endian long", b"\xed\xcb\xa9\x87");
+        assert_magic_not_match!("0 belong ~0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+
+        // Test x operator
+        assert_magic_match!("0 belong x Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match!("0 belong x Big-endian long", b"\x78\x56\x34\x12");
     }
 }

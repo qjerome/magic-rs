@@ -29,6 +29,7 @@ op_and    = ${ "&" }
 op_mod    = ${ "%" }
 op_or     = ${ "|" }
 op_xor    = ${ "^" }
+op_not    = ${ "~" }
 op_negate = ${ "!" }
 op_gt     = ${ ">" }
 op_eq     = ${ "=" }
@@ -132,7 +133,7 @@ any_value = { "x" }
 scalar_type      = ${ bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | u4 | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
-scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and }
+scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and | op_not }
 scalar_test      = ${ scalar_type ~ scalar_transform{,1} ~ WHITESPACE+ ~ ((scalar_condition? ~ scalar_value) | any_value) }
 
 // corresponds to `clear x` test
