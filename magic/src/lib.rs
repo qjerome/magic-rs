@@ -347,7 +347,7 @@ impl FileMagicParser {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
 enum ScalarDataType {
     belong,
@@ -377,6 +377,7 @@ enum ScalarDataType {
     lemsdosdate,
     lemsdostime,
     medate,
+    melong,
     offset,
 }
 
@@ -411,6 +412,7 @@ enum Scalar {
     lemsdosdate(u16),
     lemsdostime(u16),
     medate(i32),
+    melong(i32),
 }
 
 impl Scalar {
@@ -443,6 +445,7 @@ impl Scalar {
             Scalar::lemsdosdate(x) => *x == 0,
             Scalar::lemsdostime(x) => *x == 0,
             Scalar::medate(x) => *x == 0,
+            Scalar::melong(x) => *x == 0,
         }
     }
 }
@@ -487,6 +490,7 @@ impl DynDisplay for Scalar {
             Scalar::medate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
                 .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or("invalid timestamp".into())),
+            Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
         }
     }
 }
@@ -521,6 +525,7 @@ impl fmt::Display for Scalar {
             Scalar::lemsdosdate(value) => write!(f, "lemsdosdate({})", value),
             Scalar::lemsdostime(value) => write!(f, "lemsdostime({})", value),
             Scalar::medate(value) => write!(f, "medate({})", value),
+            Scalar::melong(value) => write!(f, "{}", value),
         }
     }
 }
@@ -559,6 +564,7 @@ macro_rules! impl_op {
                     (Scalar::lemsdostime(a), Scalar::lemsdostime(b)) => {
                         Scalar::lemsdostime(a.$method(b))
                     }
+                    (Scalar::melong(a), Scalar::melong(b)) => Scalar::melong(a.$method(b)),
                     _ => panic!("Operation not supported between different Scalar variants"),
                 }
             }
@@ -598,6 +604,7 @@ impl Not for Scalar {
             Scalar::lemsdosdate(value) => Scalar::lemsdosdate(!value),
             Scalar::lemsdostime(value) => Scalar::lemsdostime(!value),
             Scalar::medate(value) => Scalar::medate(!value),
+            Scalar::melong(value) => Scalar::melong(!value),
         }
     }
 }
@@ -642,6 +649,7 @@ impl ScalarDataType {
             Rule::lemsdosdate => Ok(Self::lemsdosdate),
             Rule::lemsdostime => Ok(Self::lemsdostime),
             Rule::medate => Ok(Self::medate),
+            Rule::melong => Ok(Self::melong),
             _ => Err(Error::parser("unimplemented data type", dt.as_span())),
         }
     }
@@ -674,6 +682,7 @@ impl ScalarDataType {
             Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u16)),
             Self::lemsdostime => Ok(Scalar::lemsdostime(i as u16)),
             Self::medate => Ok(Scalar::medate(i as i32)),
+            Self::melong => Ok(Scalar::melong(i as i32)),
             _ => {
                 // unimplemented
                 Err(())
@@ -711,6 +720,7 @@ impl ScalarDataType {
             Self::lemsdostime => 2,
             Self::offset => 4,
             Self::medate => 4,
+            Self::melong => 4,
         }
     }
 
@@ -788,6 +798,7 @@ impl ScalarDataType {
             Self::offset => Scalar::offset(from.stream_position()?),
             Self::ubequad => Scalar::ubequad(read_be!(u64)),
             Self::medate => Scalar::medate(read_me!()),
+            Self::melong => Scalar::melong(read_me!()),
             _ => unimplemented!("{:?}", self),
         })
     }
@@ -2945,7 +2956,7 @@ mod tests {
         () => {
             tracing_subscriber::fmt()
                 .with_max_level(tracing_subscriber::filter::LevelFilter::TRACE)
-                .init();
+                .try_init();
         };
     }
 
@@ -3143,6 +3154,85 @@ mod tests {
             "4 medate 946684800 %s",
             b"\x00\x00\x00\x00\x6D\x38\x80\x43",
             "2000-01-01 00:00:00"
+        );
+    }
+
+    #[test]
+    fn test_melong_comprehensive() {
+        // Test = operator
+        assert_magic_match!(
+            "0 melong =0x12345678 Middle-endian long",
+            b"\x34\x12\x78\x56"
+        );
+        assert_magic_not_match!(
+            "0 melong =0x12345678 Middle-endian long",
+            b"\x00\x00\x00\x00"
+        );
+
+        // Test < operator
+        assert_magic_match!(
+            "0 melong <0x12345678 Middle-endian long",
+            b"\x34\x12\x78\x55"
+        ); // 0x12345677 in middle-endian
+        assert_magic_not_match!(
+            "0 melong <0x12345678 Middle-endian long",
+            b"\x34\x12\x78\x56"
+        ); // 0x12345678 in middle-endian
+
+        // Test > operator
+        assert_magic_match!(
+            "0 melong >0x12345678 Middle-endian long",
+            b"\x34\x12\x78\x57"
+        ); // 0x12345679 in middle-endian
+        assert_magic_not_match!(
+            "0 melong >0x12345678 Middle-endian long",
+            b"\x34\x12\x78\x56"
+        ); // 0x12345678 in middle-endian
+
+        // Test & operator
+        assert_magic_match!(
+            "0 melong &0x0000FFFF Middle-endian long",
+            b"\x00\x00\x78\x56"
+        ); // 0x00007856 in middle-endian
+        assert_magic_not_match!(
+            "0 melong &0x0000FFFF Middle-endian long",
+            b"\x34\x12\x78\x56"
+        ); // 0x12347856 in middle-endian
+
+        // Test ^ operator (bitwise AND with complement)
+        assert_magic_match!(
+            "0 melong ^0xFFFF0000 Middle-endian long",
+            b"\x00\x00\x78\x56"
+        ); // 0x00007856 in middle-endian
+        assert_magic_not_match!(
+            "0 melong ^0xFFFF0000 Middle-endian long",
+            b"\x00\x01\x78\x56"
+        ); // 0x00017856 in middle-endian
+
+        // Test ~ operator
+        // The bitwise NOT of 0x12345678 is 0xEDCBA987, which in middle-endian would be 0xCB\xED\x87\xA9
+        assert_magic_match!(
+            "0 melong ~0x12345678 Middle-endian long",
+            b"\xCB\xED\x87\xA9"
+        );
+        assert_magic_not_match!(
+            "0 melong ~0x12345678 Middle-endian long",
+            b"\x34\x12\x78\x56"
+        ); // The original value
+
+        // Test x operator
+        assert_magic_match!("0 melong x Middle-endian long", b"\x34\x12\x78\x56");
+        assert_magic_match!("0 melong x Middle-endian long", b"\x00\x00\x00\x00");
+
+        // Test & operation (bitwise AND with 0x0000FFFF)
+        // Check if the bitwise AND operation is correctly applied
+        assert_magic_match!(
+            "0 melong &0x0000FFFF Middle-endian long",
+            b"\x00\x00\x12\x34"
+        );
+        assert_magic_not_match!(
+            "0 melong &0x0000FFFF Middle-endian long",
+            b"\x56\x78\x12\x34"
         );
     }
 }
