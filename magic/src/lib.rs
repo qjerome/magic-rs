@@ -376,6 +376,7 @@ enum ScalarDataType {
     lequad,
     lemsdosdate,
     lemsdostime,
+    medate,
     offset,
 }
 
@@ -409,6 +410,7 @@ enum Scalar {
     offset(u64),
     lemsdosdate(u16),
     lemsdostime(u16),
+    medate(i32),
 }
 
 impl Scalar {
@@ -440,6 +442,7 @@ impl Scalar {
             Scalar::offset(x) => *x == 0,
             Scalar::lemsdosdate(x) => *x == 0,
             Scalar::lemsdostime(x) => *x == 0,
+            Scalar::medate(x) => *x == 0,
         }
     }
 }
@@ -481,6 +484,9 @@ impl DynDisplay for Scalar {
             Self::offset(value) => DynDisplay::dyn_fmt(value, f),
             Self::lemsdosdate(value) => Ok(format!("mdosdate({})", value)),
             Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
+            Scalar::medate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
+                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or("invalid timestamp".into())),
         }
     }
 }
@@ -514,6 +520,7 @@ impl fmt::Display for Scalar {
             Scalar::offset(value) => write!(f, "{:p}", value),
             Scalar::lemsdosdate(value) => write!(f, "lemsdosdate({})", value),
             Scalar::lemsdostime(value) => write!(f, "lemsdostime({})", value),
+            Scalar::medate(value) => write!(f, "medate({})", value),
         }
     }
 }
@@ -590,6 +597,7 @@ impl Not for Scalar {
             Scalar::offset(value) => Scalar::offset(!value),
             Scalar::lemsdosdate(value) => Scalar::lemsdosdate(!value),
             Scalar::lemsdostime(value) => Scalar::lemsdostime(!value),
+            Scalar::medate(value) => Scalar::medate(!value),
         }
     }
 }
@@ -633,6 +641,7 @@ impl ScalarDataType {
             Rule::offset_ty => Ok(Self::offset),
             Rule::lemsdosdate => Ok(Self::lemsdosdate),
             Rule::lemsdostime => Ok(Self::lemsdostime),
+            Rule::medate => Ok(Self::medate),
             _ => Err(Error::parser("unimplemented data type", dt.as_span())),
         }
     }
@@ -664,6 +673,7 @@ impl ScalarDataType {
             Self::offset => Ok(Scalar::offset(i as u64)),
             Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u16)),
             Self::lemsdostime => Ok(Scalar::lemsdostime(i as u16)),
+            Self::medate => Ok(Scalar::medate(i as i32)),
             _ => {
                 // unimplemented
                 Err(())
@@ -700,6 +710,7 @@ impl ScalarDataType {
             Self::lemsdosdate => 2,
             Self::lemsdostime => 2,
             Self::offset => 4,
+            Self::medate => 4,
         }
     }
 
@@ -749,6 +760,12 @@ impl ScalarDataType {
             }};
         }
 
+        macro_rules! read_me {
+            () => {
+                ((read_le!(u16) as i32) << 16) | (read_le!(u16) as i32)
+            };
+        }
+
         Ok(match self {
             // signed
             Self::byte => Scalar::byte(read!(u8)[0] as i8),
@@ -770,6 +787,7 @@ impl ScalarDataType {
             Self::ulequad => Scalar::ulequad(read_le!(u64)),
             Self::offset => Scalar::offset(from.stream_position()?),
             Self::ubequad => Scalar::ubequad(read_be!(u64)),
+            Self::medate => Scalar::medate(read_me!()),
             _ => unimplemented!("{:?}", self),
         })
     }
@@ -3105,6 +3123,25 @@ mod tests {
         assert_magic_match!(
             "0 beqdate 946684800 %s",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
+            "2000-01-01 00:00:00"
+        );
+    }
+
+    #[test]
+    fn test_medate() {
+        assert_magic_match!(
+            "0 medate 946684800 Unix date (Jan 1, 2000)",
+            b"\x6D\x38\x80\x43"
+        );
+
+        assert_magic_not_match!(
+            "0 medate 946684800 Unix date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00"
+        );
+
+        assert_magic_match!(
+            "4 medate 946684800 %s",
+            b"\x00\x00\x00\x00\x6D\x38\x80\x43",
             "2000-01-01 00:00:00"
         );
     }
