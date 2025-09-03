@@ -354,6 +354,7 @@ enum ScalarDataType {
     bequad,
     beshort,
     bedate,
+    beqdate,
     byte,
     quad,
     lelong,
@@ -389,6 +390,7 @@ enum Scalar {
     bequad(i64),
     beshort(i16),
     bedate(i32),
+    beqdate(i64),
     ledate(i32),
     lelong(i32),
     leshort(i16),
@@ -417,6 +419,7 @@ impl Scalar {
             Scalar::bequad(x) => *x == 0,
             Scalar::beshort(x) => *x == 0,
             Scalar::bedate(x) => *x == 0,
+            Scalar::beqdate(x) => *x == 0,
             Scalar::byte(x) => *x == 0,
             Scalar::ledate(x) => *x == 0,
             Scalar::lelong(x) => *x == 0,
@@ -449,6 +452,9 @@ impl DynDisplay for Scalar {
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bedate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
+                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or("invalid timestamp".into())),
+            Scalar::beqdate(value) => Ok(DateTime::from_timestamp(*value, 0)
                 .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or("invalid timestamp".into())),
             Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
@@ -487,6 +493,7 @@ impl fmt::Display for Scalar {
             Scalar::bequad(value) => write!(f, "{}", value),
             Scalar::beshort(value) => write!(f, "{}", value),
             Scalar::bedate(value) => write!(f, "bedate({})", value),
+            Scalar::beqdate(value) => write!(f, "beqdate({})", value),
             Scalar::byte(value) => write!(f, "{}", value),
             Scalar::ledate(value) => write!(f, "ledate({})", value),
             Scalar::lelong(value) => write!(f, "{}", value),
@@ -565,6 +572,7 @@ impl Not for Scalar {
             Scalar::bequad(value) => Scalar::bequad(!value),
             Scalar::beshort(value) => Scalar::beshort(!value),
             Scalar::bedate(value) => Scalar::bedate(!value),
+            Scalar::beqdate(value) => Scalar::beqdate(!value),
             Scalar::ledate(value) => Scalar::ledate(!value),
             Scalar::lelong(value) => Scalar::lelong(!value),
             Scalar::leshort(value) => Scalar::leshort(!value),
@@ -602,6 +610,7 @@ impl ScalarDataType {
             Rule::bequad => Ok(Self::bequad),
             Rule::beshort => Ok(Self::beshort),
             Rule::bedate => Ok(Self::bedate),
+            Rule::beqdate => Ok(Self::beqdate),
             Rule::byte => Ok(Self::byte),
             Rule::quad => Ok(Self::quad),
             Rule::lelong => Ok(Self::lelong),
@@ -634,6 +643,7 @@ impl ScalarDataType {
             Self::short => Ok(Scalar::short(i as i16)),
             Self::beshort => Ok(Scalar::beshort(i as i16)),
             Self::bedate => Ok(Scalar::bedate(i as i32)),
+            Self::beqdate => Ok(Scalar::beqdate(i)),
             Self::quad => Ok(Scalar::quad(i)),
             Self::long => Ok(Scalar::long(i as i32)),
             Self::ledate => Ok(Scalar::ledate(i as i32)),
@@ -667,6 +677,7 @@ impl ScalarDataType {
             Self::bequad => 8,
             Self::beshort => 2,
             Self::bedate => 4,
+            Self::beqdate => 8,
             Self::byte => 1,
             Self::quad => 4,
             Self::lelong => 4,
@@ -749,6 +760,7 @@ impl ScalarDataType {
             Self::bequad => Scalar::bequad(read_be!(i64)),
             Self::belong => Scalar::belong(read_be!(i32)),
             Self::bedate => Scalar::bedate(read_be!(i32)),
+            Self::beqdate => Scalar::beqdate(read_be!(i64)),
             // unsigned
             Self::ubyte => Scalar::ubyte(read!(u8)[0]),
             Self::ushort => Scalar::ushort(read_ne!(u16)),
@@ -3073,6 +3085,25 @@ mod tests {
         );
         assert_magic_match!(
             "4 bedate 946684800 %s",
+            b"\x00\x00\x00\x00\x38\x6D\x43\x80",
+            "2000-01-01 00:00:00"
+        );
+    }
+
+    #[test]
+    fn test_beqdate() {
+        assert_magic_match!(
+            "0 beqdate 946684800 Unix date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00\x38\x6D\x43\x80"
+        );
+
+        assert_magic_not_match!(
+            "0 beqdate 946684800 Unix date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+
+        assert_magic_match!(
+            "0 beqdate 946684800 %s",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
             "2000-01-01 00:00:00"
         );
