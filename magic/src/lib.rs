@@ -374,6 +374,7 @@ impl DynDisplay for Scalar {
             Scalar::short(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ushort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ulong(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::uquad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ubelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ubequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ubeshort(value) => DynDisplay::dyn_fmt(value, f),
@@ -408,6 +409,7 @@ impl fmt::Display for Scalar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Scalar::quad(value) => write!(f, "{}", value),
+            Scalar::uquad(value) => write!(f, "{}", value),
             Scalar::belong(value) => write!(f, "{}", value),
             Scalar::bequad(value) => write!(f, "{}", value),
             Scalar::beshort(value) => write!(f, "{}", value),
@@ -452,6 +454,7 @@ impl ScalarDataType {
             Rule::beqdate => Ok(Self::beqdate),
             Rule::byte => Ok(Self::byte),
             Rule::quad => Ok(Self::quad),
+            Rule::uquad => Ok(Self::uquad),
             Rule::lelong => Ok(Self::lelong),
             Rule::ledate => Ok(Self::ledate),
             Rule::leqdate => Ok(Self::leqdate),
@@ -2948,7 +2951,7 @@ mod tests {
     }
 
     #[test]
-    fn test_melong_comprehensive() {
+    fn test_melong() {
         // Test = operator
         assert_magic_match!(
             "0 melong =0x12345678 Middle-endian long",
@@ -3023,6 +3026,80 @@ mod tests {
         assert_magic_not_match!(
             "0 melong &0x0000FFFF Middle-endian long",
             b"\x56\x78\x12\x34"
+        );
+    }
+
+    #[test]
+    fn test_uquad() {
+        // Test = operator
+        assert_magic_match!(
+            "0 uquad =0x123456789ABCDEF0 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        );
+        assert_magic_not_match!(
+            "0 uquad =0x123456789ABCDEF0 Unsigned quad",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+
+        // Test < operator
+        assert_magic_match!(
+            "0 uquad <0x123456789ABCDEF0 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x11"
+        );
+        assert_magic_not_match!(
+            "0 uquad <0x123456789ABCDEF0 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        );
+
+        // Test > operator
+        assert_magic_match!(
+            "0 uquad >0x123456789ABCDEF0 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x13"
+        );
+        assert_magic_not_match!(
+            "0 uquad >0x123456789ABCDEF0 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        );
+
+        // Test & operator
+        assert_magic_match!(
+            "0 uquad &0xFFFFFFFFFFFFFFFF Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        );
+        assert_magic_not_match!(
+            "0 uquad &0x0000000000000000 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        );
+
+        // Test ^ operator (bitwise AND with complement)
+        assert_magic_match!(
+            "0 uquad ^0xFFFFFFFFFFFFFFFF Unsigned quad",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        ); // All bits clear
+        assert_magic_not_match!(
+            "0 uquad ^0xFFFFFFFFFFFFFFFF Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        ); // Some bits set
+
+        // Test ~ operator
+        assert_magic_match!(
+            "0 uquad ~0x123456789ABCDEF0 Unsigned quad",
+            b"\x0F\x21\x43\x65\x87\xA9\xCB\xED"
+        );
+        assert_magic_not_match!(
+            "0 uquad ~0x123456789ABCDEF0 Unsigned quad",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
+        ); // The original value
+
+        // Test x operator
+        assert_magic_match!(
+            "0 uquad x {:#x}",
+            b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12",
+            "0x123456789abcdef0"
+        );
+        assert_magic_match!(
+            "0 uquad x Unsigned quad",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
     }
 }
