@@ -1206,60 +1206,66 @@ impl Test {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let t = match pair.as_rule() {
             Rule::scalar_test => {
-                let mut pairs = pair.into_inner();
+                let pairs = pair.into_inner();
 
-                let ty_pair = pairs.next().expect("data type pair expected");
-                let ty_span = ty_pair.as_span();
-                let ty = ScalarDataType::from_pair(ty_pair)?;
-
+                let mut ty = None;
+                let mut ty_span = None;
                 let mut transform = None;
-
-                let mut next = pairs.next().expect("expect token pair");
-                if matches!(next.as_rule(), Rule::scalar_transform) {
-                    let mut transform_pairs = next.into_inner();
-                    let op_pair = transform_pairs.next().expect("expect operator pair");
-                    let op = Op::from_pair(op_pair)?;
-
-                    let number = transform_pairs.next().expect("expect number pair");
-                    let span = number.as_span();
-                    transform = Some(Transform {
-                        op,
-                        num: ty
-                            .scalar_from_number(parse_pos_number(number))
-                            .map_err(|_| Error::parser("unimplemented scalar", span))?,
-                    });
-                    next = pairs.next().expect("expect token pair");
-                }
-
                 let mut condition = CmpOp::Eq;
-                if matches!(next.as_rule(), Rule::scalar_condition) {
-                    condition = CmpOp::from_pair(
-                        next.into_inner().next().expect("expecting cmp operator"),
-                    )?;
-                    next = pairs.next().expect("expect token pair");
-                }
+                let mut scalar = None;
+                for pair in pairs {
+                    match pair.as_rule() {
+                        Rule::scalar_type => {
+                            ty_span = Some(pair.as_span());
+                            ty = Some(ScalarDataType::from_pair(pair)?);
+                        }
 
-                let value_pair = next;
+                        Rule::scalar_transform => {
+                            let mut transform_pairs = pair.into_inner();
+                            let op_pair = transform_pairs.next().expect("expect operator pair");
+                            let op = Op::from_pair(op_pair)?;
 
-                let value = match value_pair.as_rule() {
-                    Rule::scalar_value => {
-                        let number_pair = value_pair
-                            .into_inner()
-                            .next()
-                            .expect("number pair expected");
+                            let number = transform_pairs.next().expect("expect number pair");
+                            let span = number.as_span();
+                            transform = Some(Transform {
+                                op,
+                                // ty is guaranteed to be some by
+                                // parser implementation
+                                num: ty
+                                    .unwrap()
+                                    .scalar_from_number(parse_pos_number(number))
+                                    .map_err(|_| Error::parser("unimplemented scalar", span))?,
+                            });
+                        }
+                        Rule::scalar_condition => {
+                            condition = CmpOp::from_pair(
+                                pair.into_inner().next().expect("expecting cmp operator"),
+                            )?;
+                        }
+                        Rule::scalar_value => {
+                            let number_pair =
+                                pair.into_inner().next().expect("number pair expected");
 
-                        ty.scalar_from_number(parse_number_pair(number_pair))
-                            .map_err(|_| Error::parser("unimplemented scalar", ty_span))?
+                            scalar = Some(
+                                ty.unwrap()
+                                    .scalar_from_number(parse_number_pair(number_pair))
+                                    .map_err(|_| {
+                                        Error::parser("unimplemented scalar", ty_span.unwrap())
+                                    })?,
+                            );
+                        }
+                        Rule::any_value => return Ok(Self::Any(Any::Scalar(ty.unwrap()))),
+                        _ => {}
                     }
-                    Rule::any_value => return Ok(Self::Any(Any::Scalar(ty))),
-                    _ => unimplemented!(),
-                };
+                }
 
                 Self::Scalar(ScalarTest {
-                    ty,
+                    // no panic guarantee by parser
+                    ty: ty.unwrap(),
                     transform,
                     cmp_op: condition,
-                    value,
+                    // no panic guarantee by parser
+                    value: scalar.unwrap(),
                 })
             }
             Rule::search_test => {
@@ -1598,20 +1604,21 @@ impl Test {
         match tv {
             TestValue::Scalar(o, ts) => {
                 if let Self::Scalar(t) = self {
-                    let tv: Scalar = t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
+                    let read_value: Scalar =
+                        t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
 
                     let ok = match t.cmp_op {
-                        CmpOp::Not => tv == !t.value,
-                        CmpOp::Eq => tv == t.value,
-                        CmpOp::Lt => tv < t.value,
-                        CmpOp::Gt => tv > t.value,
-                        CmpOp::Neg => tv != t.value,
-                        CmpOp::BitAnd => tv & t.value == tv,
-                        CmpOp::Xor => (tv & t.value).is_zero(),
+                        CmpOp::Not => read_value == !t.value,
+                        CmpOp::Eq => read_value == t.value,
+                        CmpOp::Lt => read_value < t.value,
+                        CmpOp::Gt => read_value > t.value,
+                        CmpOp::Neg => read_value != t.value,
+                        CmpOp::BitAnd => read_value & t.value == read_value,
+                        CmpOp::Xor => (read_value & t.value).is_zero(),
                     };
 
                     if ok {
-                        return Some(MatchRes::Scalar(*o, tv));
+                        return Some(MatchRes::Scalar(*o, read_value));
                     }
                 }
             }
