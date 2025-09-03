@@ -225,10 +225,8 @@ impl Message {
         // FIXME: remove unwrap
         let fs = FormatString::from_string(s.to_string()).unwrap();
         if fs.contains_format() {
-            // cannot panic: printf_spec is guaranteed to be Some if fs
-            // contains a format string
             Message::Format {
-                printf_spec: printf_spec.unwrap(),
+                printf_spec: printf_spec.unwrap_or_default(),
                 fs,
             }
         } else {
