@@ -24,7 +24,10 @@ use tracing::{Level, debug, enabled, error, trace};
 
 use crate::utils::nonmagic;
 
+mod numeric;
 mod utils;
+
+use numeric::{Scalar, ScalarDataType};
 
 // corresponds to FILE_INDIR_MAX constant defined in libmagic
 const MAX_RECURSION: usize = 50;
@@ -349,112 +352,6 @@ impl FileMagicParser {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[allow(non_camel_case_types)]
-enum ScalarDataType {
-    belong,
-    bequad,
-    beshort,
-    bedate,
-    beqdate,
-    byte,
-    quad,
-    lelong,
-    ledate,
-    leqdate,
-    leshort,
-    long,
-    short,
-    ushort,
-    ulong,
-    ubelong,
-    ubequad,
-    ubeshort,
-    ubyte,
-    ulelong,
-    ulequad,
-    uleshort,
-    uledate,
-    lequad,
-    lemsdosdate,
-    lemsdostime,
-    medate,
-    melong,
-    meldate,
-    offset,
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-#[allow(non_camel_case_types)]
-enum Scalar {
-    byte(i8),
-    long(i32),
-    short(i16),
-    quad(i64),
-    belong(i32),
-    bequad(i64),
-    beshort(i16),
-    bedate(i32),
-    beqdate(i64),
-    ledate(i32),
-    lelong(i32),
-    leshort(i16),
-    lequad(i64),
-    ushort(u16),
-    ulong(u32),
-    ubelong(u32),
-    ubequad(u64),
-    ubeshort(u16),
-    ubyte(u8),
-    ulelong(u32),
-    ulequad(u64),
-    uleshort(u16),
-    // FIXME: guessed
-    uledate(u32),
-    offset(u64),
-    lemsdosdate(u16),
-    lemsdostime(u16),
-    medate(i32),
-    melong(i32),
-    meldate(i32),
-}
-
-impl Scalar {
-    fn is_zero(&self) -> bool {
-        match self {
-            Scalar::quad(x) => *x == 0,
-            Scalar::belong(x) => *x == 0,
-            Scalar::bequad(x) => *x == 0,
-            Scalar::beshort(x) => *x == 0,
-            Scalar::bedate(x) => *x == 0,
-            Scalar::beqdate(x) => *x == 0,
-            Scalar::byte(x) => *x == 0,
-            Scalar::ledate(x) => *x == 0,
-            Scalar::lelong(x) => *x == 0,
-            Scalar::leshort(x) => *x == 0,
-            Scalar::lequad(x) => *x == 0,
-            Scalar::long(x) => *x == 0,
-            Scalar::short(x) => *x == 0,
-            Scalar::ushort(x) => *x == 0,
-            Scalar::ulong(x) => *x == 0,
-            Scalar::ubelong(x) => *x == 0,
-            Scalar::ubequad(x) => *x == 0,
-            Scalar::ubeshort(x) => *x == 0,
-            Scalar::ubyte(x) => *x == 0,
-            Scalar::ulelong(x) => *x == 0,
-            Scalar::ulequad(x) => *x == 0,
-            Scalar::uleshort(x) => *x == 0,
-            Scalar::uledate(x) => *x == 0,
-            Scalar::offset(x) => *x == 0,
-            Scalar::lemsdosdate(x) => *x == 0,
-            Scalar::lemsdostime(x) => *x == 0,
-            Scalar::medate(x) => *x == 0,
-            Scalar::melong(x) => *x == 0,
-            Scalar::meldate(x) => *x == 0,
-        }
-    }
-}
-
 impl DynDisplay for Scalar {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
@@ -501,6 +398,10 @@ impl DynDisplay for Scalar {
                 .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or("invalid timestamp".into())),
             Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::leqdate(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::offset(_) => todo!(),
+            Scalar::lemsdosdate(_) => todo!(),
+            Scalar::lemsdostime(_) => todo!(),
         }
     }
 }
@@ -537,98 +438,10 @@ impl fmt::Display for Scalar {
             Scalar::medate(value) => write!(f, "medate({})", value),
             Scalar::melong(value) => write!(f, "{}", value),
             Scalar::meldate(value) => write!(f, "meldate({})", value),
+            Scalar::leqdate(value) => write!(f, "{}", value),
         }
     }
 }
-
-macro_rules! impl_op {
-    ($trait:ident, $method:ident) => {
-        impl $trait for Scalar {
-            type Output = Self;
-            fn $method(self, other: Self) -> Self {
-                match (self, other) {
-                    (Scalar::byte(a), Scalar::byte(b)) => Scalar::byte(a.$method(b)),
-                    (Scalar::long(a), Scalar::long(b)) => Scalar::long(a.$method(b)),
-                    (Scalar::short(a), Scalar::short(b)) => Scalar::short(a.$method(b)),
-                    (Scalar::quad(a), Scalar::quad(b)) => Scalar::quad(a.$method(b)),
-                    (Scalar::belong(a), Scalar::belong(b)) => Scalar::belong(a.$method(b)),
-                    (Scalar::bequad(a), Scalar::bequad(b)) => Scalar::bequad(a.$method(b)),
-                    (Scalar::beshort(a), Scalar::beshort(b)) => Scalar::beshort(a.$method(b)),
-                    (Scalar::ledate(a), Scalar::ledate(b)) => Scalar::ledate(a.$method(b)),
-                    (Scalar::lelong(a), Scalar::lelong(b)) => Scalar::lelong(a.$method(b)),
-                    (Scalar::leshort(a), Scalar::leshort(b)) => Scalar::leshort(a.$method(b)),
-                    (Scalar::lequad(a), Scalar::lequad(b)) => Scalar::lequad(a.$method(b)),
-                    (Scalar::ushort(a), Scalar::ushort(b)) => Scalar::ushort(a.$method(b)),
-                    (Scalar::ulong(a), Scalar::ulong(b)) => Scalar::ulong(a.$method(b)),
-                    (Scalar::ubelong(a), Scalar::ubelong(b)) => Scalar::ubelong(a.$method(b)),
-                    (Scalar::ubequad(a), Scalar::ubequad(b)) => Scalar::ubequad(a.$method(b)),
-                    (Scalar::ubeshort(a), Scalar::ubeshort(b)) => Scalar::ubeshort(a.$method(b)),
-                    (Scalar::ubyte(a), Scalar::ubyte(b)) => Scalar::ubyte(a.$method(b)),
-                    (Scalar::ulelong(a), Scalar::ulelong(b)) => Scalar::ulelong(a.$method(b)),
-                    (Scalar::ulequad(a), Scalar::ulequad(b)) => Scalar::ulequad(a.$method(b)),
-                    (Scalar::uleshort(a), Scalar::uleshort(b)) => Scalar::uleshort(a.$method(b)),
-                    (Scalar::uledate(a), Scalar::uledate(b)) => Scalar::uledate(a.$method(b)),
-                    (Scalar::offset(a), Scalar::offset(b)) => Scalar::offset(a.$method(b)),
-                    (Scalar::lemsdosdate(a), Scalar::lemsdosdate(b)) => {
-                        Scalar::lemsdosdate(a.$method(b))
-                    }
-                    (Scalar::lemsdostime(a), Scalar::lemsdostime(b)) => {
-                        Scalar::lemsdostime(a.$method(b))
-                    }
-                    (Scalar::melong(a), Scalar::melong(b)) => Scalar::melong(a.$method(b)),
-                    (Scalar::meldate(a), Scalar::meldate(b)) => Scalar::meldate(a.$method(b)),
-                    _ => panic!("Operation not supported between different Scalar variants"),
-                }
-            }
-        }
-    };
-}
-
-impl Not for Scalar {
-    type Output = Scalar;
-
-    fn not(self) -> Self::Output {
-        match self {
-            Scalar::byte(value) => Scalar::byte(!value),
-            Scalar::long(value) => Scalar::long(!value),
-            Scalar::short(value) => Scalar::short(!value),
-            Scalar::quad(value) => Scalar::quad(!value),
-            Scalar::belong(value) => Scalar::belong(!value),
-            Scalar::bequad(value) => Scalar::bequad(!value),
-            Scalar::beshort(value) => Scalar::beshort(!value),
-            Scalar::bedate(value) => Scalar::bedate(!value),
-            Scalar::beqdate(value) => Scalar::beqdate(!value),
-            Scalar::ledate(value) => Scalar::ledate(!value),
-            Scalar::lelong(value) => Scalar::lelong(!value),
-            Scalar::leshort(value) => Scalar::leshort(!value),
-            Scalar::lequad(value) => Scalar::lequad(!value),
-            Scalar::ushort(value) => Scalar::ushort(!value),
-            Scalar::ulong(value) => Scalar::ulong(!value),
-            Scalar::ubelong(value) => Scalar::ubelong(!value),
-            Scalar::ubequad(value) => Scalar::ubequad(!value),
-            Scalar::ubeshort(value) => Scalar::ubeshort(!value),
-            Scalar::ubyte(value) => Scalar::ubyte(!value),
-            Scalar::ulelong(value) => Scalar::ulelong(!value),
-            Scalar::ulequad(value) => Scalar::ulequad(!value),
-            Scalar::uleshort(value) => Scalar::uleshort(!value),
-            Scalar::uledate(value) => Scalar::uledate(!value),
-            Scalar::offset(value) => Scalar::offset(!value),
-            Scalar::lemsdosdate(value) => Scalar::lemsdosdate(!value),
-            Scalar::lemsdostime(value) => Scalar::lemsdostime(!value),
-            Scalar::medate(value) => Scalar::medate(!value),
-            Scalar::meldate(value) => Scalar::meldate(!value),
-            Scalar::melong(value) => Scalar::melong(!value),
-        }
-    }
-}
-
-impl_op!(Add, add);
-impl_op!(Sub, sub);
-impl_op!(Mul, mul);
-impl_op!(Div, div);
-impl_op!(BitAnd, bitand);
-impl_op!(BitXor, bitxor);
-impl_op!(Rem, rem);
 
 impl ScalarDataType {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
@@ -665,78 +478,6 @@ impl ScalarDataType {
             Rule::meldate => Ok(Self::meldate),
             Rule::melong => Ok(Self::melong),
             _ => Err(Error::parser("unimplemented data type", dt.as_span())),
-        }
-    }
-
-    fn scalar_from_number(&self, i: i64) -> Result<Scalar, ()> {
-        match self {
-            Self::byte => Ok(Scalar::byte(i as i8)),
-            Self::short => Ok(Scalar::short(i as i16)),
-            Self::beshort => Ok(Scalar::beshort(i as i16)),
-            Self::bedate => Ok(Scalar::bedate(i as i32)),
-            Self::beqdate => Ok(Scalar::beqdate(i)),
-            Self::quad => Ok(Scalar::quad(i)),
-            Self::long => Ok(Scalar::long(i as i32)),
-            Self::ledate => Ok(Scalar::ledate(i as i32)),
-            Self::leshort => Ok(Scalar::leshort(i as i16)),
-            Self::lelong => Ok(Scalar::lelong(i as i32)),
-            Self::belong => Ok(Scalar::belong(i as i32)),
-            Self::ubyte => Ok(Scalar::ubyte(i as u8)),
-            Self::ushort => Ok(Scalar::ushort(i as u16)),
-            Self::ulong => Ok(Scalar::ulong(i as u32)),
-            Self::uleshort => Ok(Scalar::uleshort(i as u16)),
-            Self::ulelong => Ok(Scalar::ulelong(i as u32)),
-            Self::ulequad => Ok(Scalar::ulequad(i as u64)),
-            Self::ubeshort => Ok(Scalar::ubeshort(i as u16)),
-            Self::ubelong => Ok(Scalar::ubelong(i as u32)),
-            Self::ubequad => Ok(Scalar::ubequad(i as u64)),
-            Self::bequad => Ok(Scalar::bequad(i)),
-            Self::lequad => Ok(Scalar::lequad(i)),
-            Self::offset => Ok(Scalar::offset(i as u64)),
-            Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u16)),
-            Self::lemsdostime => Ok(Scalar::lemsdostime(i as u16)),
-            Self::medate => Ok(Scalar::medate(i as i32)),
-            Self::meldate => Ok(Scalar::meldate(i as i32)),
-            Self::melong => Ok(Scalar::melong(i as i32)),
-            _ => {
-                // unimplemented
-                Err(())
-            }
-        }
-    }
-
-    const fn type_size(&self) -> usize {
-        match self {
-            Self::belong => 4,
-            Self::bequad => 8,
-            Self::beshort => 2,
-            Self::bedate => 4,
-            Self::beqdate => 8,
-            Self::byte => 1,
-            Self::quad => 4,
-            Self::lelong => 4,
-            Self::ledate => 4,
-            Self::leqdate => 8,
-            Self::leshort => 2,
-            Self::long => 4,
-            Self::short => 2,
-            Self::ushort => 2,
-            Self::ulong => 2,
-            Self::ubelong => 2,
-            Self::ubequad => 8,
-            Self::ubeshort => 2,
-            Self::ubyte => 1,
-            Self::ulelong => 4,
-            Self::ulequad => 8,
-            Self::uleshort => 2,
-            Self::uledate => 4,
-            Self::lequad => 8,
-            Self::lemsdosdate => 2,
-            Self::lemsdostime => 2,
-            Self::offset => 4,
-            Self::medate => 4,
-            Self::meldate => 4,
-            Self::melong => 4,
         }
     }
 
@@ -816,36 +557,16 @@ impl ScalarDataType {
             Self::medate => Scalar::medate(read_me!()),
             Self::meldate => Scalar::meldate(read_me!()),
             Self::melong => Scalar::melong(read_me!()),
-            Self::belong => todo!(),
-            Self::bequad => todo!(),
-            Self::beshort => todo!(),
-            Self::bedate => todo!(),
-            Self::beqdate => todo!(),
-            Self::byte => todo!(),
-            Self::quad => todo!(),
-            Self::lelong => todo!(),
-            Self::ledate => todo!(),
-            Self::leqdate => todo!(),
-            Self::leshort => todo!(),
-            Self::long => todo!(),
-            Self::short => todo!(),
-            Self::ushort => todo!(),
-            Self::ulong => todo!(),
-            Self::ubelong => todo!(),
-            Self::ubequad => todo!(),
-            Self::ubeshort => todo!(),
-            Self::ubyte => todo!(),
-            Self::ulelong => todo!(),
-            Self::ulequad => todo!(),
-            Self::uleshort => todo!(),
-            Self::uledate => todo!(),
-            Self::lequad => todo!(),
-            Self::lemsdosdate => todo!(),
-            Self::lemsdostime => todo!(),
-            Self::medate => todo!(),
-            Self::melong => todo!(),
-            Self::meldate => todo!(),
-            Self::offset => todo!(),
+            Self::beshort => Scalar::beshort(read_be!(i16)),
+            Self::quad => Scalar::quad(read_ne!(i64)),
+            Self::uquad => Scalar::uquad(read_ne!(u64)),
+            Self::ledate => Scalar::ledate(read_le!(i32)),
+            Self::leqdate => Scalar::leqdate(read_le!(i64)),
+            Self::ubelong => Scalar::ubelong(read_be!(u32)),
+            Self::ulong => Scalar::ulong(read_ne!(u32)),
+            Self::ubeshort => Scalar::ubeshort(read_be!(u16)),
+            Self::lemsdosdate => Scalar::lemsdosdate(read_le!(u16)),
+            Self::lemsdostime => Scalar::lemsdostime(read_le!(u16)),
         })
     }
 }
@@ -1277,10 +998,7 @@ impl Test {
                                 op,
                                 // ty is guaranteed to be some by
                                 // parser implementation
-                                num: ty
-                                    .unwrap()
-                                    .scalar_from_number(parse_pos_number(number))
-                                    .map_err(|_| Error::parser("unimplemented scalar", span))?,
+                                num: ty.unwrap().scalar_from_number(parse_pos_number(number)),
                             });
                         }
                         Rule::scalar_condition => {
@@ -1294,10 +1012,7 @@ impl Test {
 
                             scalar = Some(
                                 ty.unwrap()
-                                    .scalar_from_number(parse_number_pair(number_pair))
-                                    .map_err(|_| {
-                                        Error::parser("unimplemented scalar", ty_span.unwrap())
-                                    })?,
+                                    .scalar_from_number(parse_number_pair(number_pair)),
                             );
                         }
                         Rule::any_value => return Ok(Self::Any(Any::Scalar(ty.unwrap()))),
