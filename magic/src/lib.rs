@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use chrono::DateTime;
+use chrono::{DateTime, Local, TimeZone};
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
 use lazy_cache::LazyCache;
@@ -32,6 +32,8 @@ const MAX_RECURSION: usize = 50;
 const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
+
+const TIMESTAMP_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
 
 macro_rules! debug_panic {
     ($($arg:tt)*) => {
@@ -378,6 +380,7 @@ enum ScalarDataType {
     lemsdostime,
     medate,
     melong,
+    meldate,
     offset,
 }
 
@@ -413,6 +416,7 @@ enum Scalar {
     lemsdostime(u16),
     medate(i32),
     melong(i32),
+    meldate(i32),
 }
 
 impl Scalar {
@@ -446,6 +450,7 @@ impl Scalar {
             Scalar::lemsdostime(x) => *x == 0,
             Scalar::medate(x) => *x == 0,
             Scalar::melong(x) => *x == 0,
+            Scalar::meldate(x) => *x == 0,
         }
     }
 }
@@ -458,14 +463,14 @@ impl DynDisplay for Scalar {
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bedate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
-                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
                 .unwrap_or("invalid timestamp".into())),
             Scalar::beqdate(value) => Ok(DateTime::from_timestamp(*value, 0)
-                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
                 .unwrap_or("invalid timestamp".into())),
             Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ledate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
-                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
                 .unwrap_or("invalid timestamp".into())),
             Scalar::lelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::leshort(value) => DynDisplay::dyn_fmt(value, f),
@@ -489,6 +494,11 @@ impl DynDisplay for Scalar {
             Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
             Scalar::medate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
                 .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or("invalid timestamp".into())),
+            Scalar::meldate(value) => Ok(Local
+                .timestamp_opt(*value as i64, 0)
+                .earliest()
+                .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or("invalid timestamp".into())),
             Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
         }
@@ -526,6 +536,7 @@ impl fmt::Display for Scalar {
             Scalar::lemsdostime(value) => write!(f, "lemsdostime({})", value),
             Scalar::medate(value) => write!(f, "medate({})", value),
             Scalar::melong(value) => write!(f, "{}", value),
+            Scalar::meldate(value) => write!(f, "meldate({})", value),
         }
     }
 }
@@ -565,6 +576,7 @@ macro_rules! impl_op {
                         Scalar::lemsdostime(a.$method(b))
                     }
                     (Scalar::melong(a), Scalar::melong(b)) => Scalar::melong(a.$method(b)),
+                    (Scalar::meldate(a), Scalar::meldate(b)) => Scalar::meldate(a.$method(b)),
                     _ => panic!("Operation not supported between different Scalar variants"),
                 }
             }
@@ -604,6 +616,7 @@ impl Not for Scalar {
             Scalar::lemsdosdate(value) => Scalar::lemsdosdate(!value),
             Scalar::lemsdostime(value) => Scalar::lemsdostime(!value),
             Scalar::medate(value) => Scalar::medate(!value),
+            Scalar::meldate(value) => Scalar::meldate(!value),
             Scalar::melong(value) => Scalar::melong(!value),
         }
     }
@@ -619,7 +632,7 @@ impl_op!(Rem, rem);
 
 impl ScalarDataType {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
-        let dt = pair.into_inner().next().expect("datay type expected");
+        let dt = pair.into_inner().next().expect("data type expected");
         match dt.as_rule() {
             Rule::belong => Ok(Self::belong),
             Rule::bequad => Ok(Self::bequad),
@@ -649,6 +662,7 @@ impl ScalarDataType {
             Rule::lemsdosdate => Ok(Self::lemsdosdate),
             Rule::lemsdostime => Ok(Self::lemsdostime),
             Rule::medate => Ok(Self::medate),
+            Rule::meldate => Ok(Self::meldate),
             Rule::melong => Ok(Self::melong),
             _ => Err(Error::parser("unimplemented data type", dt.as_span())),
         }
@@ -682,6 +696,7 @@ impl ScalarDataType {
             Self::lemsdosdate => Ok(Scalar::lemsdosdate(i as u16)),
             Self::lemsdostime => Ok(Scalar::lemsdostime(i as u16)),
             Self::medate => Ok(Scalar::medate(i as i32)),
+            Self::meldate => Ok(Scalar::meldate(i as i32)),
             Self::melong => Ok(Scalar::melong(i as i32)),
             _ => {
                 // unimplemented
@@ -720,6 +735,7 @@ impl ScalarDataType {
             Self::lemsdostime => 2,
             Self::offset => 4,
             Self::medate => 4,
+            Self::meldate => 4,
             Self::melong => 4,
         }
     }
@@ -798,8 +814,38 @@ impl ScalarDataType {
             Self::offset => Scalar::offset(from.stream_position()?),
             Self::ubequad => Scalar::ubequad(read_be!(u64)),
             Self::medate => Scalar::medate(read_me!()),
+            Self::meldate => Scalar::meldate(read_me!()),
             Self::melong => Scalar::melong(read_me!()),
-            _ => unimplemented!("{:?}", self),
+            Self::belong => todo!(),
+            Self::bequad => todo!(),
+            Self::beshort => todo!(),
+            Self::bedate => todo!(),
+            Self::beqdate => todo!(),
+            Self::byte => todo!(),
+            Self::quad => todo!(),
+            Self::lelong => todo!(),
+            Self::ledate => todo!(),
+            Self::leqdate => todo!(),
+            Self::leshort => todo!(),
+            Self::long => todo!(),
+            Self::short => todo!(),
+            Self::ushort => todo!(),
+            Self::ulong => todo!(),
+            Self::ubelong => todo!(),
+            Self::ubequad => todo!(),
+            Self::ubeshort => todo!(),
+            Self::ubyte => todo!(),
+            Self::ulelong => todo!(),
+            Self::ulequad => todo!(),
+            Self::uleshort => todo!(),
+            Self::uledate => todo!(),
+            Self::lequad => todo!(),
+            Self::lemsdosdate => todo!(),
+            Self::lemsdostime => todo!(),
+            Self::medate => todo!(),
+            Self::melong => todo!(),
+            Self::meldate => todo!(),
+            Self::offset => todo!(),
         })
     }
 }
@@ -2979,7 +3025,7 @@ mod tests {
         ($rule: literal, $content:literal) => {{
             first_magic($rule, $content).unwrap().unwrap();
         }};
-        ($rule: literal, $content:literal, $message:literal) => {{
+        ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
                 first_magic($rule, $content).unwrap().unwrap().message(),
                 $message
@@ -3161,6 +3207,30 @@ mod tests {
             "4 medate 946684800 %s",
             b"\x00\x00\x00\x00\x6D\x38\x80\x43",
             "2000-01-01 00:00:00"
+        );
+    }
+
+    #[test]
+    fn test_meldate() {
+        assert_magic_match!(
+            "0 meldate 946684800 Local date (Jan 1, 2000)",
+            b"\x6D\x38\x80\x43"
+        );
+        assert_magic_not_match!(
+            "0 meldate 946684800 Local date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00"
+        );
+
+        let local = Local
+            .timestamp_opt(946684800, 0)
+            .earliest()
+            .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
+            .unwrap();
+
+        assert_magic_match!(
+            "4 meldate 946684800 %s",
+            b"\x00\x00\x00\x00\x6D\x38\x80\x43",
+            local
         );
     }
 
