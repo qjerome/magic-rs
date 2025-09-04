@@ -1511,50 +1511,57 @@ struct IndOffset {
 
 impl IndOffset {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
-        let mut pairs = pair.into_inner();
-
-        let offset_pair = pairs.next().expect("offset is expected");
-        let offset = DirOffset::from_pair(offset_pair);
-
-        let signed_pair = pairs.next().expect("sign must be specified");
-
-        let signed = match signed_pair.as_str() {
-            "," => true,
-            "." => false,
-            _ => return Err(Error::parser("invalid sign", signed_pair.as_span())),
-        };
-
-        let type_pair = pairs.next().expect("offset type must be specified");
-
-        let ot = match type_pair.as_str() {
-            "b" | "c" | "B" | "C" => OffsetType::Byte,
-            "e" | "f" | "g" => OffsetType::DoubleLe,
-            "E" | "F" | "G" => OffsetType::DoubleBe,
-            "h" | "s" => OffsetType::ShortLe,
-            "H" | "S" => OffsetType::ShortBe,
-            "i" => OffsetType::Id3Le,
-            "I" => OffsetType::Id3Be,
-            "l" => OffsetType::LongLe,
-            "L" => OffsetType::LongBe,
-            "m" => OffsetType::Middle,
-            "o" => OffsetType::Octal,
-            "q" => OffsetType::QuadLe,
-            "Q" => OffsetType::QuadBe,
-            _ => return Err(Error::parser("unknown offset type", type_pair.as_span())),
-        };
-
+        let mut off_addr = None;
+        let mut signed = false;
+        // default type according to magic documentation
+        let mut offset_type = OffsetType::LongLe;
         let mut op = None;
         let mut shift = None;
-        if let (Some(op_pair), Some(shift_pair)) = (pairs.next(), pairs.next()) {
-            op = Some(Op::from_pair(op_pair)?);
 
-            shift = Some(Shift::from_pair(shift_pair));
+        for pair in pair.into_inner() {
+            match pair.as_rule() {
+                Rule::abs_offset | Rule::rel_offset => off_addr = Some(DirOffset::from_pair(pair)),
+                Rule::ind_offset_sign => match pair.as_str() {
+                    "," => signed = true,
+                    "." => signed = false,
+                    _ => {}
+                },
+                Rule::ind_offset_type => match pair.as_str() {
+                    "b" | "c" | "B" | "C" => offset_type = OffsetType::Byte,
+                    "e" | "f" | "g" => offset_type = OffsetType::DoubleLe,
+                    "E" | "F" | "G" => offset_type = OffsetType::DoubleBe,
+                    "h" | "s" => offset_type = OffsetType::ShortLe,
+                    "H" | "S" => offset_type = OffsetType::ShortBe,
+                    "i" => offset_type = OffsetType::Id3Le,
+                    "I" => offset_type = OffsetType::Id3Be,
+                    "l" => offset_type = OffsetType::LongLe,
+                    "L" => offset_type = OffsetType::LongBe,
+                    "m" => offset_type = OffsetType::Middle,
+                    "o" => offset_type = OffsetType::Octal,
+                    "q" => offset_type = OffsetType::QuadLe,
+                    "Q" => offset_type = OffsetType::QuadBe,
+                    _ => {}
+                },
+                Rule::op_add
+                | Rule::op_sub
+                | Rule::op_mul
+                | Rule::op_div
+                | Rule::op_mod
+                | Rule::op_and
+                | Rule::op_or
+                | Rule::op_xor => op = Some(Op::from_pair(pair)?),
+
+                Rule::shift => {
+                    shift = Some(Shift::from_pair(pair));
+                }
+                _ => {}
+            }
         }
 
         Ok(Self {
-            off_addr: offset,
+            off_addr: off_addr.unwrap(),
             signed,
-            ty: ot,
+            ty: offset_type,
             op,
             shift,
         })

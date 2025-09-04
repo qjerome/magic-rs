@@ -61,7 +61,7 @@ ind_offset_type = @{ "b" | "c" | "B" | "C" | "e" | "f" | "g" | "E" | "F" | "G" |
 dir_shift       =  { number }
 ind_shift       =  { "(" ~ number ~ ")" }
 shift           =  { dir_shift | ind_shift }
-indirect_offset = ${ "&"? ~ "(" ~ (abs_offset | rel_offset) ~ ind_offset_sign ~ ind_offset_type ~ ((op_add | op_sub | op_mul | op_div | op_mod | op_and | op_or | op_xor) ~ shift)? ~ ")" }
+indirect_offset = ${ "&"? ~ "(" ~ (abs_offset | rel_offset) ~ ind_offset_sign? ~ ind_offset_type? ~ ((op_add | op_sub | op_mul | op_div | op_mod | op_and | op_or | op_xor) ~ shift)? ~ ")" }
 
 offset = ${ rel_offset | abs_offset | indirect_offset }
 
