@@ -161,6 +161,7 @@ impl_numeric_types!(
     bequad(i64),
     beshort(i16),
     bedate(i32),
+    beldate(i32),
     beqdate(i64),
     ledate(i32),
     lelong(i32),

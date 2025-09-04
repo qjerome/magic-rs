@@ -350,6 +350,22 @@ impl FileMagicParser {
     }
 }
 
+#[inline(always)]
+fn unix_local_time_to_string(timestamp: i64) -> String {
+    Local
+        .timestamp_opt(timestamp, 0)
+        .earliest()
+        .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or("invalid timestamp".into())
+}
+
+#[inline(always)]
+fn unix_utc_time_to_string(timestamp: i64) -> String {
+    DateTime::from_timestamp(timestamp, 0)
+        .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
+        .unwrap_or("invalid timestamp".into())
+}
+
 impl DynDisplay for Scalar {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
@@ -357,16 +373,11 @@ impl DynDisplay for Scalar {
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::bedate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
-                .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-                .unwrap_or("invalid timestamp".into())),
-            Scalar::beqdate(value) => Ok(DateTime::from_timestamp(*value, 0)
-                .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-                .unwrap_or("invalid timestamp".into())),
+            Scalar::bedate(value) => Ok(unix_utc_time_to_string(*value as i64)),
+            Scalar::beldate(value) => Ok(unix_local_time_to_string(*value as i64)),
+            Scalar::beqdate(value) => Ok(unix_utc_time_to_string(*value)),
             Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ledate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
-                .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-                .unwrap_or("invalid timestamp".into())),
+            Scalar::ledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Scalar::lelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::leshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::lequad(value) => DynDisplay::dyn_fmt(value, f),
@@ -382,20 +393,12 @@ impl DynDisplay for Scalar {
             Scalar::ulelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ulequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::uleshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::uledate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
-                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
-                .unwrap_or("invalid timestamp".into())),
+            Scalar::uledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Self::offset(value) => DynDisplay::dyn_fmt(value, f),
             Self::lemsdosdate(value) => Ok(format!("mdosdate({})", value)),
             Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
-            Scalar::medate(value) => Ok(DateTime::from_timestamp(*value as i64, 0)
-                .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
-                .unwrap_or("invalid timestamp".into())),
-            Scalar::meldate(value) => Ok(Local
-                .timestamp_opt(*value as i64, 0)
-                .earliest()
-                .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
-                .unwrap_or("invalid timestamp".into())),
+            Scalar::medate(value) => Ok(unix_utc_time_to_string(*value as i64)),
+            Scalar::meldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::leqdate(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::offset(_) => todo!(),
@@ -414,6 +417,7 @@ impl fmt::Display for Scalar {
             Scalar::bequad(value) => write!(f, "{}", value),
             Scalar::beshort(value) => write!(f, "{}", value),
             Scalar::bedate(value) => write!(f, "bedate({})", value),
+            Scalar::beldate(value) => write!(f, "beldate({})", value),
             Scalar::beqdate(value) => write!(f, "beqdate({})", value),
             Scalar::byte(value) => write!(f, "{}", value),
             Scalar::ledate(value) => write!(f, "ledate({})", value),
@@ -451,6 +455,7 @@ impl ScalarDataType {
             Rule::bequad => Ok(Self::bequad),
             Rule::beshort => Ok(Self::beshort),
             Rule::bedate => Ok(Self::bedate),
+            Rule::beldate => Ok(Self::beldate),
             Rule::beqdate => Ok(Self::beqdate),
             Rule::byte => Ok(Self::byte),
             Rule::quad => Ok(Self::quad),
@@ -545,6 +550,7 @@ impl ScalarDataType {
             Self::bequad => Scalar::bequad(read_be!(i64)),
             Self::belong => Scalar::belong(read_be!(i32)),
             Self::bedate => Scalar::bedate(read_be!(i32)),
+            Self::beldate => Scalar::beldate(read_be!(i32)),
             Self::beqdate => Scalar::beqdate(read_be!(i64)),
             // unsigned
             Self::ubyte => Scalar::ubyte(read!(u8)[0]),
@@ -2933,6 +2939,28 @@ mod tests {
             "4 bedate 946684800 %s",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
             "2000-01-01 00:00:00"
+        );
+    }
+    #[test]
+    fn test_beldate() {
+        assert_magic_match!(
+            "0 beldate 946684800 Local date (Jan 1, 2000)",
+            b"\x38\x6D\x43\x80"
+        );
+        assert_magic_not_match!(
+            "0 beldate 946684800 Local date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00"
+        );
+        let local = Local
+            .timestamp_opt(946684800, 0)
+            .earliest()
+            .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
+            .unwrap();
+
+        assert_magic_match!(
+            "4 beldate 946684800 {}",
+            b"\x00\x00\x00\x00\x38\x6D\x43\x80",
+            local
         );
     }
 
