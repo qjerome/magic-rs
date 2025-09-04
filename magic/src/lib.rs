@@ -400,7 +400,9 @@ impl DynDisplay for Scalar {
             Scalar::medate(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Scalar::meldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::leqdate(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::leqdate(value) => Ok(unix_utc_time_to_string(*value)),
+            Scalar::leldate(value) => Ok(unix_local_time_to_string(*value as i64)),
+            Scalar::leqldate(value) => Ok(unix_local_time_to_string(*value)),
             Scalar::offset(_) => todo!(),
             Scalar::lemsdosdate(_) => todo!(),
             Scalar::lemsdostime(_) => todo!(),
@@ -442,7 +444,9 @@ impl fmt::Display for Scalar {
             Scalar::medate(value) => write!(f, "medate({})", value),
             Scalar::melong(value) => write!(f, "{}", value),
             Scalar::meldate(value) => write!(f, "meldate({})", value),
-            Scalar::leqdate(value) => write!(f, "{}", value),
+            Scalar::leldate(value) => write!(f, "leldate({})", value),
+            Scalar::leqdate(value) => write!(f, "leqdate({})", value),
+            Scalar::leqldate(value) => write!(f, "leqldate({})", value),
         }
     }
 }
@@ -462,7 +466,9 @@ impl ScalarDataType {
             Rule::uquad => Ok(Self::uquad),
             Rule::lelong => Ok(Self::lelong),
             Rule::ledate => Ok(Self::ledate),
+            Rule::leldate => Ok(Self::leldate),
             Rule::leqdate => Ok(Self::leqdate),
+            Rule::leqldate => Ok(Self::leqldate),
             Rule::leshort => Ok(Self::leshort),
             Rule::long => Ok(Self::long),
             Rule::short => Ok(Self::short),
@@ -568,7 +574,9 @@ impl ScalarDataType {
             Self::quad => Scalar::quad(read_ne!(i64)),
             Self::uquad => Scalar::uquad(read_ne!(u64)),
             Self::ledate => Scalar::ledate(read_le!(i32)),
+            Self::leldate => Scalar::leldate(read_le!(i32)),
             Self::leqdate => Scalar::leqdate(read_le!(i64)),
+            Self::leqldate => Scalar::leqldate(read_le!(i64)),
             Self::ubelong => Scalar::ubelong(read_be!(u32)),
             Self::ulong => Scalar::ulong(read_ne!(u32)),
             Self::ubeshort => Scalar::ubeshort(read_be!(u16)),
@@ -2951,16 +2959,11 @@ mod tests {
             "0 beldate 946684800 Local date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
-        let local = Local
-            .timestamp_opt(946684800, 0)
-            .earliest()
-            .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-            .unwrap();
 
         assert_magic_match!(
             "4 beldate 946684800 {}",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
-            local
+            unix_local_time_to_string(946684800)
         );
     }
 
@@ -3013,16 +3016,63 @@ mod tests {
             b"\x00\x00\x00\x00"
         );
 
-        let local = Local
-            .timestamp_opt(946684800, 0)
-            .earliest()
-            .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-            .unwrap();
-
         assert_magic_match!(
             "4 meldate 946684800 %s",
             b"\x00\x00\x00\x00\x6D\x38\x80\x43",
-            local
+            unix_local_time_to_string(946684800)
+        );
+    }
+
+    #[test]
+    fn test_leldate() {
+        assert_magic_match!(
+            "0 leldate 946684800 Local date (Jan 1, 2000)",
+            b"\x80\x43\x6D\x38"
+        );
+        assert_magic_not_match!(
+            "0 leldate 946684800 Local date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00"
+        );
+        assert_magic_match!(
+            "4 leldate 946684800 {}",
+            b"\x00\x00\x00\x00\x80\x43\x6D\x38",
+            unix_local_time_to_string(946684800)
+        );
+    }
+
+    #[test]
+    fn test_leqdate() {
+        assert_magic_match!(
+            "0 leqdate 1577836800 Unix date (Jan 1, 2020)",
+            b"\x00\xe1\x0b\x5E\x00\x00\x00\x00"
+        );
+
+        assert_magic_not_match!(
+            "0 leqdate 1577836800 Unix date (Jan 1, 2020)",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+        assert_magic_match!(
+            "8 leqdate 1577836800 %s",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\xE1\x0B\x5E\x00\x00\x00\x00",
+            "2020-01-01 00:00:00"
+        );
+    }
+
+    #[test]
+    fn test_leqldate() {
+        assert_magic_match!(
+            "0 leqldate 1577836800 Unix date (Jan 1, 2020)",
+            b"\x00\xe1\x0b\x5E\x00\x00\x00\x00"
+        );
+
+        assert_magic_not_match!(
+            "0 leqldate 1577836800 Unix date (Jan 1, 2020)",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+        assert_magic_match!(
+            "8 leqldate 1577836800 %s",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\xE1\x0B\x5E\x00\x00\x00\x00",
+            unix_local_time_to_string(1577836800)
         );
     }
 
