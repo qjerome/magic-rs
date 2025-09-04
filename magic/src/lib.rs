@@ -369,6 +369,7 @@ fn unix_utc_time_to_string(timestamp: i64) -> String {
 impl DynDisplay for Scalar {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
+            Scalar::date(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
@@ -413,6 +414,7 @@ impl DynDisplay for Scalar {
 impl fmt::Display for Scalar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Scalar::date(value) => write!(f, "date({})", value),
             Scalar::quad(value) => write!(f, "{}", value),
             Scalar::uquad(value) => write!(f, "{}", value),
             Scalar::belong(value) => write!(f, "{}", value),
@@ -462,6 +464,7 @@ impl ScalarDataType {
             Rule::beldate => Ok(Self::beldate),
             Rule::beqdate => Ok(Self::beqdate),
             Rule::byte => Ok(Self::byte),
+            Rule::date => Ok(Self::date),
             Rule::quad => Ok(Self::quad),
             Rule::uquad => Ok(Self::uquad),
             Rule::lelong => Ok(Self::lelong),
@@ -550,6 +553,7 @@ impl ScalarDataType {
             Self::byte => Scalar::byte(read!(u8)[0] as i8),
             Self::short => Scalar::short(read_ne!(i16)),
             Self::long => Scalar::long(read_ne!(i32)),
+            Self::date => Scalar::date(read_ne!(i32)),
             Self::leshort => Scalar::leshort(read_le!(i16)),
             Self::lelong => Scalar::lelong(read_le!(i32)),
             Self::lequad => Scalar::lequad(read_le!(i64)),
@@ -3020,6 +3024,23 @@ mod tests {
             "4 meldate 946684800 %s",
             b"\x00\x00\x00\x00\x6D\x38\x80\x43",
             unix_local_time_to_string(946684800)
+        );
+    }
+
+    #[test]
+    fn test_date() {
+        assert_magic_match!(
+            "0 date 946684800 Local date (Jan 1, 2000)",
+            b"\x80\x43\x6D\x38"
+        );
+        assert_magic_not_match!(
+            "0 date 946684800 Local date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00"
+        );
+        assert_magic_match!(
+            "4 date 946684800 {}",
+            b"\x00\x00\x00\x00\x80\x43\x6D\x38",
+            "2000-01-01 00:00:00"
         );
     }
 

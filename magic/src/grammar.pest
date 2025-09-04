@@ -66,6 +66,7 @@ indirect_offset = ${ "&"? ~ "(" ~ (abs_offset | rel_offset) ~ ind_offset_sign? ~
 offset = ${ rel_offset | abs_offset | indirect_offset }
 
 /// All test types
+date        = @{ "date" }
 bedate      = @{ "bedate" }
 bedouble    = @{ "bedouble" }
 befloat     = @{ "befloat" }
@@ -132,7 +133,7 @@ offset_ty = { "offset" }
 any_value = { "x" }
 
 // tests on scalar data types
-scalar_type      = ${ bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | u4 | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty | medate | melong | meldate | uquad | leqldate }
+scalar_type      = ${ date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | u4 | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty | medate | melong | meldate | uquad | leqldate }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_or | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
 scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and | op_not }
