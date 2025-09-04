@@ -91,6 +91,19 @@ macro_rules! impl_numeric_types {
             }
         }
 
+        impl std::ops::BitOr for Scalar {
+            type Output = Self;
+
+            fn bitor(self, other: Self) -> Self::Output {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Self::$name(a.bitor(b)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+        }
+
         impl std::ops::BitXor for Scalar {
             type Output = Self;
 

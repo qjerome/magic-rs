@@ -15,7 +15,7 @@ use std::{
     fs,
     io::{self, Read, Seek, SeekFrom},
     iter::Peekable,
-    ops::{Add, BitAnd, BitXor, Div, Mul, Not, Rem, Sub},
+    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub},
     path::Path,
     str::Utf8Error,
 };
@@ -581,6 +581,7 @@ enum Op {
     Mod,
     And,
     Xor,
+    Or,
 }
 
 impl Display for Op {
@@ -592,6 +593,7 @@ impl Display for Op {
             Op::Div => write!(f, "/"),
             Op::Mod => write!(f, "%"),
             Op::And => write!(f, "&"),
+            Op::Or => write!(f, "|"),
             Op::Xor => write!(f, "^"),
         }
     }
@@ -635,6 +637,7 @@ impl Op {
             Rule::op_div => Ok(Self::Div),
             Rule::op_mod => Ok(Self::Mod),
             Rule::op_and => Ok(Self::And),
+            Rule::op_or => Ok(Self::Or),
             Rule::op_xor => Ok(Self::Xor),
             _ => Err(Error::parser("unimplemented operator", value.as_span())),
         }
@@ -657,6 +660,7 @@ impl Transform {
             Op::Mod => s.rem(self.num),
             Op::And => s.bitand(self.num),
             Op::Xor => s.bitxor(self.num),
+            Op::Or => s.bitor(self.num),
         }
     }
 }
@@ -983,24 +987,47 @@ impl Test {
                 let mut scalar = None;
                 for pair in pairs {
                     match pair.as_rule() {
-                        Rule::scalar_type => {
-                            ty_span = Some(pair.as_span());
-                            ty = Some(ScalarDataType::from_pair(pair)?);
-                        }
+                        Rule::scalar_type_transform => {
+                            for pair in pair.into_inner() {
+                                match pair.as_rule() {
+                                    Rule::scalar_type => {
+                                        ty_span = Some(pair.as_span());
+                                        ty = Some(ScalarDataType::from_pair(pair)?);
+                                    }
 
-                        Rule::scalar_transform => {
-                            let mut transform_pairs = pair.into_inner();
-                            let op_pair = transform_pairs.next().expect("expect operator pair");
-                            let op = Op::from_pair(op_pair)?;
+                                    Rule::scalar_transform => {
+                                        let mut transform_pairs = pair.into_inner();
+                                        let op_pair =
+                                            transform_pairs.next().expect("expect operator pair");
+                                        let op = Op::from_pair(op_pair)?;
 
-                            let number = transform_pairs.next().expect("expect number pair");
-                            let span = number.as_span();
-                            transform = Some(Transform {
-                                op,
-                                // ty is guaranteed to be some by
-                                // parser implementation
-                                num: ty.unwrap().scalar_from_number(parse_pos_number(number)),
-                            });
+                                        let number =
+                                            transform_pairs.next().expect("expect number pair");
+                                        let span = number.as_span();
+                                        // ty is guaranteed to be some by
+                                        // parser implementation
+                                        let num = ty
+                                            .unwrap()
+                                            .scalar_from_number(parse_pos_number(number));
+
+                                        // we check if we try to divide by zero
+                                        if num.is_zero() {
+                                            match op {
+                                                Op::Div | Op::Mod => {
+                                                    return Err(Error::parser(
+                                                        "divide by zero error",
+                                                        span,
+                                                    ));
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+
+                                        transform = Some(Transform { op, num });
+                                    }
+                                    _ => {}
+                                }
+                            }
                         }
                         Rule::scalar_condition => {
                             condition = CmpOp::from_pair(
@@ -1691,6 +1718,7 @@ impl IndOffset {
                 Op::Div => return Ok(o.checked_div(shift)),
                 Op::Mod => return Ok(o.checked_rem(shift)),
                 Op::And => return Ok(Some(o & shift)),
+                Op::Or => return Ok(Some(o | shift)),
                 Op::Xor => return Ok(Some(o ^ shift)),
             }
         }
@@ -2252,7 +2280,7 @@ impl StrengthMod {
             Op::And => strength & by,
             // this should never happen as strength operators
             // are enforced by our parser
-            Op::Xor => unimplemented!(),
+            Op::Xor | Op::Or => unimplemented!(),
         }
     }
 }
@@ -2833,6 +2861,19 @@ mod tests {
             b"MZ\0",
             "first match then second match"
         );
+    }
+
+    #[test]
+    fn test_scalar_transform() {
+        assert_magic_match!("0 ubyte+1 0x1 add works", b"\x00");
+        assert_magic_match!("0 ubyte-1 0xfe sub works", b"\xff");
+        assert_magic_match!("0 ubyte%2 0 mod works", b"\x0a");
+        assert_magic_match!("0 ubyte&0x0f 0x0f bitand works", b"\xff");
+        assert_magic_match!("0 ubyte|0x0f 0xff bitor works", b"\xf0");
+        assert_magic_match!("0 ubyte^0x0f 0xf0 bitxor works", b"\xff");
+
+        FileMagicParser::parse_str("0 ubyte%0 mod by zero").expect_err("expect div by zero error");
+        FileMagicParser::parse_str("0 ubyte/0 div by zero").expect_err("expect div by zero error");
     }
 
     #[test]
