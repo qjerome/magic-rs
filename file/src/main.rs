@@ -93,9 +93,9 @@ fn main() -> Result<(), anyhow::Error> {
                     let wo = WalkOptions::new().files().max_depth(1);
                     for p in wo.walk(rule).flatten() {
                         info!("loading magic rule: {}", p.to_string_lossy());
-                        let magic = MagicFile::open(p).inspect_err(|e| {
+                        let magic = MagicFile::open(&p).inspect_err(|e| {
                             if !o.silent {
-                                error!("{e}")
+                                error!("{} {e}", p.to_string_lossy())
                             }
                         });
                         // FIXME: we ignore error for the moment
