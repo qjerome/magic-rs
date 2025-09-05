@@ -47,7 +47,7 @@ flag            =  { "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) 
 
 neg_number = ${ "-" ~ pos_number }
 // hex must be checked first as 0 is also b10 number
-pos_number = ${ b16_number | b10_number }
+pos_number = ${ "+"? ~ (b16_number | b10_number) }
 number     =  { pos_number | neg_number }
 b10_number = @{ ASCII_DIGIT+ }
 b16_number = @{ "0x" ~ ASCII_HEX_DIGIT+ }
@@ -75,7 +75,7 @@ belong      = @{ "belong" }
 beqdate     = @{ "beqdate" }
 bequad      = @{ "bequad" }
 beshort     = @{ "beshort" }
-byte        = @{ "byte" }
+byte        = @{ ("byte" | "dC" | "d1") }
 der         = @{ "der" }
 guid        = @{ "guid" }
 ldate       = @{ "ldate" }
@@ -92,29 +92,28 @@ lequad      = @{ "lequad" }
 leqwdate    = @{ "leqwdate" }
 leshort     = @{ "leshort" }
 lestring16  = @{ "lestring16" }
-long        = @{ "long" }
+long        = @{ ("long" | "dI" | "dL" | "d4") }
 medate      = @{ "medate" }
 meldate     = @{ "meldate" }
 melong      = @{ "melong" }
-quad        = @{ "quad" }
+quad        = @{ ("quad" | "d8" | "dQ") }
 qwdate      = @{ "qwdate" }
-short       = @{ "short" }
-u4          = @{ "u4" }
+short       = @{ ("short" | "dS" | "d2") }
 ubelong     = @{ "ubelong" }
 ubequad     = @{ "ubequad" }
 ubeshort    = @{ "ubeshort" }
-ubyte       = @{ "ubyte" }
+ubyte       = @{ ("ubyte" | "uC" | "u1") }
 uledate     = @{ "uledate" }
 ulelong     = @{ "ulelong" }
 ulequad     = @{ "ulequad" }
 uleshort    = @{ "uleshort" }
-ulong       = @{ "ulong" }
-uquad       = @{ "uquad" }
-ushort      = @{ "ushort" }
+ulong       = @{ ("ulong" | "u4" | "uI" | "uL") }
+uquad       = @{ ("uquad" | "u8" | "uQ") }
+ushort      = @{ ("ushort" | "uS" | "u2") }
 
 /// string related test types
 string_mod  = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
-string      =  { "string" ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
+string      =  { ("string" | "s") ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
 pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
 pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
 search      =  { "search" ~ ("/" ~ (pos_number | ((string_mod | regex_mod)+))){,2} }
@@ -133,7 +132,7 @@ offset_ty = { "offset" }
 any_value = { "x" }
 
 // tests on scalar data types
-scalar_type      = ${ date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | u4 | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty | medate | melong | meldate | uquad | leqldate }
+scalar_type      = ${ date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty | medate | melong | meldate | uquad | uquad | leqldate }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_or | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
 scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and | op_not }
