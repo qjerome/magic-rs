@@ -361,6 +361,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "fs-walk",
  "lazy-cache",
  "magic-rs",
  "tracing",
@@ -372,6 +373,12 @@ name = "flagset"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
+
+[[package]]
+name = "fs-walk"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c950a8172c366d64424ae15455ac18264260d505d17b2e7583dac2757aa298d"
 
 [[package]]
 name = "generic-array"

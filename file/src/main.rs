@@ -1,9 +1,10 @@
 use std::{fs::File, path::PathBuf, time::Instant};
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
+use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
 use magic_rs::{MagicDb, MagicFile};
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -25,6 +26,11 @@ struct ParseOpt {
 
 #[derive(Debug, Parser)]
 struct TestOpt {
+    /// Hide log messages
+    #[arg(short, long)]
+    silent: bool,
+    #[arg(long)]
+    all: bool,
     #[arg(short, long)]
     rules: Vec<PathBuf>,
     files: Vec<PathBuf>,
@@ -83,24 +89,52 @@ fn main() -> Result<(), anyhow::Error> {
 
             let start = Instant::now();
             for rule in o.rules {
-                info!("loading magic rule: {}", rule.to_string_lossy());
-
-                db.load(MagicFile::open(rule)?)?;
+                if rule.is_dir() {
+                    let wo = WalkOptions::new().files().max_depth(1);
+                    for p in wo.walk(rule).flatten() {
+                        info!("loading magic rule: {}", p.to_string_lossy());
+                        let magic = MagicFile::open(p).inspect_err(|e| {
+                            if !o.silent {
+                                error!("{e}")
+                            }
+                        });
+                        // FIXME: we ignore error for the moment
+                        if magic.is_err() {
+                            continue;
+                        }
+                        let _ = db.load(magic?)?;
+                    }
+                } else {
+                    info!("loading magic rule: {}", rule.to_string_lossy());
+                    db.load(MagicFile::open(rule)?)?;
+                }
             }
             println!("Time parse rule files: {:?}", start.elapsed());
 
             let start = Instant::now();
             for f in o.files {
                 let mut haystack = LazyCache::<File>::open(&f, 4096, 4 << 20).unwrap();
-                let magics = db.magic(&mut haystack)?;
+                let mut magics = db.magic(&mut haystack)?;
+                magics.sort_by(|a, b| b.0.cmp(&a.0));
 
-                for (strength, magic) in magics {
-                    println!(
-                        "file:{} strength:{strength} mime:{} magic:{}",
-                        f.to_string_lossy(),
-                        magic.mimetype(),
-                        magic.message()
-                    )
+                if o.all {
+                    for (strength, magic) in magics {
+                        println!(
+                            "file:{} strength:{strength} mime:{} magic:{}",
+                            f.to_string_lossy(),
+                            magic.mimetype(),
+                            magic.message()
+                        )
+                    }
+                } else {
+                    if let Some((strength, magic)) = magics.first() {
+                        println!(
+                            "file:{} strength:{strength} mime:{} magic:{}",
+                            f.to_string_lossy(),
+                            magic.mimetype(),
+                            magic.message()
+                        )
+                    }
                 }
             }
             println!("Time to scan file: {:?}", start.elapsed());

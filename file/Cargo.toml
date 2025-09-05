@@ -10,3 +10,4 @@ magic-rs = { path = "../magic" }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing = "0.1.41"
 lazy-cache = { path = "../lazy-cache/" }
+fs-walk = "0.1.5"
