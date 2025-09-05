@@ -1420,7 +1420,7 @@ impl Test {
                         CmpOp::Lt => read_value < t.value,
                         CmpOp::Gt => read_value > t.value,
                         CmpOp::Neg => read_value != t.value,
-                        CmpOp::BitAnd => read_value & t.value == read_value,
+                        CmpOp::BitAnd => read_value & t.value == t.value,
                         CmpOp::Xor => (read_value & t.value).is_zero(),
                     };
 
@@ -2914,7 +2914,7 @@ mod tests {
         assert_magic_not_match!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x78");
 
         // Test & operator
-        assert_magic_match!("0 belong &0x0000FFFF Big-endian long", b"\x00\x00\x56\x78");
+        assert_magic_match!("0 belong &0x5678 Big-endian long", b"\x00\x00\x56\x78");
         assert_magic_not_match!("0 belong &0x0000FFFF Big-endian long", b"\x12\x34\x56\x78");
 
         // Test ^ operator (bitwise AND with complement)
@@ -3130,10 +3130,7 @@ mod tests {
         ); // 0x12345678 in middle-endian
 
         // Test & operator
-        assert_magic_match!(
-            "0 melong &0x0000FFFF Middle-endian long",
-            b"\x00\x00\x78\x56"
-        ); // 0x00007856 in middle-endian
+        assert_magic_match!("0 melong &0x5678 Middle-endian long", b"\xab\xcd\x78\x56"); // 0x00007856 in middle-endian
         assert_magic_not_match!(
             "0 melong &0x0000FFFF Middle-endian long",
             b"\x34\x12\x78\x56"
@@ -3150,7 +3147,6 @@ mod tests {
         ); // 0x00017856 in middle-endian
 
         // Test ~ operator
-        // The bitwise NOT of 0x12345678 is 0xEDCBA987, which in middle-endian would be 0xCB\xED\x87\xA9
         assert_magic_match!(
             "0 melong ~0x12345678 Middle-endian long",
             b"\xCB\xED\x87\xA9"
@@ -3163,17 +3159,6 @@ mod tests {
         // Test x operator
         assert_magic_match!("0 melong x Middle-endian long", b"\x34\x12\x78\x56");
         assert_magic_match!("0 melong x Middle-endian long", b"\x00\x00\x00\x00");
-
-        // Test & operation (bitwise AND with 0x0000FFFF)
-        // Check if the bitwise AND operation is correctly applied
-        assert_magic_match!(
-            "0 melong &0x0000FFFF Middle-endian long",
-            b"\x00\x00\x12\x34"
-        );
-        assert_magic_not_match!(
-            "0 melong &0x0000FFFF Middle-endian long",
-            b"\x56\x78\x12\x34"
-        );
     }
 
     #[test]
@@ -3210,11 +3195,11 @@ mod tests {
 
         // Test & operator
         assert_magic_match!(
-            "0 uquad &0xFFFFFFFFFFFFFFFF Unsigned quad",
+            "0 uquad &0xF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
         assert_magic_not_match!(
-            "0 uquad &0x0000000000000000 Unsigned quad",
+            "0 uquad &0xFF Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
 
