@@ -222,6 +222,7 @@ where
 
     #[inline(always)]
     fn get_range_u64(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
+        let range_len = range.end - range.start;
         // we fix range in case we attempt at reading beyond end of file
         let range = if range.end > self.pos_end {
             range.start..self.pos_end
@@ -238,10 +239,12 @@ where
         // chunk_id is guaranteed to be in chunks_map
         let real_chunk_id = self.chunks_map.get(&chunk_id).unwrap();
 
-        let slice_start = (start - (real_chunk_id * self.block_size)) as usize;
         // real_chunk_id is guaranteed to be in chunks_lru
         let chunk = self.chunks_lru.get(real_chunk_id).unwrap();
-        let slice_end = min(range.end as usize, chunk.len());
+        // compute start relative to the slice
+        let slice_start = (start - (real_chunk_id * self.block_size)) as usize;
+        let slice_end = min(slice_start + range_len as usize, chunk.len());
+
         if slice_start >= chunk.len() {
             Ok(&chunk[0..0])
         } else {
@@ -257,7 +260,7 @@ where
     /// Read at current reader position and return byte slice
     pub fn read(&mut self, count: u64) -> Result<&[u8], io::Error> {
         let pos = self.stream_pos;
-        let range = pos..pos + count;
+        let range = pos..(pos + count);
         self.get_range_u64(range)
     }
 
@@ -273,6 +276,7 @@ where
 
     pub fn read_exact(&mut self, count: u64) -> Result<&[u8], io::Error> {
         let b = self.read(count)?;
+        debug_assert!(b.len() <= count as usize);
         if b.len() as u64 != count {
             Err(io::ErrorKind::UnexpectedEof.into())
         } else {
