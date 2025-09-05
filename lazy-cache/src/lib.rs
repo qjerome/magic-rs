@@ -82,6 +82,10 @@ where
     #[inline(always)]
     fn cleanup_lru_item(&mut self, chunk_id: u64, data: Vec<u8>) {
         let end = chunk_id + data.len() as u64 / self.block_size;
+        // in case data.len() == 0 the range is empty yet we
+        // need to remove the chunk_id from the map
+        self.chunks_map.remove(&chunk_id);
+
         for cid in chunk_id..end {
             self.chunks_map.remove(&cid);
         }
@@ -105,11 +109,19 @@ where
 
     #[inline(always)]
     fn load_range_if_needed(&mut self, range: Range<u64>) -> Result<(), io::Error> {
+        let range_len = range.end.saturating_sub(range.start);
+        if range_len > self.max_size {
+            self.max_size = range_len + self.block_size;
+        }
+
         if range.is_empty() {
             // we make sure we have a chunk initialized to empty
             let chunk_id = range.start / self.block_size;
+
             if !self.chunks_map.contains_key(&chunk_id) {
-                self.chunks_lru.insert(chunk_id, vec![]);
+                if let Some((chunk_id, data)) = self.chunks_lru.insert(chunk_id, vec![]) {
+                    self.cleanup_lru_item(chunk_id, data);
+                }
                 self.chunks_map.insert(chunk_id, chunk_id);
             }
             return Ok(());
@@ -188,7 +200,24 @@ where
             }
         }
 
+        #[cfg(debug_assertions)]
+        self.is_valid_or_panic();
+
         Ok(())
+    }
+
+    fn is_valid_or_panic(&mut self) {
+        // control size
+        let cnt_size: usize = self.chunks_lru.values().map(|v| v.len()).sum();
+        assert_eq!(cnt_size as u64, self.size);
+        assert!(self.size <= self.max_size);
+
+        // control that every chunk in map is available in lru
+        for (first_chunk_id, real_chunk_id) in self.chunks_map.iter() {
+            if !self.chunks_lru.contains_key(real_chunk_id) {
+                panic!("found inconsistency {first_chunk_id} {real_chunk_id} not in lru");
+            }
+        }
     }
 
     #[inline(always)]
