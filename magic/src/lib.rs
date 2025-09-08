@@ -1851,10 +1851,15 @@ fn parse_pos_number(pair: Pair<'_, Rule>) -> i64 {
     let number_token = pair.into_inner().next().expect("expect number kind pair");
     match number_token.as_rule() {
         Rule::b10_number => number_token.as_str().parse::<i64>().unwrap(),
-        Rule::b16_number => {
-            u64::from_str_radix(number_token.as_str().strip_prefix("0x").unwrap(), 16).unwrap()
-                as i64
-        }
+        Rule::b16_number => u64::from_str_radix(
+            number_token
+                .as_str()
+                .to_lowercase()
+                .strip_prefix("0x")
+                .unwrap(),
+            16,
+        )
+        .unwrap() as i64,
         _ => panic!("unexpected number"),
     }
 }

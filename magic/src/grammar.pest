@@ -50,7 +50,7 @@ neg_number = ${ "-" ~ pos_number }
 pos_number = ${ "+"? ~ (b16_number | b10_number) }
 number     =  { pos_number | neg_number }
 b10_number = @{ ASCII_DIGIT+ }
-b16_number = @{ "0x" ~ ASCII_HEX_DIGIT+ }
+b16_number = @{ ("0x" | "0X") ~ ASCII_HEX_DIGIT+ }
 
 // Parses offset as an integer at the start of a rule
 abs_offset = ${ number }
