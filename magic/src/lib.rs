@@ -1968,6 +1968,30 @@ impl Match {
         })
     }
 
+    #[inline(always)]
+    fn resolve_offset<'a, R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+        last_level_offset: Option<u64>,
+    ) -> Result<Option<Offset>, io::Error> {
+        match self.offset {
+            Offset::Direct(dir_offset) => match dir_offset {
+                DirOffset::Start(s) => Ok(Some(Offset::from(DirOffset::Start(s)))),
+                DirOffset::LastUpper(shift) => Ok(Some(Offset::from(DirOffset::Start(
+                    (last_level_offset.unwrap_or_default() as i64 + shift) as u64,
+                )))),
+                DirOffset::End(e) => Ok(Some(Offset::from(DirOffset::End(e)))),
+            },
+            Offset::Indirect(ind_offset) => {
+                let Some(o) = ind_offset.get_offset(haystack, last_level_offset)? else {
+                    return Ok(None);
+                };
+
+                Ok(Some(Offset::from(DirOffset::Start(o))))
+            }
+        }
+    }
+
     // FIXME: handle push_message only once based on the success
     // or not of the test.
     #[inline]
@@ -2012,20 +2036,8 @@ impl Match {
                 .get(rule_name)
                 .ok_or(Error::MissingRule(rule_name.clone()))?;
 
-            let offset = match self.offset {
-                Offset::Direct(dir_offset) => match dir_offset {
-                    DirOffset::Start(s) => Offset::from(DirOffset::Start(s)),
-                    DirOffset::LastUpper(shift) => Offset::from(DirOffset::Start(
-                        (last_level_offset.unwrap_or_default() as i64 + shift) as u64,
-                    )),
-                    DirOffset::End(e) => Offset::from(DirOffset::End(e)),
-                },
-                Offset::Indirect(ind_offset) => {
-                    let Some(o) = ind_offset.get_offset(haystack, last_level_offset)? else {
-                        return Ok(false);
-                    };
-                    Offset::from(DirOffset::Start(o))
-                }
+            let Some(offset) = self.resolve_offset(haystack, last_level_offset)? else {
+                return Ok(false);
             };
 
             if let Some(msg) = self.message.as_ref() {
@@ -2060,9 +2072,22 @@ impl Match {
         }
 
         if matches!(self.test, Test::Indirect) {
+            let Some(offset) = self.resolve_offset(haystack, last_level_offset)? else {
+                return Ok(false);
+            };
+
             for r in db.rules.iter() {
-                r.magic(magic, None, haystack, db, false, depth.wrapping_add(1))?;
+                r.magic(
+                    magic,
+                    Some(offset),
+                    haystack,
+                    db,
+                    false,
+                    depth.wrapping_add(1),
+                )?;
             }
+
+            return Ok(false);
         }
 
         let i = opt_start_offset
