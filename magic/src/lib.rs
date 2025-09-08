@@ -2906,6 +2906,37 @@ mod tests {
     }
 
     #[test]
+    fn test_offset_from_end() {
+        assert_magic_match!("-1 ubyte 0x42 last byte ok", b"\x00\x00\x42");
+        assert_magic_match!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
+    }
+
+    #[test]
+    fn test_relative_offset() {
+        assert_magic_match!(
+            "
+            0 ubyte 0x42
+            >&0 ubyte 0x00
+            >>&0 ubyte 0x41 third byte ok
+            ",
+            b"\x42\x00\x41\x00"
+        );
+    }
+
+    #[test]
+    fn test_indirect_offset() {
+        enable_trace!();
+        assert_magic_match!("(0.l) ubyte 0x42 it works", b"\x04\x00\x00\x00\x42");
+        // adding fixed value to offset
+        assert_magic_match!("(0.l+3) ubyte 0x42 it works", b"\x01\x00\x00\x00\x42");
+        // testing offset pair
+        assert_magic_match!(
+            "(0.l+(4)) ubyte 0x42 it works",
+            b"\x04\x00\x00\x00\x04\x00\x00\x00\x42"
+        );
+    }
+
+    #[test]
     fn test_use_with_message() {
         assert_magic_match!(
             r#"
