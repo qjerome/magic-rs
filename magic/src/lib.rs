@@ -2439,9 +2439,13 @@ impl EntryNode {
                 Entry::Match(m) => {
                     if m.depth <= root.depth {
                         break;
-                    }
-                    if m.depth == root.depth + 1 {
+                    } else if m.depth == root.depth + 1 {
                         children.push(EntryNode::from_peekable(entries))
+                    } else {
+                        panic!(
+                            "unexpected continuation level: line={} level={}",
+                            m.line, m.depth
+                        )
                     }
                 }
 
