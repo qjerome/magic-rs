@@ -112,11 +112,14 @@ uquad       = @{ ("uquad" | "u8" | "uQ") }
 ushort      = @{ ("ushort" | "uS" | "u2") }
 
 /// string related test types
-string_mod  = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
-string      =  { ("string" | "s") ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
+string_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
+string     =  { ("string" | "s") ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
+
 pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
 pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
-search      =  { "search" ~ ("/" ~ (pos_number | (regex_mod | string_mod)+){,2}){,2} }
+
+search_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" | "s" }
+search     =  { "search" ~ ("/" ~ (pos_number | (search_mod)+){,2}){,2} }
 
 regex_mod  = @{ "c" | "s" | "l" }
 regex      =  { "regex" ~ ("/" ~ (pos_number | (regex_mod | string_mod)+){,2}){,2} }

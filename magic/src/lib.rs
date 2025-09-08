@@ -893,7 +893,7 @@ impl SearchTest {
         for p in pair.into_inner() {
             match p.as_rule() {
                 Rule::pos_number => length = Some(parse_pos_number(p) as usize),
-                Rule::string_mod => {
+                Rule::search_mod => {
                     for m in p.as_str().chars() {
                         match m {
                             'b' => str_mods |= StringMod::ForceBin,
@@ -904,18 +904,7 @@ impl SearchTest {
                             't' => str_mods |= StringMod::ForceText,
                             'W' => str_mods |= StringMod::CompactWhitespace,
                             'w' => str_mods |= StringMod::OptBlank,
-                            _ => {}
-                        }
-                    }
-                }
-                Rule::regex_mod => {
-                    for m in p.as_str().chars() {
-                        match m {
-                            'c' => {
-                                re_mods |= ReMod::CaseInsensitive;
-                            }
                             's' => re_mods |= ReMod::StartOffsetUpdate,
-                            'l' => re_mods |= ReMod::LineLimit,
                             _ => {}
                         }
                     }
