@@ -1897,6 +1897,7 @@ fn parse_number_pair(pair: Pair<'_, Rule>) -> i64 {
 
 #[derive(Debug, Clone)]
 pub struct Match {
+    // FIXME: add file name as &str
     line: usize,
     depth: u8,
     offset: Offset,
