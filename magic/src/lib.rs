@@ -731,7 +731,10 @@ flags! {
     enum ReMod: u8{
         CaseInsensitive,
         StartOffsetUpdate,
-        LineLimit
+        LineLimit,
+        ForceBinary,
+        ForceText,
+        TrimMatch,
     }
 }
 
@@ -757,7 +760,7 @@ impl RegexTest {
     fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
-        let mut str_mods = FlagSet::empty();
+        let str_mods = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
                 Rule::pos_number => length = Some(parse_pos_number(p) as usize),
@@ -769,11 +772,13 @@ impl RegexTest {
                             }
                             's' => mods |= ReMod::StartOffsetUpdate,
                             'l' => mods |= ReMod::LineLimit,
+                            'b' => mods |= ReMod::ForceBinary,
+                            't' => mods |= ReMod::ForceText,
+                            'T' => mods |= ReMod::TrimMatch,
                             _ => {}
                         }
                     }
                 }
-                Rule::string_mod => str_mods |= StringMod::from_pair(p)?,
                 // this should never happen
                 _ => unimplemented!(),
             }
