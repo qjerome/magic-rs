@@ -691,10 +691,15 @@ struct Transform {
 impl Transform {
     fn apply(&self, s: Scalar) -> Scalar {
         match self.op {
+            // FIXME: impl checked_ fn
             Op::Add => s.add(self.num),
+            // FIXME: impl checked_ fn
             Op::Sub => s.sub(self.num),
+            // FIXME: impl checked_ fn
             Op::Mul => s.mul(self.num),
+            // FIXME: impl checked_ fn
             Op::Div => s.div(self.num),
+            // FIXME: impl checked_ fn
             Op::Mod => s.rem(self.num),
             Op::And => s.bitand(self.num),
             Op::Xor => s.bitxor(self.num),
@@ -1392,6 +1397,8 @@ impl Test {
                     .map(|s| TestValue::Scalar(test_value_offset, s)),
             },
 
+            // FIXME: all other tests should have been handled
+            // before -> make this cleaner
             _ => unimplemented!(),
         }
     }
