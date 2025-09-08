@@ -50,36 +50,52 @@ macro_rules! debug_panic {
 #[grammar = "grammar.pest"]
 struct FileMagicParser;
 
-fn unescape_string(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
+fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
+    let mut out = String::new();
+    for b in s {
+        if b.is_ascii() {
+            if escape {
+                out.push_str(&regex::escape(&format!("{}", *b as char)));
+            } else {
+                out.push(*b as char);
+            }
+        } else {
+            out.push_str(&format!("\\x{b:02x}"));
+        }
+    }
+    out
+}
+
+fn unescape_string(s: &str) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut chars = s.bytes().peekable();
     while let Some(c) = chars.next() {
         // string termination
-        if c == '\0' {
+        if c == b'\0' {
             return result;
         }
 
-        if c == '\\' {
+        if c == b'\\' {
             if let Some(next_char) = chars.peek() {
                 match next_char {
                     // string termination
-                    'n' => {
-                        result.push('\n');
+                    b'n' => {
+                        result.push(b'\n');
                         chars.next(); // Skip the 'n'
                     }
-                    't' => {
-                        result.push('\t');
+                    b't' => {
+                        result.push(b'\t');
                         chars.next(); // Skip the 't'
                     }
-                    'r' => {
-                        result.push('\r');
+                    b'r' => {
+                        result.push(b'\r');
                         chars.next(); // Skip the 'r'
                     }
-                    '\\' => {
-                        result.push('\\');
+                    b'\\' => {
+                        result.push(b'\\');
                         chars.next(); // Skip the '\\'
                     }
-                    'x' => {
+                    b'x' => {
                         // Handle hex escape sequences (e.g., \x7F)
                         chars.next(); // Skip the 'x'
 
@@ -90,37 +106,37 @@ fn unescape_string(s: &str) -> String {
                                 .map(|c| c.is_ascii_hexdigit())
                                 .unwrap_or_default()
                             {
-                                hex_str.push(chars.next().unwrap());
+                                hex_str.push(chars.next().unwrap() as char);
                                 continue;
                             }
                             break;
                         }
 
                         if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
-                            result.push(hex as char);
+                            result.push(hex);
                         } else {
-                            result.push(c); // Push the backslash if the hex sequence is invalid
+                            result.push(c as u8); // Push the backslash if the hex sequence is invalid
                         }
                     }
                     // Handle octal escape sequences (e.g., \1 \23 \177)
-                    '0'..='7' => {
+                    b'0'..=b'7' => {
                         let mut octal_str = String::new();
                         for _ in 0..3 {
                             if chars
                                 .peek()
-                                .map(|c| matches!(c, '0'..='7'))
+                                .map(|c| matches!(c, b'0'..=b'7'))
                                 .unwrap_or_default()
                             {
-                                octal_str.push(chars.next().unwrap());
+                                octal_str.push(chars.next().unwrap() as char);
                                 continue;
                             }
                             break;
                         }
                         //let octal_str: String = chars.by_ref().take(1).collect();
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
-                            result.push(octal as char);
+                            result.push(octal);
                         } else {
-                            result.push(c); // Push the backslash if the octal sequence is invalid
+                            result.push(c as u8); // Push the backslash if the octal sequence is invalid
                         }
                     }
                     _ => {
@@ -128,7 +144,7 @@ fn unescape_string(s: &str) -> String {
                     }
                 }
             } else {
-                result.push(c); // Push the backslash if no character follows
+                result.push(c as u8); // Push the backslash if no character follows
             }
         } else {
             result.push(c);
@@ -246,6 +262,10 @@ impl Message {
                     match mr {
                         MatchRes::String(_, _) => {
                             // FIXME: fix unwrap
+                            Cow::Owned(dformat!(fs, mr).unwrap())
+                        }
+                        MatchRes::Bytes(_, _) => {
+                            // FIX: unwrap
                             Cow::Owned(dformat!(fs, mr).unwrap())
                         }
                         MatchRes::Scalar(_, scalar) => {
@@ -753,10 +773,11 @@ impl RegexTest {
                 _ => unimplemented!(),
             }
         }
+        let re = format!("(?-u){re}");
 
         Ok(Self {
             //FIXME: remove unwrap
-            re: bytes::Regex::new(re).unwrap(),
+            re: bytes::Regex::new(&re).unwrap(),
             length,
             n_pos: None,
             mods,
@@ -806,7 +827,7 @@ impl StringMod {
 // FIXME: implement string operators
 #[derive(Debug, Clone)]
 struct StringTest {
-    str: String,
+    str: Vec<u8>,
     cmp_op: CmpOp,
     length: Option<usize>,
     mods: FlagSet<StringMod>,
@@ -819,7 +840,11 @@ impl From<StringTest> for Test {
 }
 
 impl StringTest {
-    fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str, cmp_op: CmpOp) -> Result<Self, Error> {
+    fn from_pair_with_slice(
+        pair: Pair<'_, Rule>,
+        str: &[u8],
+        cmp_op: CmpOp,
+    ) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
         for p in pair.into_inner() {
@@ -831,7 +856,7 @@ impl StringTest {
             }
         }
         Ok(Self {
-            str: str.to_string(),
+            str: str.to_vec(),
             cmp_op,
             length,
             mods,
@@ -841,7 +866,7 @@ impl StringTest {
 
 #[derive(Debug, Clone)]
 struct SearchTest {
-    str: String,
+    str: Vec<u8>,
     n_pos: Option<usize>,
     // FIXME: handle all string mods
     str_mods: FlagSet<StringMod>,
@@ -856,7 +881,7 @@ impl From<SearchTest> for Test {
 }
 
 impl SearchTest {
-    fn from_pair_with_str(pair: Pair<'_, Rule>, str: &str) -> Self {
+    fn from_pair_with_slice(pair: Pair<'_, Rule>, str: &[u8]) -> Self {
         let mut length = None;
         let mut str_mods: FlagSet<StringMod> = FlagSet::empty();
         let mut re_mods: FlagSet<ReMod> = FlagSet::empty();
@@ -895,7 +920,7 @@ impl SearchTest {
             }
         }
         Self {
-            str: str.to_string(),
+            str: str.to_vec(),
             n_pos: length,
             str_mods,
             re_mods,
@@ -917,8 +942,6 @@ struct ScalarTest {
 #[derive(Debug, PartialEq, Eq)]
 enum TestValue<'buf> {
     Scalar(u64, Scalar),
-    String(u64, &'buf str),
-    PString(u64, &'buf str),
     Bytes(u64, &'buf [u8]),
 }
 
@@ -926,8 +949,6 @@ impl DynDisplay for TestValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
             Self::Scalar(_, s) => DynDisplay::dyn_fmt(s, f),
-            Self::String(_, s) => DynDisplay::dyn_fmt(s, f),
-            Self::PString(_, s) => DynDisplay::dyn_fmt(s, f),
             Self::Bytes(_, b) => Ok(format!("{:?}", b)),
         }
     }
@@ -944,8 +965,6 @@ impl Display for TestValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Scalar(_, s) => write!(f, "{}", s),
-            Self::String(_, s) => write!(f, "{}", s),
-            Self::PString(_, s) => write!(f, "{}", s),
             Self::Bytes(_, b) => write!(f, "{:?}", b),
         }
     }
@@ -955,6 +974,7 @@ impl Display for TestValue<'_> {
 // and the data itself
 enum MatchRes<'buf> {
     String(u64, &'buf str),
+    Bytes(u64, &'buf [u8]),
     Scalar(u64, Scalar),
 }
 
@@ -969,6 +989,7 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, s) => s.dyn_fmt(f),
             Self::String(_, s) => s.dyn_fmt(f),
+            Self::Bytes(_, s) => Ok(String::from_utf8_lossy(s).to_string()),
         }
     }
 }
@@ -982,7 +1003,7 @@ enum Test {
     Scalar(ScalarTest),
     String(StringTest),
     Search(SearchTest),
-    PString(String),
+    PString(Vec<u8>),
     Regex(RegexTest),
     Clear,
     Default,
@@ -1084,15 +1105,17 @@ impl Test {
                 assert_eq!(test_value.as_rule(), Rule::string_value);
 
                 match test_type.as_rule() {
-                    Rule::search => SearchTest::from_pair_with_str(
+                    Rule::search => SearchTest::from_pair_with_slice(
                         test_type,
-                        &unescape_string(test_value.as_str()),
+                        &unescape_string(&test_value.as_str()),
+                        //test_value.as_str(),
                     )
                     .into(),
 
                     Rule::regex => RegexTest::from_pair_with_re(
                         test_type,
-                        &unescape_string(test_value.as_str()),
+                        &prepare_bytes_re(&unescape_string(test_value.as_str()), false),
+                        //test_value.as_str(),
                     )?
                     .into(),
                     _ => unimplemented!(),
@@ -1123,14 +1146,19 @@ impl Test {
 
                 match test_value.as_rule() {
                     Rule::string_value => match test_type.as_rule() {
-                        Rule::string => StringTest::from_pair_with_str(
+                        Rule::string => StringTest::from_pair_with_slice(
                             test_type,
                             &unescape_string(test_value.as_str()),
                             cmp_op.unwrap_or(CmpOp::Eq),
                         )?
                         .into(),
 
-                        Rule::pstring => Self::PString(unescape_string(test_value.as_str())),
+                        Rule::pstring => Self::PString(
+                            // FIXME: fix unwrap
+                            str::from_utf8(&unescape_string(test_value.as_str()))
+                                .unwrap()
+                                .into(),
+                        ),
 
                         _ => unimplemented!(),
                     },
@@ -1150,7 +1178,7 @@ impl Test {
     // we convert a string with mods into a regexp pattern
     fn string_to_re_pattern(src: &str, mods: FlagSet<StringMod>, match_start: bool) -> String {
         // we escape all regex related characters
-        let mut out = regex::escape(src);
+        let mut out = String::from(src);
 
         if match_start {
             // we insert start of expression test
@@ -1206,6 +1234,9 @@ impl Test {
             out.push_str(r"\b");
         }
 
+        // disable unicode
+        out.insert_str(0, "(?-u)");
+
         out
     }
 
@@ -1214,15 +1245,8 @@ impl Test {
             Self::Search(s) => {
                 // if we search only at one position it means we must match
                 // start of string
-                let mut pattern =
-                    Self::string_to_re_pattern(&s.str, s.str_mods, matches!(s.n_pos, Some(1)));
-
-                // we handle cases where we wanna match more positions
-                if let Some(n_pos) = s.n_pos {
-                    if n_pos > 1 {
-                        pattern.insert_str(0, ".*?");
-                    }
-                }
+                let re = prepare_bytes_re(&s.str, true);
+                let pattern = Self::string_to_re_pattern(&re, s.str_mods, false);
 
                 RegexTest {
                     // FIXME: remove unwrap
@@ -1243,10 +1267,12 @@ impl Test {
                     || st.mods.contains(StringMod::UpperInsensitive)
                     || st.mods.contains(StringMod::OptBlank)
                 {
+                    // FIXME: return error instead of unwrap
+                    // Here string must be valid UTF8
+                    let s = str::from_utf8(&st.str).unwrap();
                     RegexTest {
                         // FIXME: remove unwrap
-                        re: Regex::new(&Self::string_to_re_pattern(&st.str, st.mods, true))
-                            .unwrap(),
+                        re: Regex::new(&Self::string_to_re_pattern(s, st.mods, true)).unwrap(),
                         length: st.length,
                         n_pos: None,
                         mods: FlagSet::empty(),
@@ -1310,21 +1336,17 @@ impl Test {
                     };
                     read
                 };
-                str::from_utf8(buf)
-                    .map(|s| TestValue::String(test_value_offset, s))
-                    .map_err(Error::from)
+
+                Ok(TestValue::Bytes(test_value_offset, buf))
             }
 
-            Self::PString(s) => {
+            Self::PString(buf) => {
                 // FIXME: maybe we could optimize here by reading testing on size
                 // this is the size of the pstring
                 // FIXME: adjust the size function of pstring mods
                 let _ = read_le!(u8);
-                let read = haystack.read_exact(s.len() as u64)?;
-
-                str::from_utf8(read)
-                    .map(|s| TestValue::PString(test_value_offset, s))
-                    .map_err(Error::from)
+                let read = haystack.read_exact(buf.len() as u64)?;
+                Ok(TestValue::Bytes(test_value_offset, read))
             }
 
             Self::Regex(r) => {
@@ -1358,19 +1380,12 @@ impl Test {
                     // FIXME: Any must carry  StringTest information so we must read accordingly
                     let read = haystack.read_until_limit(b'\0', 8192)?;
 
-                    str::from_utf8(read)
-                        .map(|s| TestValue::String(test_value_offset, s))
-                        .map_err(Error::from)
-                        .inspect_err(|e| println!("{}", e))
+                    Ok(TestValue::Bytes(test_value_offset, read))
                 }
                 Any::PString => {
                     let slen = read_le!(u8) as usize;
                     let read = haystack.read_exact(slen as u64)?;
-
-                    str::from_utf8(read)
-                        .map(|s| TestValue::PString(test_value_offset, s))
-                        .map_err(Error::from)
-                        .inspect_err(|e| println!("{}", e))
+                    Ok(TestValue::Bytes(test_value_offset, read))
                 }
                 Any::Scalar(d) => d
                     .read(haystack, switch_endianness)
@@ -1386,14 +1401,13 @@ impl Test {
         // always true when we want to read value
         if let Self::Any(v) = self {
             match tv {
-                TestValue::PString(o, ps) => {
-                    if matches!(v, Any::PString) {
-                        return Some(MatchRes::String(*o, ps));
-                    }
-                }
-                TestValue::String(o, s) => {
+                TestValue::Bytes(o, buf) => {
                     if matches!(v, Any::String) {
-                        return Some(MatchRes::String(*o, s));
+                        if let Ok(s) = str::from_utf8(buf) {
+                            return Some(MatchRes::String(*o, s));
+                        } else {
+                            return Some(MatchRes::Bytes(*o, buf));
+                        }
                     }
                 }
                 TestValue::Scalar(o, s) => {
@@ -1429,22 +1443,22 @@ impl Test {
                     }
                 }
             }
-            TestValue::String(o, tv) => {
+            TestValue::Bytes(o, buf) => {
                 if let Self::String(st) = self {
                     match st.cmp_op {
                         CmpOp::Eq => {
-                            if *tv == st.str {
-                                return Some(MatchRes::String(*o, tv));
+                            if *buf == st.str {
+                                return Some(MatchRes::Bytes(*o, buf));
                             }
                         }
                         CmpOp::Gt => {
-                            if tv.len() > st.str.len() {
-                                return Some(MatchRes::String(*o, tv));
+                            if buf.len() > st.str.len() {
+                                return Some(MatchRes::Bytes(*o, buf));
                             }
                         }
                         CmpOp::Lt => {
-                            if tv.len() < st.str.len() {
-                                return Some(MatchRes::String(*o, tv));
+                            if buf.len() < st.str.len() {
+                                return Some(MatchRes::Bytes(*o, buf));
                             }
                         }
                         // unsupported for strings
@@ -1453,15 +1467,13 @@ impl Test {
                         }
                     }
                 }
-            }
-            TestValue::PString(o, tv) => {
+
                 if let Self::PString(m) = self {
-                    if tv == m {
-                        return Some(MatchRes::String(*o, tv));
+                    if buf == m {
+                        return Some(MatchRes::Bytes(*o, buf));
                     }
                 }
-            }
-            TestValue::Bytes(o, buf) => {
+
                 if let Self::Regex(r) = self {
                     if let Some(re_match) = r.re.find(&buf) {
                         if let Some(n_pos) = r.n_pos {
@@ -1471,12 +1483,10 @@ impl Test {
                             }
                         }
 
-                        return Some(MatchRes::String(
+                        return Some(MatchRes::Bytes(
                             // the offset of the string is computed from the start of the buffer
                             o + re_match.start() as u64,
-                            // FIXME: we shouldn't unwrap here it may panic because
-                            // we cannot guarantee this is valid UTF8
-                            std::str::from_utf8(re_match.as_bytes()).unwrap().into(),
+                            re_match.as_bytes(),
                         ));
                     }
                 }
@@ -2000,6 +2010,7 @@ impl Match {
                 "line={} use {rule_name} switch_endianness={switch_endianness}",
                 self.line
             );
+
             let dr: &DependencyRule = db
                 .dependencies
                 .get(rule_name)
@@ -2144,7 +2155,7 @@ impl Match {
                     // we need to compute offset before modifying haystack as
                     // match_res holds a reference to the haystack, not satisfying
                     // borrow checking rules
-                    let opt_adjusted_offset = if let MatchRes::String(o, s) = mr {
+                    let opt_adjusted_offset = if let MatchRes::Bytes(o, s) = mr {
                         Some(o + s.len() as u64)
                     } else {
                         None
@@ -2815,12 +2826,15 @@ mod tests {
 
     #[test]
     fn test_unescape() {
-        assert_eq!(unescape_string(r#"\ hello"#), " hello");
-        assert_eq!(unescape_string(r#"hello\ world"#), "hello world");
-        assert_eq!(unescape_string(r#"\^[[:space:]]"#), "^[[:space:]]");
-        assert_eq!(unescape_string(r#"\x41"#), "A");
-        assert_eq!(unescape_string(r#"\xF\xA"#), "\u{f}\n");
-        assert_eq!(unescape_string(r#"\101"#), "A");
+        assert_eq!(
+            str::from_utf8(&unescape_string(r#"\ hello"#)).unwrap(),
+            " hello"
+        );
+        assert_eq!(unescape_string(r#"hello\ world"#), b"hello world");
+        assert_eq!(unescape_string(r#"\^[[:space:]]"#), b"^[[:space:]]");
+        assert_eq!(unescape_string(r#"\x41"#), b"A");
+        assert_eq!(unescape_string(r#"\xF\xA"#), b"\x0f\n");
+        assert_eq!(unescape_string(r#"\101"#), b"A");
         println!("{:?}", unescape_string(r#"\1\0\0\0\0\0\0\300\0\2\0\0"#));
     }
 
@@ -2834,7 +2848,20 @@ mod tests {
     "#,
             br#"#!/usr/bin/env bash
         echo hello world"#
-        )
+        );
+
+        let re = Regex::new(r"(?-u)\x42\x82").unwrap();
+        assert!(re.is_match(b"\x42\x82"));
+
+        assert_magic_match!(
+            r#"0 regex \x42\x82 binary regex match"#,
+            b"\x00\x00\x00\x00\x00\x00\x42\x82"
+        );
+
+        assert_magic_match!(
+            r#"0 search \040\x42\x82 binary regex match"#,
+            b"\x00\x00\x00\x00\x00\x20\x42\x82"
+        );
     }
 
     #[test]
