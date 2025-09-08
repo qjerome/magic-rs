@@ -3,7 +3,7 @@ use std::{fs::File, path::PathBuf, time::Instant};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
-use magic_rs::{MagicDb, MagicFile};
+use magic_rs::{FILE_BYTES_MAX, MagicDb, MagicFile};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -59,6 +59,7 @@ fn main() -> Result<(), anyhow::Error> {
     // Initialize the tracing subscriber
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
         .init();
 
     match cli.command {
@@ -111,13 +112,23 @@ fn main() -> Result<(), anyhow::Error> {
             }
             println!("Time parse rule files: {:?}", start.elapsed());
 
-            let start = Instant::now();
             for f in o.files {
-                let mut haystack = LazyCache::<File>::open(&f, 4096, 4 << 20).unwrap();
-                let mut magics = db.magic(&mut haystack)?;
-                magics.sort_by(|a, b| b.0.cmp(&a.0));
+                let start = Instant::now();
+                let Ok(mut haystack) = LazyCache::<File>::open(&f, 4096, FILE_BYTES_MAX as u64 * 4)
+                    .inspect_err(|e| error!("cannot open file={}: {e}", f.to_string_lossy()))
+                else {
+                    continue;
+                };
+
+                let Ok(mut magics) = db.magic(&mut haystack).inspect_err(|e| {
+                    error!("failed to get magic file={}: {e}", f.to_string_lossy())
+                }) else {
+                    continue;
+                };
 
                 if o.all {
+                    // we sort only if needed
+                    magics.sort_by(|a, b| b.0.cmp(&a.0));
                     for (strength, magic) in magics {
                         println!(
                             "file:{} strength:{strength} mime:{} magic:{}",
@@ -127,9 +138,23 @@ fn main() -> Result<(), anyhow::Error> {
                         )
                     }
                 } else {
-                    if let Some((strength, magic)) = magics.first() {
+                    let magic = if let Some(magic) = magics.first() {
+                        // cannot panic as magics isn't empty
+                        let mut max = magic;
+                        for magic in magics.iter().skip(1) {
+                            if magic.0 > max.0 {
+                                max = magic
+                            }
+                        }
+                        Some(max)
+                    } else {
+                        None
+                    };
+
+                    if let Some((strength, magic)) = magic {
                         println!(
-                            "file:{} strength:{strength} mime:{} magic:{}",
+                            "time:{:?} file:{} strength:{strength} mime:{} magic:{}",
+                            start.elapsed().as_nanos(),
                             f.to_string_lossy(),
                             magic.mimetype(),
                             magic.message()
@@ -137,7 +162,6 @@ fn main() -> Result<(), anyhow::Error> {
                     }
                 }
             }
-            println!("Time to scan file: {:?}", start.elapsed());
         }
         None => {}
     }
