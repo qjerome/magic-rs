@@ -1,4 +1,3 @@
-
 use chrono::{NaiveDate, NaiveTime};
 
 /// Parses a u16 FAT/DOS date into a `NaiveDate`.

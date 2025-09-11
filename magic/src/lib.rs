@@ -66,7 +66,95 @@ fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
     out
 }
 
-fn unescape_string(s: &str) -> Vec<u8> {
+fn unescape_string_to_string(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        // string termination
+        if c == '\0' {
+            return result;
+        }
+
+        if c == '\\' {
+            if let Some(next_char) = chars.peek() {
+                match next_char {
+                    // string termination
+                    'n' => {
+                        result.push('\n');
+                        chars.next(); // Skip the 'n'
+                    }
+                    't' => {
+                        result.push('\t');
+                        chars.next(); // Skip the 't'
+                    }
+                    'r' => {
+                        result.push('\r');
+                        chars.next(); // Skip the 'r'
+                    }
+                    '\\' => {
+                        result.push('\\');
+                        chars.next(); // Skip the '\\'
+                    }
+                    'x' => {
+                        // Handle hex escape sequences (e.g., \x7F)
+                        chars.next(); // Skip the 'x'
+
+                        let mut hex_str = String::new();
+                        for _ in 0..2 {
+                            if chars
+                                .peek()
+                                .map(|c| c.is_ascii_hexdigit())
+                                .unwrap_or_default()
+                            {
+                                hex_str.push(chars.next().unwrap() as char);
+                                continue;
+                            }
+                            break;
+                        }
+
+                        if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
+                            result.push(hex as char);
+                        } else {
+                            result.push(c); // Push the backslash if the hex sequence is invalid
+                        }
+                    }
+                    // Handle octal escape sequences (e.g., \1 \23 \177)
+                    '0'..='7' => {
+                        let mut octal_str = String::new();
+                        for _ in 0..3 {
+                            if chars
+                                .peek()
+                                .map(|c| matches!(c, '0'..='7'))
+                                .unwrap_or_default()
+                            {
+                                octal_str.push(chars.next().unwrap() as char);
+                                continue;
+                            }
+                            break;
+                        }
+                        //let octal_str: String = chars.by_ref().take(1).collect();
+                        if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
+                            result.push(octal as char);
+                        } else {
+                            result.push(c as char); // Push the backslash if the octal sequence is invalid
+                        }
+                    }
+                    _ => {
+                        // we skip the backslash
+                    }
+                }
+            } else {
+                result.push(c as char); // Push the backslash if no character follows
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
+fn unescape_string_to_vec(s: &str) -> Vec<u8> {
     let mut result = Vec::new();
     let mut chars = s.bytes().peekable();
     while let Some(c) = chars.next() {
@@ -260,6 +348,10 @@ impl Message {
             } => {
                 if let Some(mr) = mr {
                     match mr {
+                        MatchRes::OwnedString(_, _) => {
+                            // FIXME: fix unwrap
+                            Cow::Owned(dformat!(fs, mr).unwrap())
+                        }
                         MatchRes::String(_, _) => {
                             // FIXME: fix unwrap
                             Cow::Owned(dformat!(fs, mr).unwrap())
@@ -713,6 +805,7 @@ impl Transform {
 #[derive(Debug, Clone)]
 enum Any {
     String,
+    String16(Encoding),
     PString,
     Scalar(ScalarDataType),
 }
@@ -972,6 +1065,9 @@ impl Display for TestValue<'_> {
 // Carry the offset of the start of the data in the stream
 // and the data itself
 enum MatchRes<'buf> {
+    // FIXME: maybe we can optimize here by having it as Bytes
+    // and managing encoding at display time.
+    OwnedString(u64, String),
     String(u64, &'buf str),
     Bytes(u64, &'buf [u8]),
     Scalar(u64, Scalar),
@@ -988,9 +1084,42 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, s) => s.dyn_fmt(f),
             Self::String(_, s) => s.dyn_fmt(f),
+            Self::OwnedString(_, s) => s.dyn_fmt(f),
             Self::Bytes(_, s) => Ok(String::from_utf8_lossy(s).to_string()),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Encoding {
+    Little,
+    Big,
+}
+
+#[derive(Debug, Clone)]
+struct String16Test {
+    orig: String,
+    str16: Vec<u16>,
+    encoding: Encoding,
+}
+
+fn slice_to_utf16_iter(read: &[u8], encoding: Encoding) -> impl Iterator<Item = u16> {
+    let even = read
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 0)
+        .map(|t| t.1);
+
+    let odd = read
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 2 != 0)
+        .map(|t| t.1);
+
+    even.zip(odd).map(move |(e, o)| match encoding {
+        Encoding::Little => u16::from_le_bytes([*e, *o]),
+        Encoding::Big => u16::from_be_bytes([*e, *o]),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1007,8 +1136,8 @@ enum Test {
     Clear,
     Default,
     Indirect,
+    String16(String16Test),
     // FIXME: placeholders for strength computation
-    LeString16,
     Der,
 }
 
@@ -1106,14 +1235,14 @@ impl Test {
                 match test_type.as_rule() {
                     Rule::search => SearchTest::from_pair_with_slice(
                         test_type,
-                        &unescape_string(&test_value.as_str()),
+                        &unescape_string_to_vec(&test_value.as_str()),
                         //test_value.as_str(),
                     )
                     .into(),
 
                     Rule::regex => RegexTest::from_pair_with_re(
                         test_type,
-                        &prepare_bytes_re(&unescape_string(test_value.as_str()), false),
+                        &prepare_bytes_re(&unescape_string_to_vec(test_value.as_str()), false),
                         //test_value.as_str(),
                     )?
                     .into(),
@@ -1147,14 +1276,14 @@ impl Test {
                     Rule::string_value => match test_type.as_rule() {
                         Rule::string => StringTest::from_pair_with_slice(
                             test_type,
-                            &unescape_string(test_value.as_str()),
+                            &unescape_string_to_vec(test_value.as_str()),
                             cmp_op.unwrap_or(CmpOp::Eq),
                         )?
                         .into(),
 
                         Rule::pstring => Self::PString(
                             // FIXME: fix unwrap
-                            str::from_utf8(&unescape_string(test_value.as_str()))
+                            str::from_utf8(&unescape_string_to_vec(test_value.as_str()))
                                 .unwrap()
                                 .into(),
                         ),
@@ -1164,6 +1293,37 @@ impl Test {
                     Rule::any_value => Self::Any(Any::from_rule(test_type.as_rule())),
                     _ => unimplemented!(),
                 }
+            }
+            Rule::string16_test => {
+                let mut encoding = None;
+                let mut orig = None;
+                let mut str = None;
+                for p in pair.into_inner() {
+                    match p.as_rule() {
+                        Rule::lestring16 => encoding = Some(Encoding::Little),
+                        Rule::bestring16 => encoding = Some(Encoding::Big),
+                        Rule::string_value => {
+                            orig = Some(unescape_string_to_string(p.as_str()));
+                            str = Some(
+                                unescape_string_to_vec(p.as_str())
+                                    .iter()
+                                    .map(|b| *b as u16)
+                                    .collect(),
+                            )
+                        }
+                        Rule::any_value => {
+                            return Ok(Self::Any(Any::String16(
+                                encoding.expect("encoding must be known"),
+                            )));
+                        }
+                        _ => {}
+                    }
+                }
+                Self::String16(String16Test {
+                    orig: orig.expect("test value must be known"),
+                    str16: str.expect("test value must be known"),
+                    encoding: encoding.expect("encoding must be known"),
+                })
             }
             Rule::clear_test => Self::Clear,
             Rule::default_test => Self::Default,
@@ -1324,7 +1484,7 @@ impl Test {
                     let read = match t.cmp_op {
                         CmpOp::Eq => haystack.read_exact(t.str.len() as u64)?,
                         CmpOp::Lt | CmpOp::Gt => {
-                            let read = haystack.read_until_limit(b'\0', 8092)?;
+                            let read = haystack.read_until_or_limit(b'\0', 8092)?;
                             if read.len() > 0 {
                                 &read[..read.len() - 1]
                             } else {
@@ -1337,6 +1497,11 @@ impl Test {
                 };
 
                 Ok(TestValue::Bytes(test_value_offset, buf))
+            }
+
+            Self::String16(t) => {
+                let read = haystack.read_exact((t.str16.len() * 2) as u64)?;
+                Ok(TestValue::Bytes(test_value_offset, read))
             }
 
             Self::PString(buf) => {
@@ -1377,7 +1542,7 @@ impl Test {
             Self::Any(t) => match t {
                 Any::String => {
                     // FIXME: Any must carry  StringTest information so we must read accordingly
-                    let read = haystack.read_until_limit(b'\0', 8192)?;
+                    let read = haystack.read_until_or_limit(b'\0', 8192)?;
 
                     Ok(TestValue::Bytes(test_value_offset, read))
                 }
@@ -1385,6 +1550,20 @@ impl Test {
                     let slen = read_le!(u8) as usize;
                     let read = haystack.read_exact(slen as u64)?;
                     Ok(TestValue::Bytes(test_value_offset, read))
+                }
+                Any::String16(_) => {
+                    let read = haystack.read_until_utf16_or_limit(b"\x00\x00", 8192)?;
+
+                    // we make sure we have an even number of elements
+                    let end = if read.len() % 2 == 0 {
+                        read.len()
+                    } else {
+                        // we decide to read anyway even though
+                        // length isn't even
+                        read.len().saturating_sub(1)
+                    };
+
+                    Ok(TestValue::Bytes(test_value_offset, &read[..end]))
                 }
                 Any::Scalar(d) => d
                     .read(haystack, switch_endianness)
@@ -1398,19 +1577,31 @@ impl Test {
     }
 
     #[inline(always)]
-    fn match_value<'s>(&self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
+    fn match_value<'s>(&'s self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
         // always true when we want to read value
         if let Self::Any(v) = self {
             match tv {
-                TestValue::Bytes(o, buf) => {
-                    if matches!(v, Any::String) {
+                TestValue::Bytes(o, buf) => match v {
+                    Any::String | Any::PString => {
                         if let Ok(s) = str::from_utf8(buf) {
                             return Some(MatchRes::String(*o, s));
                         } else {
                             return Some(MatchRes::Bytes(*o, buf));
                         }
                     }
-                }
+
+                    Any::String16(enc) => {
+                        let utf16_vec: Vec<u16> = slice_to_utf16_iter(buf, *enc).collect();
+                        if let Ok(s) = String::from_utf16(&utf16_vec) {
+                            return Some(MatchRes::OwnedString(*o, s));
+                        } else {
+                            return Some(MatchRes::Bytes(*o, buf));
+                        }
+                    }
+
+                    _ => unimplemented!(),
+                },
+
                 TestValue::Scalar(o, s) => {
                     if matches!(v, Any::Scalar(_)) {
                         return Some(MatchRes::Scalar(*o, *s));
@@ -1420,7 +1611,7 @@ impl Test {
             }
 
             // FIXME: remove this
-            panic!("not good")
+            panic!("any test not properly handled")
         }
 
         match tv {
@@ -1445,51 +1636,71 @@ impl Test {
                 }
             }
             TestValue::Bytes(o, buf) => {
-                if let Self::String(st) = self {
-                    match st.cmp_op {
-                        CmpOp::Eq => {
-                            if *buf == st.str {
-                                return Some(MatchRes::Bytes(*o, buf));
+                match self {
+                    Self::String(st) => {
+                        match st.cmp_op {
+                            CmpOp::Eq => {
+                                if *buf == st.str {
+                                    return Some(MatchRes::Bytes(*o, buf));
+                                }
                             }
-                        }
-                        CmpOp::Gt => {
-                            if buf.len() > st.str.len() {
-                                return Some(MatchRes::Bytes(*o, buf));
+                            CmpOp::Gt => {
+                                if buf.len() > st.str.len() {
+                                    return Some(MatchRes::Bytes(*o, buf));
+                                }
                             }
-                        }
-                        CmpOp::Lt => {
-                            if buf.len() < st.str.len() {
-                                return Some(MatchRes::Bytes(*o, buf));
+                            CmpOp::Lt => {
+                                if buf.len() < st.str.len() {
+                                    return Some(MatchRes::Bytes(*o, buf));
+                                }
                             }
-                        }
-                        // unsupported for strings
-                        _ => {
-                            debug_panic!("unsupported cmp operator for string")
+                            // unsupported for strings
+                            _ => {
+                                debug_panic!("unsupported cmp operator for string")
+                            }
                         }
                     }
-                }
 
-                if let Self::PString(m) = self {
-                    if buf == m {
-                        return Some(MatchRes::Bytes(*o, buf));
+                    Self::PString(m) => {
+                        if buf == m {
+                            return Some(MatchRes::Bytes(*o, buf));
+                        }
                     }
-                }
 
-                if let Self::Regex(r) = self {
-                    if let Some(re_match) = r.re.find(&buf) {
-                        if let Some(n_pos) = r.n_pos {
-                            // we check for positinal match inherited from search conversion
-                            if re_match.start() >= n_pos {
+                    Self::String16(t) => {
+                        // strings cannot be equal
+                        if t.str16.len() * 2 != buf.len() {
+                            return None;
+                        }
+
+                        // we check string equality
+                        for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
+                            if t.str16[i] != utf16_char {
                                 return None;
                             }
                         }
 
-                        return Some(MatchRes::Bytes(
-                            // the offset of the string is computed from the start of the buffer
-                            o + re_match.start() as u64,
-                            re_match.as_bytes(),
-                        ));
+                        return Some(MatchRes::String(*o, &t.orig));
                     }
+
+                    Self::Regex(r) => {
+                        if let Some(re_match) = r.re.find(&buf) {
+                            if let Some(n_pos) = r.n_pos {
+                                // we check for positinal match inherited from search conversion
+                                if re_match.start() >= n_pos {
+                                    return None;
+                                }
+                            }
+
+                            return Some(MatchRes::Bytes(
+                                // the offset of the string is computed from the start of the buffer
+                                o + re_match.start() as u64,
+                                re_match.as_bytes(),
+                            ));
+                        }
+                    }
+
+                    _ => unimplemented!(),
                 }
             }
         }
@@ -2212,16 +2423,19 @@ impl Match {
 
         let mut out = 2 * MULT;
 
-        // NB: octal is missing but it is not used in practice ...
+        // FIXME: octal is missing but it is not used in practice ...
         match &self.test {
             Test::Default => return 0,
             Test::Scalar(s) => match s.ty {
-                ScalarDataType::lemsdostime => {
-                    out += ScalarDataType::lemsdostime.type_size() * MULT;
+                _ => {
+                    out += s.ty.type_size() * MULT;
                 }
-
-                _ => {}
             },
+
+            Test::String(t) => out += t.str.len().saturating_add(MULT),
+
+            Test::PString(t) => out += t.len().saturating_add(MULT),
+
             Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
 
             Test::Regex(r) => {
@@ -2229,9 +2443,15 @@ impl Match {
                 out += v * max(MULT / v, 1);
             }
 
-            Test::LeString16 | Test::Der => {
-                unimplemented!()
+            Test::String16(t) => {
+                // FIXME: in libmagic the result is div by 2
+                // but I GUESS it is because the len is expressed
+                // in number bytes. In our case length is expressed
+                // in number of u16 so we shouldn't divide.
+                out += t.str16.len().saturating_mul(MULT);
             }
+
+            Test::Der => out += MULT,
 
             // matching any output gets penalty
             Test::Any(_) => out = 0,
@@ -2858,15 +3078,18 @@ mod tests {
     #[test]
     fn test_unescape() {
         assert_eq!(
-            str::from_utf8(&unescape_string(r#"\ hello"#)).unwrap(),
+            str::from_utf8(&unescape_string_to_vec(r#"\ hello"#)).unwrap(),
             " hello"
         );
-        assert_eq!(unescape_string(r#"hello\ world"#), b"hello world");
-        assert_eq!(unescape_string(r#"\^[[:space:]]"#), b"^[[:space:]]");
-        assert_eq!(unescape_string(r#"\x41"#), b"A");
-        assert_eq!(unescape_string(r#"\xF\xA"#), b"\x0f\n");
-        assert_eq!(unescape_string(r#"\101"#), b"A");
-        println!("{:?}", unescape_string(r#"\1\0\0\0\0\0\0\300\0\2\0\0"#));
+        assert_eq!(unescape_string_to_vec(r#"hello\ world"#), b"hello world");
+        assert_eq!(unescape_string_to_vec(r#"\^[[:space:]]"#), b"^[[:space:]]");
+        assert_eq!(unescape_string_to_vec(r#"\x41"#), b"A");
+        assert_eq!(unescape_string_to_vec(r#"\xF\xA"#), b"\x0f\n");
+        assert_eq!(unescape_string_to_vec(r#"\101"#), b"A");
+        println!(
+            "{:?}",
+            unescape_string_to_vec(r#"\1\0\0\0\0\0\0\300\0\2\0\0"#)
+        );
     }
 
     #[test]
@@ -2930,6 +3153,48 @@ mod tests {
     }
 
     #[test]
+    fn test_lestring16() {
+        assert_magic_match!(
+            "0 lestring16 abcd Little-endian UTF-16 string",
+            b"\x61\x00\x62\x00\x63\x00\x64\x00"
+        );
+        assert_magic_match!(
+            "0 lestring16 x %s",
+            b"\x61\x00\x62\x00\x63\x00\x64\x00\x00",
+            "abcd"
+        );
+        assert_magic_not_match!(
+            "0 lestring16 abcd Little-endian UTF-16 string",
+            b"\x00\x61\x00\x62\x00\x63\x00\x64"
+        );
+        assert_magic_match!(
+            "4 lestring16 abcd Little-endian UTF-16 string",
+            b"\x00\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64\x00"
+        );
+    }
+
+    #[test]
+    fn test_bestring16() {
+        assert_magic_match!(
+            "0 bestring16 abcd Big-endian UTF-16 string",
+            b"\x00\x61\x00\x62\x00\x63\x00\x64"
+        );
+        assert_magic_match!(
+            "0 bestring16 x %s",
+            b"\x00\x61\x00\x62\x00\x63\x00\x64",
+            "abcd"
+        );
+        assert_magic_not_match!(
+            "0 bestring16 abcd Big-endian UTF-16 string",
+            b"\x61\x00\x62\x00\x63\x00\x64\x00"
+        );
+        assert_magic_match!(
+            "4 bestring16 abcd Big-endian UTF-16 string",
+            b"\x00\x00\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64"
+        );
+    }
+
+    #[test]
     fn test_offset_from_end() {
         assert_magic_match!("-1 ubyte 0x42 last byte ok", b"\x00\x00\x42");
         assert_magic_match!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
@@ -2949,7 +3214,6 @@ mod tests {
 
     #[test]
     fn test_indirect_offset() {
-        enable_trace!();
         assert_magic_match!("(0.l) ubyte 0x42 it works", b"\x04\x00\x00\x00\x42");
         // adding fixed value to offset
         assert_magic_match!("(0.l+3) ubyte 0x42 it works", b"\x01\x00\x00\x00\x42");

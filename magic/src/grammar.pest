@@ -13,7 +13,7 @@ rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWL
 match_no_depth = { offset ~ test ~ message? }
 match_depth    = { depth+ ~ offset ~ test ~ message? }
 
-test = { clear_test | scalar_test | default_test | string_test | search_test | indirect_test }
+test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
@@ -91,7 +91,6 @@ leqldate    = @{ "leqldate" }
 lequad      = @{ "lequad" }
 leqwdate    = @{ "leqwdate" }
 leshort     = @{ "leshort" }
-lestring16  = @{ "lestring16" }
 long        = @{ ("long" | "dI" | "dL" | "d4") }
 medate      = @{ "medate" }
 meldate     = @{ "meldate" }
@@ -121,10 +120,11 @@ pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
 search_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" | "s" }
 search     =  { "search" ~ ("/" ~ (pos_number | search_mod+){,2}){,2} }
 
-regex_mod  = @{ "c" | "s" | "l" | "b" | "t" | "T" }
-regex      =  { "regex" ~ ("/" ~ (pos_number | regex_mod+){,2}){,2} }
-ustring    = @{ "ustring" }
-bestring16 = @{ "bestring16" }
+regex_mod = @{ "c" | "s" | "l" | "b" | "t" | "T" }
+regex     =  { "regex" ~ ("/" ~ (pos_number | regex_mod+){,2}){,2} }
+
+bestring16 = { "bestring16" }
+lestring16 = { "lestring16" }
 
 /// special tests types
 default   = { "default" }
@@ -158,6 +158,9 @@ search_test = ${ (regex | search) ~ WHITESPACE+ ~ string_value }
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
 string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | ((op_eq | op_lt | op_gt)? ~ string_value)) }
+
+// string16 test
+string16_test = ${ (lestring16 | bestring16) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | string_value) }
 
 // Test value (could be a hex, string, or integer)
 // test = ${ (b16_number ~ ASCII_DIGIT* | (PUNCTUATION | ASCII_ALPHANUMERIC | ("\\x" ~ ASCII_HEX_DIGIT{2}))+) | "x" }
