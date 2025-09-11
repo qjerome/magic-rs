@@ -292,28 +292,93 @@ where
         Ok(())
     }
 
-    pub fn read_until_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
+    pub fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
         let limit = min(self.max_size, limit);
         let start = self.stream_pos;
-        let stream_max = min(start + limit, self.pos_end);
-        let mut end = start;
+        let mut end = 0;
 
-        'outer: loop {
-            if self.stream_pos >= stream_max {
-                break;
-            }
+        'outer: while limit - end > 0 {
             let buf = self.read(self.block_size)?;
+
             for b in buf {
-                if *b == byte {
-                    // read_until includes delimiter
-                    end += 1;
+                if limit - end == 0 {
                     break 'outer;
                 }
+
                 end += 1;
+
+                if *b == byte {
+                    // read_until includes delimiter
+                    break 'outer;
+                }
+            }
+
+            // we processed last chunk
+            if buf.len() as u64 != self.block_size {
+                break;
             }
         }
 
-        self.read_exact_range(start..min(end, start + limit))
+        self.read_exact_range(start..start + end)
+    }
+
+    // limit is expressed in numbers of utf16 chars
+    pub fn read_until_utf16_or_limit(
+        &mut self,
+        utf16_char: &[u8; 2],
+        limit: u64,
+    ) -> Result<&[u8], io::Error> {
+        let limit = min(self.max_size, limit.saturating_mul(2));
+        let start = self.stream_pos;
+        let mut end = 0;
+
+        let even_bs = if self.block_size % 2 == 0 {
+            self.block_size
+        } else {
+            self.block_size.saturating_add(1)
+        };
+
+        'outer: while limit.saturating_sub(end) > 0 {
+            let buf = self.read(even_bs)?;
+
+            let even = buf
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 2 == 0)
+                .map(|t| t.1);
+
+            let odd = buf
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 2 != 0)
+                .map(|t| t.1);
+
+            for t in even.zip(odd) {
+                if limit.saturating_sub(end) == 0 {
+                    break 'outer;
+                }
+
+                end += 2;
+
+                // tail check
+                if t.0 == &utf16_char[0] && t.1 == &utf16_char[1] {
+                    // we include char
+                    break 'outer;
+                }
+            }
+
+            // we processed the last chunk
+            if buf.len() as u64 != even_bs {
+                // if we arrive here we reached end of file
+                if buf.len() % 2 != 0 {
+                    // we include last byte missed by zip
+                    end += 1
+                }
+                break;
+            }
+        }
+
+        self.read_exact_range(start..start + end)
     }
 }
 
@@ -573,7 +638,7 @@ mod tests {
     fn test_read_until_limit() {
         let file = create_test_file(b"hello world");
         let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
-        let data = cache.read_until_limit(b' ', 10).unwrap();
+        let data = cache.read_until_or_limit(b' ', 10).unwrap();
         assert_eq!(data, b"hello ");
         assert_eq!(cache.read_exact(5).unwrap(), b"world");
         verify(&cache);
@@ -583,7 +648,7 @@ mod tests {
     fn test_read_until_limit_not_found() {
         let file = create_test_file(b"hello world");
         let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
-        let data = cache.read_until_limit(b'\n', 11).unwrap();
+        let data = cache.read_until_or_limit(b'\n', 11).unwrap();
         assert_eq!(data, b"hello world");
         assert!(cache.read(1).unwrap().is_empty());
         verify(&cache);
@@ -593,7 +658,7 @@ mod tests {
     fn test_read_until_limit_beyond_stream() {
         let file = create_test_file(b"hello world");
         let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
-        let data = cache.read_until_limit(b'\n', 42).unwrap();
+        let data = cache.read_until_or_limit(b'\n', 42).unwrap();
         assert_eq!(data, b"hello world");
         assert!(cache.read(1).unwrap().is_empty());
         verify(&cache);
@@ -603,9 +668,33 @@ mod tests {
     fn test_read_until_limit_with_limit() {
         let file = create_test_file(b"hello world");
         let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
-        let data = cache.read_until_limit(b' ', 5).unwrap();
-        assert_eq!(data, b"hello");
-        assert_eq!(cache.read(6).unwrap(), b" world");
+        let data = cache.read_until_or_limit(b' ', 42).unwrap();
+        assert_eq!(data, b"hello ");
+
+        let data = cache.read_until_or_limit(b' ', 2).unwrap();
+        assert_eq!(data, b"wo");
+
+        let data = cache.read_until_or_limit(b' ', 42).unwrap();
+        assert_eq!(data, b"rld");
+        verify(&cache);
+    }
+
+    #[test]
+    fn test_read_until_utf16_limit() {
+        let content = io::Cursor::new(
+            b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64\x00\x00",
+        );
+        let mut cache = LazyCache::from_read_seek(content, 3, 512).unwrap();
+        let data = cache.read_until_utf16_or_limit(b"\x00\x00", 512).unwrap();
+        assert_eq!(data, b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00");
+
+        let data = cache.read_until_utf16_or_limit(b"\x00\x00", 1).unwrap();
+        assert_eq!(data, b"\x61\x00");
+
+        assert_eq!(
+            cache.read_until_utf16_or_limit(b"\xff\xff", 64).unwrap(),
+            b"\x62\x00\x63\x00\x64\x00\x00"
+        );
         verify(&cache);
     }
 }
