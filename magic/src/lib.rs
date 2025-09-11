@@ -221,6 +221,7 @@ impl DynDisplay for Scalar {
             Scalar::ulequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::uleshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::uledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
+            Scalar::ubeqdate(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Self::offset(value) => DynDisplay::dyn_fmt(value, f),
             Self::lemsdosdate(value) => Ok(format!("mdosdate({})", value)),
             Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
@@ -270,6 +271,7 @@ impl fmt::Display for Scalar {
             Scalar::ulequad(value) => write!(f, "{}", value),
             Scalar::uleshort(value) => write!(f, "{}", value),
             Scalar::uledate(value) => write!(f, "uledate({})", value),
+            Scalar::ubeqdate(value) => write!(f, "ubeqdate({value})"),
             Scalar::offset(value) => write!(f, "{:p}", value),
             Scalar::lemsdosdate(value) => write!(f, "lemsdosdate({})", value),
             Scalar::lemsdostime(value) => write!(f, "lemsdostime({})", value),
@@ -372,6 +374,7 @@ impl ScalarDataType {
             Self::ubelong => Scalar::ubelong(_read_be!(u32)),
             Self::ulong => Scalar::ulong(_read_ne!(u32)),
             Self::ubeshort => Scalar::ubeshort(_read_be!(u16)),
+            Self::ubeqdate => Scalar::ubeqdate(_read_be!(u64)),
             Self::lemsdosdate => Scalar::lemsdosdate(_read_le!(u16)),
             Self::lemsdostime => Scalar::lemsdostime(_read_le!(u16)),
             Self::guid => Scalar::guid(u128::from_be_bytes(read!(from, u128))),
@@ -2506,6 +2509,25 @@ mod tests {
             "0 guid x %s",
             b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E",
             "EC959539-6786-2D4E-8FDB-98814CE76C1E"
+        );
+    }
+
+    #[test]
+    fn test_ubeqdate() {
+        assert_magic_match!(
+            "0 ubeqdate 1633046400 It works",
+            b"\x00\x00\x00\x00\x61\x56\x4f\x80"
+        );
+
+        assert_magic_match!(
+            "0 ubeqdate x %s",
+            b"\x00\x00\x00\x00\x61\x56\x4f\x80",
+            "2021-10-01 00:00:00"
+        );
+
+        assert_magic_not_match!(
+            "0 ubeqdate 1633046400 It should not work",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00" // Zero timestamp
         );
     }
 }

@@ -4,21 +4,21 @@
 file = { SOI ~ (rule_dependency | rule | NEWLINE)* ~ EOI }
 
 rule_dependency = { name_entry ~ NEWLINE ~ ((match_depth | use | flag) ~ (NEWLINE+ | EOI))+ }
-name_entry      = { offset ~ "name" ~ rule_name ~ message? }
+name_entry      = { stream_offset ~ "name" ~ rule_name ~ message? }
 
 // A rule consists of an offset, type, test, and optional message or continuation
 rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWLINE+ | EOI))* }
 
 // we need the both to be able to match
-match_no_depth = { offset ~ test ~ message? }
-match_depth    = { depth+ ~ offset ~ test ~ message? }
+match_no_depth = { stream_offset ~ test ~ message? }
+match_depth    = { depth+ ~ stream_offset ~ test ~ message? }
 
 test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test | guid_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
 // use must be defined completely as it doesn't expect a message
-use = { depth+ ~ offset ~ "use" ~ endianness_switch? ~ rule_name ~ message? }
+use = { depth+ ~ stream_offset ~ "use" ~ endianness_switch? ~ rule_name ~ message? }
 
 // operators
 op_add    = ${ "+" }
@@ -63,7 +63,7 @@ ind_shift       =  { "(" ~ number ~ ")" }
 shift           =  { dir_shift | ind_shift }
 indirect_offset = ${ "&"? ~ "(" ~ (abs_offset | rel_offset) ~ ind_offset_sign? ~ ind_offset_type? ~ ((op_add | op_sub | op_mul | op_div | op_mod | op_and | op_or | op_xor) ~ shift)? ~ ")" }
 
-offset = ${ rel_offset | abs_offset | indirect_offset }
+stream_offset = ${ rel_offset | abs_offset | indirect_offset }
 
 /// All test types
 date        = @{ "date" }
@@ -100,6 +100,7 @@ short       = @{ ("short" | "dS" | "d2") }
 ubelong     = @{ "ubelong" }
 ubequad     = @{ "ubequad" }
 ubeshort    = @{ "ubeshort" }
+ubeqdate    = @{ "ubeqdate" }
 ubyte       = @{ ("ubyte" | "uC" | "u1") }
 uledate     = @{ "uledate" }
 ulelong     = @{ "ulelong" }
@@ -132,15 +133,15 @@ bestring16 = { "bestring16" }
 lestring16 = { "lestring16" }
 
 /// special tests types
-default   = { "default" }
-clear     = { "clear" }
-indirect  = { "indirect" }
-offset_ty = { "offset" }
+default  = { "default" }
+clear    = { "clear" }
+indirect = { "indirect" }
+offset   = { "offset" }
 
 any_value = { "x" }
 
 // tests on scalar data types
-scalar_type      = ${ date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | offset | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset_ty | medate | melong | meldate | uquad | uquad | leqldate }
+scalar_type      = ${ date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset | medate | melong | meldate | uquad | uquad | leqldate | ubeqdate }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_or | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
 scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and | op_not }

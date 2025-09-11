@@ -283,44 +283,56 @@ impl Op {
 impl ScalarDataType {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let dt = pair.into_inner().next().expect("data type expected");
-        match dt.as_rule() {
-            Rule::belong => Ok(Self::belong),
-            Rule::bequad => Ok(Self::bequad),
-            Rule::beshort => Ok(Self::beshort),
-            Rule::bedate => Ok(Self::bedate),
-            Rule::beldate => Ok(Self::beldate),
-            Rule::beqdate => Ok(Self::beqdate),
-            Rule::byte => Ok(Self::byte),
-            Rule::date => Ok(Self::date),
-            Rule::quad => Ok(Self::quad),
-            Rule::uquad => Ok(Self::uquad),
-            Rule::lelong => Ok(Self::lelong),
-            Rule::ledate => Ok(Self::ledate),
-            Rule::leldate => Ok(Self::leldate),
-            Rule::leqdate => Ok(Self::leqdate),
-            Rule::leqldate => Ok(Self::leqldate),
-            Rule::leshort => Ok(Self::leshort),
-            Rule::long => Ok(Self::long),
-            Rule::short => Ok(Self::short),
-            Rule::ushort => Ok(Self::ushort),
-            Rule::ulong => Ok(Self::ulong),
-            Rule::ubelong => Ok(Self::ubelong),
-            Rule::ubequad => Ok(Self::ubequad),
-            Rule::ubeshort => Ok(Self::ubeshort),
-            Rule::ubyte => Ok(Self::ubyte),
-            Rule::ulelong => Ok(Self::ulelong),
-            Rule::ulequad => Ok(Self::ulequad),
-            Rule::uleshort => Ok(Self::uleshort),
-            Rule::lequad => Ok(Self::lequad),
-            Rule::uledate => Ok(Self::uledate),
-            Rule::offset_ty => Ok(Self::offset),
-            Rule::lemsdosdate => Ok(Self::lemsdosdate),
-            Rule::lemsdostime => Ok(Self::lemsdostime),
-            Rule::medate => Ok(Self::medate),
-            Rule::meldate => Ok(Self::meldate),
-            Rule::melong => Ok(Self::melong),
-            _ => Err(Error::parser("unimplemented data type", dt.as_span())),
+
+        macro_rules! handle_types {
+            ($($ty: ident),*) => {
+                match dt.as_rule() {
+                    $(
+                        Rule::$ty => Ok(Self::$ty),
+                    )*
+                    _ => Err(Error::parser("unimplemented data type", dt.as_span())),
+                }
+            };
         }
+
+        handle_types!(
+            belong,
+            bequad,
+            beshort,
+            bedate,
+            beldate,
+            beqdate,
+            byte,
+            date,
+            quad,
+            uquad,
+            lelong,
+            ledate,
+            leldate,
+            leqdate,
+            leqldate,
+            leshort,
+            long,
+            short,
+            ushort,
+            ulong,
+            ubelong,
+            ubequad,
+            ubeshort,
+            ubyte,
+            ulelong,
+            ulequad,
+            uleshort,
+            ubeqdate,
+            lequad,
+            uledate,
+            offset,
+            lemsdosdate,
+            lemsdostime,
+            medate,
+            meldate,
+            melong
+        )
     }
 }
 
@@ -565,7 +577,11 @@ impl Use {
             (0, token)
         };
 
-        assert_eq!(offset.as_rule(), Rule::offset, "expected offset rule");
+        assert_eq!(
+            offset.as_rule(),
+            Rule::stream_offset,
+            "expected offset rule"
+        );
         let offset = Offset::from_pair(offset);
 
         // here token can be both endianness_switch or rule_name
@@ -1039,7 +1055,11 @@ impl Match {
             (0, token)
         };
 
-        assert_eq!(offset.as_rule(), Rule::offset, "expected offset rule");
+        assert_eq!(
+            offset.as_rule(),
+            Rule::stream_offset,
+            "expected offset rule"
+        );
         let offset = Offset::from_pair(offset);
 
         let test_pair = pairs.next().expect("test pair expected");

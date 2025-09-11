@@ -183,6 +183,7 @@ impl_numeric_types!(
     uleshort(u16),
     // FIXME: guessed
     uledate(u32),
+    ubeqdate(u64),
     offset(u64),
     lemsdosdate(u16),
     lemsdostime(u16),
