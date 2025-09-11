@@ -141,7 +141,7 @@ offset   = { "offset" }
 any_value = { "x" }
 
 // tests on scalar data types
-scalar_type      = ${ date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset | medate | melong | meldate | uquad | uquad | leqldate | ubeqdate }
+scalar_type      = ${ ldate | date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset | medate | melong | meldate | uquad | uquad | leqldate | ubeqdate }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_or | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
 scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and | op_not }

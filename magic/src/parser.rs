@@ -304,6 +304,7 @@ impl ScalarDataType {
             beqdate,
             byte,
             date,
+            ldate,
             quad,
             uquad,
             lelong,

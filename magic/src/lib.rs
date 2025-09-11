@@ -196,6 +196,7 @@ impl DynDisplay for Scalar {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
             Scalar::date(value) => Ok(unix_utc_time_to_string(*value as i64)),
+            Scalar::ldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
@@ -246,6 +247,7 @@ impl fmt::Display for Scalar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Scalar::date(value) => write!(f, "date({})", value),
+            Scalar::ldate(value) => write!(f, "ldate({})", value),
             Scalar::quad(value) => write!(f, "{}", value),
             Scalar::uquad(value) => write!(f, "{}", value),
             Scalar::belong(value) => write!(f, "{}", value),
@@ -344,6 +346,7 @@ impl ScalarDataType {
             Self::short => Scalar::short(_read_ne!(i16)),
             Self::long => Scalar::long(_read_ne!(i32)),
             Self::date => Scalar::date(_read_ne!(i32)),
+            Self::ldate => Scalar::ldate(_read_ne!(i32)),
             Self::leshort => Scalar::leshort(_read_le!(i16)),
             Self::lelong => Scalar::lelong(_read_le!(i32)),
             Self::lequad => Scalar::lequad(_read_le!(i64)),
@@ -2527,7 +2530,20 @@ mod tests {
 
         assert_magic_not_match!(
             "0 ubeqdate 1633046400 It should not work",
-            b"\x00\x00\x00\x00\x00\x00\x00\x00" // Zero timestamp
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+    }
+
+    #[test]
+    fn test_ldate() {
+        assert_magic_match!("0 ldate 1640551520 It works", b"\x60\xd4\xC8\x61");
+
+        assert_magic_not_match!("0 ldate 1633046400 It should not work", b"\x00\x00\x00\x00");
+
+        assert_magic_match!(
+            "0 ldate x %s",
+            b"\x60\xd4\xC8\x61",
+            unix_local_time_to_string(1640551520)
         );
     }
 }

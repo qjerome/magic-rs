@@ -156,6 +156,7 @@ impl_numeric_types!(
     byte(i8),
     long(i32),
     date(i32),
+    ldate(i32),
     short(i16),
     quad(i64),
     belong(i32),
