@@ -5,12 +5,14 @@ use flagset::FlagSet;
 use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
 use regex::bytes;
+use uuid::Uuid;
 
 use crate::{
     Any, CmpOp, DependencyRule, DirOffset, Encoding, Entry, EntryNode, Error, Flag, IndOffset,
     MagicFile, MagicRule, Match, Message, Name, Offset, OffsetType, Op, ReMod, RegexTest,
     ScalarTest, SearchTest, Shift, StrengthMod, String16Test, StringMod, StringTest, Test,
-    Transform, Use, numeric::ScalarDataType,
+    Transform, Use,
+    numeric::{Scalar, ScalarDataType},
 };
 
 pub(crate) fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
@@ -905,6 +907,30 @@ impl Test {
                     orig: orig.expect("test value must be known"),
                     str16: str.expect("test value must be known"),
                     encoding: encoding.expect("encoding must be known"),
+                })
+            }
+            Rule::guid_test => {
+                let mut guid = None;
+                for p in pair.into_inner() {
+                    match p.as_rule() {
+                        Rule::any_value => {
+                            return Ok(Self::Any(Any::Scalar(ScalarDataType::guid)));
+                        }
+                        Rule::guid => {
+                            guid = Some(
+                                Uuid::parse_str(p.as_str())
+                                    .expect("valid uuid is guaranteed by grammar"),
+                            )
+                        }
+                        _ => {}
+                    }
+                }
+
+                Self::Scalar(ScalarTest {
+                    ty: ScalarDataType::guid,
+                    transform: None,
+                    cmp_op: CmpOp::Eq,
+                    value: Scalar::guid(guid.unwrap().as_u128()),
                 })
             }
             Rule::clear_test => Self::Clear,

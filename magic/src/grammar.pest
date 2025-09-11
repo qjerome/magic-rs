@@ -13,7 +13,7 @@ rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWL
 match_no_depth = { offset ~ test ~ message? }
 match_depth    = { depth+ ~ offset ~ test ~ message? }
 
-test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test }
+test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test | guid_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
@@ -77,7 +77,6 @@ bequad      = @{ "bequad" }
 beshort     = @{ "beshort" }
 byte        = @{ ("byte" | "dC" | "d1") }
 der         = @{ "der" }
-guid        = @{ "guid" }
 ldate       = @{ "ldate" }
 ledate      = @{ "ledate" }
 ledouble    = @{ "ledouble" }
@@ -109,6 +108,12 @@ uleshort    = @{ "uleshort" }
 ulong       = @{ ("ulong" | "u4" | "uI" | "uL") }
 uquad       = @{ ("uquad" | "u8" | "uQ") }
 ushort      = @{ ("ushort" | "uS" | "u2") }
+
+guid = { ASCII_HEX_DIGIT{8} ~ ("-" ~ ASCII_HEX_DIGIT{4}){3} ~ "-" ~ ASCII_HEX_DIGIT{12} }
+// this could have been done in scalar test yet guid does not
+// seem to implement transform operation and other compairison
+// operators than eq
+guid_test = { "guid" ~ (any_value | guid) }
 
 /// string related test types
 string_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }

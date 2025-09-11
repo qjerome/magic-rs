@@ -21,6 +21,7 @@ use std::{
 };
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
+use uuid::Uuid;
 
 use crate::{
     parser::{FileMagicParser, Rule, prepare_bytes_re},
@@ -229,6 +230,10 @@ impl DynDisplay for Scalar {
             Scalar::leqdate(value) => Ok(unix_utc_time_to_string(*value)),
             Scalar::leldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::leqldate(value) => Ok(unix_local_time_to_string(*value)),
+            Scalar::guid(value) => Ok(Uuid::from_u128(*value)
+                .hyphenated()
+                .to_string()
+                .to_uppercase()),
             Scalar::offset(_) => todo!(),
             Scalar::lemsdosdate(_) => todo!(),
             Scalar::lemsdostime(_) => todo!(),
@@ -274,6 +279,16 @@ impl fmt::Display for Scalar {
             Scalar::leldate(value) => write!(f, "leldate({})", value),
             Scalar::leqdate(value) => write!(f, "leqdate({})", value),
             Scalar::leqldate(value) => write!(f, "leqldate({})", value),
+            Scalar::guid(value) => {
+                write!(
+                    f,
+                    "{}",
+                    Uuid::from_u128(*value)
+                        .hyphenated()
+                        .to_string()
+                        .to_uppercase()
+                )
+            }
         }
     }
 }
@@ -359,6 +374,7 @@ impl ScalarDataType {
             Self::ubeshort => Scalar::ubeshort(_read_be!(u16)),
             Self::lemsdosdate => Scalar::lemsdosdate(_read_le!(u16)),
             Self::lemsdostime => Scalar::lemsdostime(_read_le!(u16)),
+            Self::guid => Scalar::guid(u128::from_be_bytes(read!(from, u128))),
         })
     }
 }
@@ -2471,6 +2487,25 @@ mod tests {
         assert_magic_match!(
             "0 uquad x Unsigned quad",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+    }
+
+    #[test]
+    fn test_guid() {
+        assert_magic_match!(
+            "0 guid EC959539-6786-2D4E-8FDB-98814CE76C1E It works",
+            b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E"
+        );
+
+        assert_magic_not_match!(
+            "0 guid 399595EC-8667-4E2D-8FDB-98814CE76C1E It works",
+            b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+        );
+
+        assert_magic_match!(
+            "0 guid x %s",
+            b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E",
+            "EC959539-6786-2D4E-8FDB-98814CE76C1E"
         );
     }
 }

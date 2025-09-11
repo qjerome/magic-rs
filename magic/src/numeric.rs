@@ -189,4 +189,5 @@ impl_numeric_types!(
     medate(i32),
     melong(i32),
     meldate(i32),
+    guid(u128),
 );
