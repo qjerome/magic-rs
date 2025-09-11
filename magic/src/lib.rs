@@ -1428,10 +1428,11 @@ impl Test {
                 {
                     // FIXME: return error instead of unwrap
                     // Here string must be valid UTF8
-                    let s = str::from_utf8(&st.str).unwrap();
+                    let pattern = prepare_bytes_re(&st.str, true);
+                    let re = Self::string_to_re_pattern(&pattern, st.mods, true);
                     RegexTest {
                         // FIXME: remove unwrap
-                        re: Regex::new(&Self::string_to_re_pattern(s, st.mods, true)).unwrap(),
+                        re: Regex::new(&re).unwrap(),
                         length: st.length,
                         n_pos: None,
                         mods: FlagSet::empty(),
