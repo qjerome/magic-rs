@@ -50,6 +50,22 @@ macro_rules! debug_panic {
     };
 }
 
+macro_rules! read {
+    ($r: expr, $ty: ty) => {{
+        let mut a = [0u8; std::mem::size_of::<$ty>()];
+        $r.read_exact_into(&mut a)?;
+        a
+    }};
+}
+
+macro_rules! read_le {
+    ($r:expr, $ty: ty ) => {{ <$ty>::from_le_bytes(read!($r, $ty)) }};
+}
+
+macro_rules! read_be {
+    ($r:expr, $ty: ty ) => {{ <$ty>::from_be_bytes(read!($r, $ty)) }};
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     String(String),
@@ -269,90 +285,80 @@ impl ScalarDataType {
         from: &mut LazyCache<R>,
         switch_endianness: bool,
     ) -> Result<Scalar, Error> {
-        macro_rules! read {
-            ($ty: ty) => {{
-                let mut a = [0u8; std::mem::size_of::<$ty>()];
-                // it is accepted to copy bytes here as we
-                // handle only primitive types
-                from.read_exact_into(&mut a)?;
-                a
-            }};
-        }
-
-        macro_rules! read_le {
+        macro_rules! _read_le {
             ($ty: ty) => {{
                 if switch_endianness {
-                    <$ty>::from_be_bytes(read!($ty))
+                    <$ty>::from_be_bytes(read!(from, $ty))
                 } else {
-                    <$ty>::from_le_bytes(read!($ty))
+                    <$ty>::from_le_bytes(read!(from, $ty))
                 }
             }};
         }
 
-        macro_rules! read_be {
+        macro_rules! _read_be {
             ($ty: ty) => {{
                 if switch_endianness {
-                    <$ty>::from_le_bytes(read!($ty))
+                    <$ty>::from_le_bytes(read!(from, $ty))
                 } else {
-                    <$ty>::from_be_bytes(read!($ty))
+                    <$ty>::from_be_bytes(read!(from, $ty))
                 }
             }};
         }
 
-        macro_rules! read_ne {
+        macro_rules! _read_ne {
             ($ty: ty) => {{
                 if cfg!(target_endian = "big") {
-                    read_be!($ty)
+                    _read_be!($ty)
                 } else {
-                    read_le!($ty)
+                    _read_le!($ty)
                 }
             }};
         }
 
-        macro_rules! read_me {
+        macro_rules! _read_me {
             () => {
-                ((read_le!(u16) as i32) << 16) | (read_le!(u16) as i32)
+                ((_read_le!(u16) as i32) << 16) | (_read_le!(u16) as i32)
             };
         }
 
         Ok(match self {
             // signed
-            Self::byte => Scalar::byte(read!(u8)[0] as i8),
-            Self::short => Scalar::short(read_ne!(i16)),
-            Self::long => Scalar::long(read_ne!(i32)),
-            Self::date => Scalar::date(read_ne!(i32)),
-            Self::leshort => Scalar::leshort(read_le!(i16)),
-            Self::lelong => Scalar::lelong(read_le!(i32)),
-            Self::lequad => Scalar::lequad(read_le!(i64)),
-            Self::bequad => Scalar::bequad(read_be!(i64)),
-            Self::belong => Scalar::belong(read_be!(i32)),
-            Self::bedate => Scalar::bedate(read_be!(i32)),
-            Self::beldate => Scalar::beldate(read_be!(i32)),
-            Self::beqdate => Scalar::beqdate(read_be!(i64)),
+            Self::byte => Scalar::byte(read!(from, u8)[0] as i8),
+            Self::short => Scalar::short(_read_ne!(i16)),
+            Self::long => Scalar::long(_read_ne!(i32)),
+            Self::date => Scalar::date(_read_ne!(i32)),
+            Self::leshort => Scalar::leshort(_read_le!(i16)),
+            Self::lelong => Scalar::lelong(_read_le!(i32)),
+            Self::lequad => Scalar::lequad(_read_le!(i64)),
+            Self::bequad => Scalar::bequad(_read_be!(i64)),
+            Self::belong => Scalar::belong(_read_be!(i32)),
+            Self::bedate => Scalar::bedate(_read_be!(i32)),
+            Self::beldate => Scalar::beldate(_read_be!(i32)),
+            Self::beqdate => Scalar::beqdate(_read_be!(i64)),
             // unsigned
-            Self::ubyte => Scalar::ubyte(read!(u8)[0]),
-            Self::ushort => Scalar::ushort(read_ne!(u16)),
-            Self::uleshort => Scalar::uleshort(read_le!(u16)),
-            Self::ulelong => Scalar::ulelong(read_le!(u32)),
-            Self::uledate => Scalar::uledate(read_le!(u32)),
-            Self::ulequad => Scalar::ulequad(read_le!(u64)),
+            Self::ubyte => Scalar::ubyte(read!(from, u8)[0]),
+            Self::ushort => Scalar::ushort(_read_ne!(u16)),
+            Self::uleshort => Scalar::uleshort(_read_le!(u16)),
+            Self::ulelong => Scalar::ulelong(_read_le!(u32)),
+            Self::uledate => Scalar::uledate(_read_le!(u32)),
+            Self::ulequad => Scalar::ulequad(_read_le!(u64)),
             Self::offset => Scalar::offset(from.stream_position()?),
-            Self::ubequad => Scalar::ubequad(read_be!(u64)),
-            Self::medate => Scalar::medate(read_me!()),
-            Self::meldate => Scalar::meldate(read_me!()),
-            Self::melong => Scalar::melong(read_me!()),
-            Self::beshort => Scalar::beshort(read_be!(i16)),
-            Self::quad => Scalar::quad(read_ne!(i64)),
-            Self::uquad => Scalar::uquad(read_ne!(u64)),
-            Self::ledate => Scalar::ledate(read_le!(i32)),
-            Self::leldate => Scalar::leldate(read_le!(i32)),
-            Self::leqdate => Scalar::leqdate(read_le!(i64)),
-            Self::leqldate => Scalar::leqldate(read_le!(i64)),
-            Self::ubelong => Scalar::ubelong(read_be!(u32)),
-            Self::ulong => Scalar::ulong(read_ne!(u32)),
-            Self::ubeshort => Scalar::ubeshort(read_be!(u16)),
-            Self::lemsdosdate => Scalar::lemsdosdate(read_le!(u16)),
-            Self::lemsdostime => Scalar::lemsdostime(read_le!(u16)),
+            Self::ubequad => Scalar::ubequad(_read_be!(u64)),
+            Self::medate => Scalar::medate(_read_me!()),
+            Self::meldate => Scalar::meldate(_read_me!()),
+            Self::melong => Scalar::melong(_read_me!()),
+            Self::beshort => Scalar::beshort(_read_be!(i16)),
+            Self::quad => Scalar::quad(_read_ne!(i64)),
+            Self::uquad => Scalar::uquad(_read_ne!(u64)),
+            Self::ledate => Scalar::ledate(_read_le!(i32)),
+            Self::leldate => Scalar::leldate(_read_le!(i32)),
+            Self::leqdate => Scalar::leqdate(_read_le!(i64)),
+            Self::leqldate => Scalar::leqldate(_read_le!(i64)),
+            Self::ubelong => Scalar::ubelong(_read_be!(u32)),
+            Self::ulong => Scalar::ulong(_read_ne!(u32)),
+            Self::ubeshort => Scalar::ubeshort(_read_be!(u16)),
+            Self::lemsdosdate => Scalar::lemsdosdate(_read_le!(u16)),
+            Self::lemsdostime => Scalar::lemsdostime(_read_le!(u16)),
         })
     }
 }
@@ -759,20 +765,6 @@ impl Test {
         haystack: &'haystack mut LazyCache<R>,
         switch_endianness: bool,
     ) -> Result<TestValue<'haystack>, Error> {
-        macro_rules! read {
-            ($ty: ty) => {{
-                let mut a = [0u8; std::mem::size_of::<$ty>()];
-                haystack.read_exact_into(&mut a)?;
-                a
-            }};
-        }
-
-        macro_rules! read_le {
-            ($ty: ty) => {
-                <$ty>::from_le_bytes(read!($ty))
-            };
-        }
-
         let test_value_offset = haystack.lazy_stream_position();
 
         match self {
@@ -814,7 +806,7 @@ impl Test {
                 // FIXME: maybe we could optimize here by reading testing on size
                 // this is the size of the pstring
                 // FIXME: adjust the size function of pstring mods
-                let _ = read_le!(u8);
+                let _ = read_le!(haystack, u8);
                 let read = haystack.read_exact(buf.len() as u64)?;
                 Ok(TestValue::Bytes(test_value_offset, read))
             }
@@ -853,7 +845,7 @@ impl Test {
                     Ok(TestValue::Bytes(test_value_offset, read))
                 }
                 Any::PString => {
-                    let slen = read_le!(u8) as usize;
+                    let slen = read_le!(haystack, u8) as usize;
                     let read = haystack.read_exact(slen as u64)?;
                     Ok(TestValue::Bytes(test_value_offset, read))
                 }
@@ -1073,78 +1065,62 @@ impl IndOffset {
             DirOffset::End(e) => haystack.seek(SeekFrom::End(e as i64))?,
         };
 
-        macro_rules! read_buf {
-            ($ty: ty) => {{
-                let mut a = [0u8; std::mem::size_of::<$ty>()];
-                haystack.read_exact_into(&mut a)?;
-                a
-            }};
-        }
-
-        macro_rules! read_le {
-            ($ty: ty ) => {{ <$ty>::from_le_bytes(read_buf!($ty)) }};
-        }
-
-        macro_rules! read_be {
-            ($ty: ty ) => {{ <$ty>::from_be_bytes(read_buf!($ty)) }};
-        }
-
         macro_rules! read_value {
             () => {
                 match self.ty {
                     OffsetType::Byte => {
                         if self.signed {
-                            read_le!(u8) as u64
+                            read_le!(haystack, u8) as u64
                         } else {
-                            read_le!(i8) as u64
+                            read_le!(haystack, i8) as u64
                         }
                     }
-                    OffsetType::DoubleLe => read_le!(f64) as u64,
-                    OffsetType::DoubleBe => read_be!(f64) as u64,
+                    OffsetType::DoubleLe => read_le!(haystack, f64) as u64,
+                    OffsetType::DoubleBe => read_be!(haystack, f64) as u64,
                     OffsetType::ShortLe => {
                         if self.signed {
-                            read_le!(i16) as u64
+                            read_le!(haystack, i16) as u64
                         } else {
-                            read_le!(u16) as u64
+                            read_le!(haystack, u16) as u64
                         }
                     }
                     OffsetType::ShortBe => {
                         if self.signed {
-                            read_be!(i16) as u64
+                            read_be!(haystack, i16) as u64
                         } else {
-                            read_be!(u16) as u64
+                            read_be!(haystack, u16) as u64
                         }
                     }
                     OffsetType::Id3Le => unimplemented!(),
                     OffsetType::Id3Be => unimplemented!(),
                     OffsetType::LongLe => {
                         if self.signed {
-                            read_le!(i32) as u64
+                            read_le!(haystack, i32) as u64
                         } else {
-                            read_le!(u32) as u64
+                            read_le!(haystack, u32) as u64
                         }
                     }
                     OffsetType::LongBe => {
                         if self.signed {
-                            read_be!(i32) as u64
+                            read_be!(haystack, i32) as u64
                         } else {
-                            read_be!(u32) as u64
+                            read_be!(haystack, u32) as u64
                         }
                     }
                     OffsetType::Middle => unimplemented!(),
                     OffsetType::Octal => unimplemented!(),
                     OffsetType::QuadLe => {
                         if self.signed {
-                            read_le!(i64) as u64
+                            read_le!(haystack, i64) as u64
                         } else {
-                            read_le!(u64)
+                            read_le!(haystack, u64)
                         }
                     }
                     OffsetType::QuadBe => {
                         if self.signed {
-                            read_be!(i64) as u64
+                            read_be!(haystack, i64) as u64
                         } else {
-                            read_be!(u64)
+                            read_be!(haystack, u64)
                         }
                     }
                 }
