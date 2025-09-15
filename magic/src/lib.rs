@@ -1919,8 +1919,10 @@ impl<'m> Magic<'m> {
     }
 
     fn insert_mimetype<'a: 'm>(&mut self, mime: Cow<'a, str>) {
-        debug!("insert mime: {:?}", mime);
-        self.mime = Some(mime)
+        if self.mime.is_none() {
+            debug!("insert mime: {:?}", mime);
+            self.mime = Some(mime)
+        }
     }
 
     pub fn is_empty(&self) -> bool {
