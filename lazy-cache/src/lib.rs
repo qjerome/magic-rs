@@ -31,15 +31,7 @@ where
 {
     #[inline(always)]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        match pos {
-            SeekFrom::Start(s) => self.stream_pos = s,
-            SeekFrom::Current(p) => {
-                self.stream_pos = (self.stream_pos as i128 + p as i128) as u64;
-            }
-            SeekFrom::End(e) => {
-                self.stream_pos = (self.pos_end as i128 + e as i128) as u64;
-            }
-        }
+        self.stream_pos = self.offset_from_start(pos);
         Ok(self.stream_pos)
     }
 }
@@ -72,6 +64,15 @@ where
             stream_pos: 0,
             pos_end,
         })
+    }
+
+    #[inline(always)]
+    pub fn offset_from_start(&self, pos: SeekFrom) -> u64 {
+        match pos {
+            SeekFrom::Start(s) => s,
+            SeekFrom::Current(p) => (self.stream_pos as i128 + p as i128) as u64,
+            SeekFrom::End(e) => (self.pos_end as i128 + e as i128) as u64,
+        }
     }
 
     #[inline(always)]
