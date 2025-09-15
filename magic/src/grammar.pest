@@ -121,7 +121,7 @@ string_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
 string     =  { ("string" | "s") ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
 
 pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
-pstring     =  { "pstring" ~ ("/" ~ pstring_mod)? }
+pstring     =  { "pstring" ~ ("/" ~ pstring_mod{,2})? }
 
 search_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" | "s" }
 search     =  { "search" ~ ("/" ~ (pos_number | search_mod+){,2}){,2} }
