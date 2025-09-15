@@ -133,10 +133,12 @@ bestring16 = { "bestring16" }
 lestring16 = { "lestring16" }
 
 /// special tests types
-default  = { "default" }
-clear    = { "clear" }
-indirect = { "indirect" }
-offset   = { "offset" }
+default = { "default" }
+clear   = { "clear" }
+
+indirect_mod = { "r" }
+indirect     = { "indirect" ~ ("/" ~ indirect_mod+)? }
+offset       = { "offset" }
 
 any_value = { "x" }
 

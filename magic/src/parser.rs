@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use crate::{
     Any, CmpOp, DependencyRule, DirOffset, Encoding, Entry, EntryNode, Error, Flag, IndOffset,
-    MagicFile, MagicRule, Match, Message, Name, Offset, OffsetType, Op, ReMod, RegexTest,
-    ScalarTest, SearchTest, Shift, StrengthMod, String16Test, StringMod, StringTest, Test,
-    Transform, Use,
+    IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message, Name, Offset, OffsetType, Op,
+    ReMod, RegexTest, ScalarTest, SearchTest, Shift, StrengthMod, String16Test, StringMod,
+    StringTest, Test, Transform, Use,
     numeric::{Scalar, ScalarDataType},
 };
 
@@ -952,7 +952,36 @@ impl Test {
             }
             Rule::clear_test => Self::Clear,
             Rule::default_test => Self::Default,
-            Rule::indirect_test => Self::Indirect,
+            Rule::indirect_test => {
+                let mut ind_mods = IndirectMods::empty();
+                for p in pair.into_inner() {
+                    match p.as_rule() {
+                        Rule::indirect => {
+                            for p in p.into_inner() {
+                                match p.as_rule() {
+                                    Rule::indirect_mod => match p.as_str() {
+                                        "r" => ind_mods |= IndirectMod::Relative,
+                                        _ => {
+                                            return Err(Error::parser(
+                                                "unsupported modifier",
+                                                p.as_span(),
+                                            ));
+                                        }
+                                    },
+                                    _ => {
+                                        return Err(Error::parser(
+                                            "parsing rule not handled",
+                                            p.as_span(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Self::Indirect(ind_mods)
+            }
             _ => unimplemented!(),
         };
 

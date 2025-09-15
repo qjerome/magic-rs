@@ -647,6 +647,14 @@ fn slice_to_utf16_iter(read: &[u8], encoding: Encoding) -> impl Iterator<Item = 
     })
 }
 
+flags! {
+    enum IndirectMod: u8{
+        Relative,
+    }
+}
+
+type IndirectMods = FlagSet<IndirectMod>;
+
 #[derive(Debug, Clone)]
 enum Test {
     /// This corresponds to a DATATYPE x test
@@ -660,7 +668,7 @@ enum Test {
     Regex(RegexTest),
     Clear,
     Default,
-    Indirect,
+    Indirect(FlagSet<IndirectMod>),
     String16(String16Test),
     // FIXME: placeholders for strength computation
     Der,
@@ -1074,18 +1082,31 @@ struct IndOffset {
 
 impl IndOffset {
     // if we overflow we must not return an offset
-    fn get_offset<R: Read + Seek>(
+    fn read_offset<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
+        base_offset: Option<u64>,
+        opt_start: Option<u64>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
         let main_offset_offset = match self.off_addr {
-            DirOffset::Start(s) => haystack.seek(SeekFrom::Start(s as u64))?,
+            DirOffset::Start(s) => {
+                let Some(o) = s
+                    .checked_add(base_offset.unwrap_or_default())
+                    .and_then(|o| o.checked_add(opt_start.unwrap_or_default()))
+                else {
+                    return Ok(None);
+                };
+
+                haystack.seek(SeekFrom::Start(o))?
+            }
             DirOffset::LastUpper(c) => haystack.seek(SeekFrom::Start(
                 (last_upper_match_offset.unwrap_or_default() as i64 + c) as u64,
             ))?,
             DirOffset::End(e) => haystack.seek(SeekFrom::End(e as i64))?,
         };
+
+        let offset_pos = haystack.lazy_stream_position();
 
         macro_rules! read_value {
             () => {
@@ -1153,7 +1174,7 @@ impl IndOffset {
         let o = read_value!();
 
         trace!(
-            "computing offset base={o} op={:?} shift={:?}",
+            "offset read @ {offset_pos} value={o} op={:?} shift={:?}",
             self.op, self.shift
         );
 
@@ -1267,26 +1288,31 @@ impl From<Name> for Match {
 }
 
 impl Match {
+    /// Turns the `Match`'s offset into an absolute offset from the start of the stream
     #[inline(always)]
-    fn resolve_offset<'a, R: Read + Seek>(
+    fn offset_from_start<'a, R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
+        base_offset: Option<u64>,
+        opt_start: Option<u64>,
         last_level_offset: Option<u64>,
-    ) -> Result<Option<Offset>, io::Error> {
+    ) -> Result<Option<u64>, io::Error> {
         match self.offset {
             Offset::Direct(dir_offset) => match dir_offset {
-                DirOffset::Start(s) => Ok(Some(Offset::from(DirOffset::Start(s)))),
-                DirOffset::LastUpper(shift) => Ok(Some(Offset::from(DirOffset::Start(
+                DirOffset::Start(s) => Ok(Some(s)),
+                DirOffset::LastUpper(shift) => Ok(Some(
                     (last_level_offset.unwrap_or_default() as i64 + shift) as u64,
-                )))),
-                DirOffset::End(e) => Ok(Some(Offset::from(DirOffset::End(e)))),
+                )),
+                DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
             Offset::Indirect(ind_offset) => {
-                let Some(o) = ind_offset.get_offset(haystack, last_level_offset)? else {
+                let Some(o) =
+                    ind_offset.read_offset(haystack, base_offset, opt_start, last_level_offset)?
+                else {
                     return Ok(None);
                 };
 
-                Ok(Some(Offset::from(DirOffset::Start(o))))
+                Ok(Some(o))
             }
         }
     }
@@ -1298,8 +1324,9 @@ impl Match {
         &'a self,
         magic: &mut Magic<'a>,
         state: &mut MatchState,
+        base_offset: Option<u64>,
+        start_offset: Option<u64>,
         last_level_offset: Option<u64>,
-        opt_start_offset: Option<Offset>,
         haystack: &mut LazyCache<R>,
         switch_endianness: bool,
         db: &'a MagicDb,
@@ -1309,188 +1336,189 @@ impl Match {
             return Err(Error::MaximumRecursion(MAX_RECURSION));
         }
 
-        // handle clear and default tests
-        if matches!(self.test, Test::Clear) {
-            trace!("line={} clear", self.line);
-            state.clear_continuation_level(&self.continuation_level());
-            return Ok(true);
-        }
-
-        if let Test::Name(name) = &self.test {
-            trace!("line={} running rule {name}", self.line);
-            if let Some(msg) = self.message.as_ref() {
-                magic.push_message(msg.format_with(None));
-            }
-            return Ok(true);
-        }
-
-        if let Test::Use(switch_endianness, rule_name) = &self.test {
-            trace!(
-                "line={} use {rule_name} switch_endianness={switch_endianness}",
-                self.line
-            );
-
-            let dr: &DependencyRule = db
-                .dependencies
-                .get(rule_name)
-                .ok_or(Error::MissingRule(rule_name.clone()))?;
-
-            let Some(offset) = self.resolve_offset(haystack, last_level_offset)? else {
-                return Ok(false);
-            };
-
-            if let Some(msg) = self.message.as_ref() {
-                magic.push_message(msg.format_with(None));
-            }
-
-            dr.rule.magic(
-                magic,
-                Some(offset),
-                haystack,
-                db,
-                *switch_endianness,
-                depth.wrapping_add(1),
-            )?;
-
+        let Some(offset) =
+            self.offset_from_start(haystack, base_offset, start_offset, last_level_offset)?
+        else {
             return Ok(false);
-        }
+        };
 
-        if matches!(self.test, Test::Default) {
-            // default matches if nothing else at the continuation level matched
-            let ok = !state.get_continuation_level(&self.continuation_level());
-
-            trace!("line={} default match={ok}", self.line);
-            if ok {
+        match &self.test {
+            Test::Clear => {
+                // handle clear and default tests
+                trace!("line={} clear", self.line);
+                state.clear_continuation_level(&self.continuation_level());
+                Ok(true)
+            }
+            Test::Name(name) => {
+                trace!("line={} running rule {name}", self.line);
                 if let Some(msg) = self.message.as_ref() {
                     magic.push_message(msg.format_with(None));
                 }
-                state.set_continuation_level(self.continuation_level());
+                Ok(true)
             }
 
-            return Ok(ok);
-        }
+            Test::Use(switch_endianness, rule_name) => {
+                trace!(
+                    "line={} use {rule_name} switch_endianness={switch_endianness}",
+                    self.line
+                );
 
-        if matches!(self.test, Test::Indirect) {
-            let Some(offset) = self.resolve_offset(haystack, last_level_offset)? else {
-                return Ok(false);
-            };
+                let dr: &DependencyRule = db
+                    .dependencies
+                    .get(rule_name)
+                    .ok_or(Error::MissingRule(rule_name.clone()))?;
 
-            for r in db.rules.iter() {
-                r.magic(
+                if let Some(msg) = self.message.as_ref() {
+                    magic.push_message(msg.format_with(None));
+                }
+
+                dr.rule.magic(
                     magic,
-                    Some(offset),
+                    base_offset,
+                    Some(offset + start_offset.unwrap_or_default()),
                     haystack,
                     db,
-                    false,
-                    depth.wrapping_add(1),
+                    *switch_endianness,
+                    depth.saturating_add(1),
                 )?;
+
+                Ok(false)
             }
 
-            return Ok(false);
-        }
+            Test::Indirect(m) => {
+                trace!("line={} indirect mods={:?} offset={offset}", self.line, m);
 
-        let i = opt_start_offset
-            .map(|so| match so {
-                Offset::Direct(DirOffset::Start(s)) => s as i64,
-                // FIXME: this is relative to previous match so we need to carry up this information
-                Offset::Direct(DirOffset::LastUpper(_)) => {
-                    // offset from last upper is resolved upstream in use test
-                    panic!("this should never happen")
-                }
-                Offset::Direct(DirOffset::End(e)) => e,
-                Offset::Indirect(_) => {
-                    // indirect offset is resolved upstream when use test
-                    panic!("this should never happen")
-                }
-            })
-            .unwrap_or_default();
-
-        match self.offset {
-            Offset::Direct(DirOffset::Start(s)) => haystack.seek(SeekFrom::Start(s + i as u64))?,
-            // FIXME: this is relative to previous match so we need to carry up this information
-            Offset::Direct(DirOffset::LastUpper(c)) => haystack.seek(SeekFrom::Start(
-                (i + c + last_level_offset.unwrap_or_default() as i64) as u64,
-            ))?,
-            Offset::Direct(DirOffset::End(e)) => haystack.seek(SeekFrom::End(e + i))?,
-            Offset::Indirect(io) => {
-                let Some(o) = io.get_offset(haystack, last_level_offset)? else {
-                    return Ok(false);
+                let base_offset = if m.contains(IndirectMod::Relative) {
+                    Some(offset)
+                } else {
+                    None
                 };
 
-                haystack.seek(SeekFrom::Start(o + i as u64))?
-            }
-        };
-
-        let mut trace_msg = None;
-
-        if enabled!(Level::DEBUG) {
-            trace_msg = Some(vec![format!(
-                "line={} stream_offset={} ",
-                self.line,
-                haystack.stream_position().unwrap_or_default()
-            )])
-        }
-
-        // FIXME: we may have a way to optimize here. In case we do a Any
-        // test and we don't use the value to format the message, we don't
-        // need to read the value.
-        if let Ok(tv) = self
-            .test
-            .read_test_value(haystack, switch_endianness)
-            .inspect_err(|e| trace!("line={} error while reading test value: {e}", self.line))
-        {
-            // we need to adjust stream offset if this is a regex test since we read beyond the match
-            let adjust_stream_offset = matches!(&self.test, Test::Regex(_));
-
-            trace_msg
-                .as_mut()
-                .map(|v| v.push(format!("test={:?}", self.test)));
-
-            let match_res = self.test.match_value(&tv);
-
-            trace_msg.as_mut().map(|v| {
-                v.push(format!(
-                    "message=\"{}\" match={}",
-                    self.message
-                        .as_ref()
-                        .map(|fs| fs.to_string())
-                        .unwrap_or_default(),
-                    match_res.is_some()
-                ))
-            });
-
-            // trace message
-            if enabled!(Level::DEBUG) && !enabled!(Level::TRACE) && match_res.is_some() {
-                trace_msg.map(|m| debug!("{}", m.join(" ")));
-            } else if enabled!(Level::TRACE) {
-                trace_msg.map(|m| trace!("{}", m.join(" ")));
-            }
-
-            if let Some(mr) = match_res {
-                if let Some(s) = self.message.as_ref() {
-                    magic.push_message(s.format_with(Some(&mr)));
+                for r in db.rules.iter() {
+                    r.magic(
+                        magic,
+                        base_offset,
+                        None,
+                        haystack,
+                        db,
+                        false,
+                        depth.saturating_add(1),
+                    )?;
                 }
-                // we re-ajust the stream offset only if we have a match
-                if adjust_stream_offset {
-                    // we need to compute offset before modifying haystack as
-                    // match_res holds a reference to the haystack, not satisfying
-                    // borrow checking rules
-                    let opt_adjusted_offset = if let MatchRes::Bytes(o, s) = mr {
-                        Some(o + s.len() as u64)
-                    } else {
-                        None
-                    };
 
-                    if let Some(o) = opt_adjusted_offset {
-                        haystack.seek(SeekFrom::Start(o))?;
+                Ok(false)
+            }
+
+            Test::Default => {
+                // default matches if nothing else at the continuation level matched
+                let ok = !state.get_continuation_level(&self.continuation_level());
+
+                trace!("line={} default match={ok}", self.line);
+                if ok {
+                    if let Some(msg) = self.message.as_ref() {
+                        magic.push_message(msg.format_with(None));
+                    }
+                    state.set_continuation_level(self.continuation_level());
+                }
+
+                Ok(ok)
+            }
+
+            _ => {
+                match self.offset {
+                    Offset::Indirect(_) => {
+                        // offset has been read from stream so we don't want
+                        // don't want to alter it, unless we decided to re-base
+                        // the stream after a relative indirect test
+                        haystack.seek(SeekFrom::Start(
+                            offset.saturating_add(base_offset.unwrap_or_default()),
+                        ))?;
+                    }
+                    _ => {
+                        // if offset is anything else than indirect we must
+                        // also jump to the start offset passed by a use test
+                        haystack.seek(SeekFrom::Start(
+                            offset
+                                .saturating_add(base_offset.unwrap_or_default())
+                                .saturating_add(start_offset.unwrap_or_default()),
+                        ))?;
                     }
                 }
-                state.set_continuation_level(self.continuation_level());
-                return Ok(true);
+
+                let mut trace_msg = None;
+
+                if enabled!(Level::DEBUG) {
+                    trace_msg = Some(vec![format!(
+                        "line={} stream_offset={} ",
+                        self.line,
+                        haystack.stream_position().unwrap_or_default()
+                    )])
+                }
+
+                // FIXME: we may have a way to optimize here. In case we do a Any
+                // test and we don't use the value to format the message, we don't
+                // need to read the value.
+                if let Ok(tv) = self
+                    .test
+                    .read_test_value(haystack, switch_endianness)
+                    .inspect_err(|e| {
+                        trace!("line={} error while reading test value: {e}", self.line)
+                    })
+                {
+                    // we need to adjust stream offset if this is a regex test since we read beyond the match
+                    let adjust_stream_offset = matches!(&self.test, Test::Regex(_));
+
+                    trace_msg
+                        .as_mut()
+                        .map(|v| v.push(format!("test={:?}", self.test)));
+
+                    let match_res = self.test.match_value(&tv);
+
+                    trace_msg.as_mut().map(|v| {
+                        v.push(format!(
+                            "message=\"{}\" match={}",
+                            self.message
+                                .as_ref()
+                                .map(|fs| fs.to_string())
+                                .unwrap_or_default(),
+                            match_res.is_some()
+                        ))
+                    });
+
+                    // trace message
+                    if enabled!(Level::DEBUG) && !enabled!(Level::TRACE) && match_res.is_some() {
+                        trace_msg.map(|m| debug!("{}", m.join(" ")));
+                    } else if enabled!(Level::TRACE) {
+                        trace_msg.map(|m| trace!("{}", m.join(" ")));
+                    }
+
+                    if let Some(mr) = match_res {
+                        if let Some(s) = self.message.as_ref() {
+                            magic.push_message(s.format_with(Some(&mr)));
+                        }
+                        // we re-ajust the stream offset only if we have a match
+                        if adjust_stream_offset {
+                            // we need to compute offset before modifying haystack as
+                            // match_res holds a reference to the haystack, not satisfying
+                            // borrow checking rules
+                            let opt_adjusted_offset = if let MatchRes::Bytes(o, s) = mr {
+                                Some(o + s.len() as u64)
+                            } else {
+                                None
+                            };
+
+                            if let Some(o) = opt_adjusted_offset {
+                                haystack.seek(SeekFrom::Start(o))?;
+                            }
+                        }
+                        state.set_continuation_level(self.continuation_level());
+                        return Ok(true);
+                    }
+                }
+
+                Ok(false)
             }
         }
-
-        Ok(false)
     }
 
     #[inline(always)]
@@ -1685,8 +1713,9 @@ impl EntryNode {
         &'r self,
         magic: &mut Magic<'r>,
         state: &mut MatchState,
+        base_offset: Option<u64>,
+        opt_start_offset: Option<u64>,
         last_level_offset: Option<u64>,
-        opt_start_offset: Option<Offset>,
         haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
@@ -1695,8 +1724,9 @@ impl EntryNode {
         let ok = self.entry.matches(
             magic,
             state,
-            last_level_offset,
+            base_offset,
             opt_start_offset,
+            last_level_offset,
             haystack,
             switch_endianness,
             db,
@@ -1721,8 +1751,9 @@ impl EntryNode {
                 e.matches(
                     magic,
                     state,
-                    Some(end_upper_level),
+                    base_offset,
                     opt_start_offset,
+                    Some(end_upper_level),
                     haystack,
                     db,
                     switch_endianness,
@@ -1760,7 +1791,8 @@ impl MagicRule {
     fn magic<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
-        opt_start_offset: Option<Offset>,
+        base_offset: Option<u64>,
+        opt_start_offset: Option<u64>,
         haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
@@ -1770,8 +1802,9 @@ impl MagicRule {
             .matches(
                 magic,
                 &mut MatchState::empty(),
-                None,
+                base_offset,
                 opt_start_offset,
+                None,
                 haystack,
                 db,
                 switch_endianness,
@@ -1926,7 +1959,7 @@ impl MagicDb {
         // using a BufReader to gain speed
         for r in self.rules.iter() {
             let mut magic = Magic::default();
-            r.magic(&mut magic, None, haystack, &self, false, 0)?;
+            r.magic(&mut magic, None, None, haystack, &self, false, 0)?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
