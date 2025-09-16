@@ -293,7 +293,11 @@ where
         Ok(())
     }
 
-    pub fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
+    pub fn read_until_any_delim_or_limit(
+        &mut self,
+        delims: &[u8],
+        limit: u64,
+    ) -> Result<&[u8], io::Error> {
         let limit = min(self.max_size, limit);
         let start = self.stream_pos;
         let mut end = 0;
@@ -308,7 +312,7 @@ where
 
                 end += 1;
 
-                if *b == byte {
+                if delims.contains(b) {
                     // read_until includes delimiter
                     break 'outer;
                 }
@@ -321,6 +325,10 @@ where
         }
 
         self.read_exact_range(start..start + end)
+    }
+
+    pub fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
+        self.read_until_any_delim_or_limit(&[byte], limit)
     }
 
     // limit is expressed in numbers of utf16 chars
