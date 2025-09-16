@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf, time::Instant};
+use std::{borrow::Cow, fs::File, path::PathBuf, time::Instant};
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
@@ -91,7 +91,7 @@ fn main() -> Result<(), anyhow::Error> {
             let start = Instant::now();
             for rule in o.rules {
                 if rule.is_dir() {
-                    let wo = WalkOptions::new().files().max_depth(1);
+                    let wo = WalkOptions::new().files().max_depth(1).sort(true);
                     for p in wo.walk(rule).flatten() {
                         info!("loading magic rule: {}", p.to_string_lossy());
                         let magic = MagicFile::open(&p).inspect_err(|e| {
@@ -112,53 +112,56 @@ fn main() -> Result<(), anyhow::Error> {
             }
             println!("Time parse rule files: {:?}", start.elapsed());
 
-            for f in o.files {
-                let start = Instant::now();
-                let Ok(mut haystack) = LazyCache::<File>::open(&f, 4096, FILE_BYTES_MAX as u64 * 4)
-                    .inspect_err(|e| error!("cannot open file={}: {e}", f.to_string_lossy()))
-                else {
-                    continue;
-                };
+            let wo = WalkOptions::new().files().sort(true);
 
-                let Ok(mut magics) = db.magic(&mut haystack).inspect_err(|e| {
-                    error!("failed to get magic file={}: {e}", f.to_string_lossy())
-                }) else {
-                    continue;
-                };
-
-                if o.all {
-                    // we sort only if needed
-                    magics.sort_by(|a, b| b.0.cmp(&a.0));
-                    for (strength, magic) in magics {
-                        println!(
-                            "file:{} strength:{strength} mime:{} magic:{}",
-                            f.to_string_lossy(),
-                            magic.mimetype(),
-                            magic.message()
+            for item in o.files {
+                for f in wo.clone().walk(item).flatten() {
+                    let start = Instant::now();
+                    let Ok(mut haystack) =
+                        LazyCache::<File>::open(&f, 4096, FILE_BYTES_MAX as u64 * 2).inspect_err(
+                            |e| error!("cannot open file={}: {e}", f.to_string_lossy()),
                         )
-                    }
-                } else {
-                    let magic = if let Some(magic) = magics.first() {
-                        // cannot panic as magics isn't empty
-                        let mut max = magic;
-                        for magic in magics.iter().skip(1) {
-                            if magic.0 > max.0 {
-                                max = magic
-                            }
-                        }
-                        Some(max)
-                    } else {
-                        None
+                    else {
+                        continue;
                     };
 
-                    if let Some((strength, magic)) = magic {
-                        println!(
-                            "time:{:?} file:{} strength:{strength} mime:{} magic:{}",
-                            start.elapsed().as_nanos(),
-                            f.to_string_lossy(),
-                            magic.mimetype(),
-                            magic.message()
-                        )
+                    if o.all {
+                        let Ok(mut magics) = db.magic_all(&mut haystack).inspect_err(|e| {
+                            error!("failed to get magic file={}: {e}", f.to_string_lossy())
+                        }) else {
+                            continue;
+                        };
+                        // we sort only if needed
+                        magics.sort_by(|a, b| b.0.cmp(&a.0));
+                        for (strength, magic) in magics {
+                            println!(
+                                "file:{} source:{} strength:{strength} mime:{} magic:{}",
+                                f.to_string_lossy(),
+                                magic.source().unwrap_or(&Cow::Borrowed("unknown")),
+                                magic.mimetype(),
+                                magic.message()
+                            )
+                        }
+                    } else {
+                        let Ok(magic) = db.magic_first(&mut haystack).inspect_err(|e| {
+                            error!("failed to get magic file={}: {e}", f.to_string_lossy())
+                        }) else {
+                            continue;
+                        };
+
+                        if let Some(magic) = magic {
+                            let elapsed = start.elapsed();
+                            println!(
+                                "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",
+                                elapsed.as_nanos(),
+                                elapsed,
+                                f.to_string_lossy(),
+                                magic.source().unwrap_or(&Cow::Borrowed("unknown")),
+                                magic.strength().unwrap_or_default(),
+                                magic.mimetype(),
+                                magic.message()
+                            )
+                        }
                     }
                 }
             }

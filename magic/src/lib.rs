@@ -9,6 +9,7 @@ use pest_derive::Parser;
 use regex::bytes::{self, Regex};
 use std::{
     borrow::Cow,
+    char::REPLACEMENT_CHARACTER,
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
@@ -493,6 +494,7 @@ struct RegexTest {
     // this is actually a search test
     // converted into a regex
     search: bool,
+    binary: bool,
 }
 
 impl From<RegexTest> for Test {
@@ -521,6 +523,7 @@ struct StringTest {
     cmp_op: CmpOp,
     length: Option<usize>,
     mods: FlagSet<StringMod>,
+    binary: bool,
 }
 
 impl From<StringTest> for Test {
@@ -537,6 +540,7 @@ struct SearchTest {
     str_mods: FlagSet<StringMod>,
     // FIXME: handle all re mods
     re_mods: FlagSet<ReMod>,
+    binary: bool,
 }
 
 impl From<SearchTest> for Test {
@@ -756,6 +760,7 @@ impl Test {
                     mods: s.re_mods,
                     str_mods: s.str_mods,
                     search: true,
+                    binary: s.binary,
                 }
                 .into()
             }
@@ -779,6 +784,7 @@ impl Test {
                         mods: FlagSet::empty(),
                         str_mods: st.mods,
                         search: false,
+                        binary: st.binary,
                     }
                     .into()
                 } else {
@@ -793,6 +799,7 @@ impl Test {
     fn read_test_value<'haystack, R: Read + Seek>(
         &self,
         haystack: &'haystack mut LazyCache<R>,
+        stream_kind: &StreamKind,
         switch_endianness: bool,
     ) -> Result<TestValue<'haystack>, Error> {
         let test_value_offset = haystack.lazy_stream_position();
@@ -812,8 +819,9 @@ impl Test {
                     let read = match t.cmp_op {
                         CmpOp::Eq => haystack.read_exact(t.str.len() as u64)?,
                         CmpOp::Lt | CmpOp::Gt => {
-                            let read = haystack.read_until_or_limit(b'\0', 8092)?;
-                            if read.len() > 0 {
+                            let read = haystack.read_until_any_delim_or_limit(b"\n\0", 8092)?;
+
+                            if read.ends_with(b"\0") || read.ends_with(b"\n") {
                                 &read[..read.len() - 1]
                             } else {
                                 read
@@ -870,9 +878,15 @@ impl Test {
             Self::Any(t) => match t {
                 Any::String => {
                     // FIXME: Any must carry  StringTest information so we must read accordingly
-                    let read = haystack.read_until_or_limit(b'\0', 8192)?;
+                    let read = haystack.read_until_any_delim_or_limit(b"\0\n", 8192)?;
+                    // we don't take last byte if it matches end of string
+                    let bytes = if read.ends_with(b"\0") || read.ends_with(b"\n") {
+                        &read[..read.len() - 1]
+                    } else {
+                        read
+                    };
 
-                    Ok(TestValue::Bytes(test_value_offset, read))
+                    Ok(TestValue::Bytes(test_value_offset, bytes))
                 }
                 Any::PString => {
                     let slen = read_le!(haystack, u8) as usize;
@@ -1037,11 +1051,49 @@ impl Test {
     }
 
     //FIXME: complete with all possible operators
+    #[inline(always)]
     fn cmp_op(&self) -> Option<CmpOp> {
         match self {
             Self::Scalar(s) => Some(s.cmp_op),
             _ => None,
         }
+    }
+
+    #[inline(always)]
+    fn is_binary(&self) -> bool {
+        match self {
+            Self::Any(any) => match any {
+                Any::PString => true,
+                Any::String => true,
+                Any::String16(_) => true,
+                Any::Scalar(_) => true,
+            },
+            Self::Name(_) => true,
+            Self::Use(_, _) => true,
+            Self::Scalar(_) => true,
+            Self::String(t) => t.binary || t.mods.contains(StringMod::ForceBin),
+            Self::Search(search_test) => {
+                search_test.str_mods.contains(StringMod::ForceBin)
+                    || search_test.re_mods.contains(ReMod::ForceBinary)
+                    || search_test.binary
+            }
+            Self::PString(_) => true,
+            Self::Regex(regex_test) => {
+                regex_test.str_mods.contains(StringMod::ForceBin)
+                    || regex_test.mods.contains(ReMod::ForceBinary)
+                    || regex_test.binary
+            }
+            Self::Clear => true,
+            Self::Default => true,
+            Self::Indirect(_) => true,
+            Self::String16(_) => true,
+            Self::Der => true,
+        }
+    }
+
+    #[inline(always)]
+    fn is_text(&self) -> bool {
+        !self.is_binary()
     }
 }
 
@@ -1322,7 +1374,9 @@ impl Match {
     #[inline]
     fn matches<'a, R: Read + Seek>(
         &'a self,
+        source: Option<&str>,
         magic: &mut Magic<'a>,
+        stream_kind: &StreamKind,
         state: &mut MatchState,
         base_offset: Option<u64>,
         start_offset: Option<u64>,
@@ -1332,6 +1386,8 @@ impl Match {
         db: &'a MagicDb,
         depth: usize,
     ) -> Result<bool, Error> {
+        let source = source.unwrap_or("unknown");
+
         if depth >= MAX_RECURSION {
             return Err(Error::MaximumRecursion(MAX_RECURSION));
         }
@@ -1345,12 +1401,12 @@ impl Match {
         match &self.test {
             Test::Clear => {
                 // handle clear and default tests
-                trace!("line={} clear", self.line);
+                trace!("source={source} line={} clear", self.line);
                 state.clear_continuation_level(&self.continuation_level());
                 Ok(true)
             }
             Test::Name(name) => {
-                trace!("line={} running rule {name}", self.line);
+                trace!("source={source} line={} running rule {name}", self.line);
                 if let Some(msg) = self.message.as_ref() {
                     magic.push_message(msg.format_with(None));
                 }
@@ -1359,7 +1415,7 @@ impl Match {
 
             Test::Use(switch_endianness, rule_name) => {
                 trace!(
-                    "line={} use {rule_name} switch_endianness={switch_endianness}",
+                    "source={source} line={} use {rule_name} switch_endianness={switch_endianness}",
                     self.line
                 );
 
@@ -1374,6 +1430,7 @@ impl Match {
 
                 dr.rule.magic(
                     magic,
+                    stream_kind,
                     base_offset,
                     Some(offset + start_offset.unwrap_or_default()),
                     haystack,
@@ -1386,7 +1443,10 @@ impl Match {
             }
 
             Test::Indirect(m) => {
-                trace!("line={} indirect mods={:?} offset={offset}", self.line, m);
+                trace!(
+                    "source={source} line={} indirect mods={:?} offset={offset}",
+                    self.line, m
+                );
 
                 let base_offset = if m.contains(IndirectMod::Relative) {
                     Some(offset)
@@ -1394,9 +1454,10 @@ impl Match {
                     None
                 };
 
-                for r in db.rules.iter() {
+                for r in db.binary_rules.iter().chain(db.text_rules.iter()) {
                     r.magic(
                         magic,
+                        stream_kind,
                         base_offset,
                         None,
                         haystack,
@@ -1413,7 +1474,7 @@ impl Match {
                 // default matches if nothing else at the continuation level matched
                 let ok = !state.get_continuation_level(&self.continuation_level());
 
-                trace!("line={} default match={ok}", self.line);
+                trace!("source={source} line={} default match={ok}", self.line);
                 if ok {
                     if let Some(msg) = self.message.as_ref() {
                         magic.push_message(msg.format_with(None));
@@ -1449,7 +1510,7 @@ impl Match {
 
                 if enabled!(Level::DEBUG) {
                     trace_msg = Some(vec![format!(
-                        "line={} stream_offset={} ",
+                        "source={source} line={} stream_offset={} ",
                         self.line,
                         haystack.stream_position().unwrap_or_default()
                     )])
@@ -1460,9 +1521,12 @@ impl Match {
                 // need to read the value.
                 if let Ok(tv) = self
                     .test
-                    .read_test_value(haystack, switch_endianness)
+                    .read_test_value(haystack, stream_kind, switch_endianness)
                     .inspect_err(|e| {
-                        trace!("line={} error while reading test value: {e}", self.line)
+                        trace!(
+                            "source={source} line={} error while reading test value: {e}",
+                            self.line
+                        )
                     })
                 {
                     // we need to adjust stream offset if this is a regex test since we read beyond the match
@@ -1711,8 +1775,10 @@ impl EntryNode {
 
     fn matches<'r, R: Read + Seek>(
         &'r self,
+        source: Option<&str>,
         magic: &mut Magic<'r>,
         state: &mut MatchState,
+        stream_kind: &StreamKind,
         base_offset: Option<u64>,
         opt_start_offset: Option<u64>,
         last_level_offset: Option<u64>,
@@ -1722,7 +1788,9 @@ impl EntryNode {
         depth: usize,
     ) -> Result<(), Error> {
         let ok = self.entry.matches(
+            source,
             magic,
+            stream_kind,
             state,
             base_offset,
             opt_start_offset,
@@ -1738,6 +1806,8 @@ impl EntryNode {
                 magic.insert_mimetype(Cow::Borrowed(mimetype));
             }
 
+            // FIXME: probably strength modifier applies on the magic's
+            // strength directly.
             let strength = match self.strength_mod.as_ref() {
                 Some(sm) => sm.apply(self.entry.strength()),
                 None => self.entry.strength(),
@@ -1749,8 +1819,10 @@ impl EntryNode {
 
             for e in self.children.iter() {
                 e.matches(
+                    source,
                     magic,
                     state,
+                    stream_kind,
                     base_offset,
                     opt_start_offset,
                     Some(end_upper_level),
@@ -1768,7 +1840,47 @@ impl EntryNode {
 
 #[derive(Debug, Clone)]
 pub struct MagicRule {
+    source: Option<String>,
     entries: EntryNode,
+}
+
+impl MagicRule {
+    fn magic<'r, R: Read + Seek>(
+        &'r self,
+        magic: &mut Magic<'r>,
+        stream_kind: &StreamKind,
+        base_offset: Option<u64>,
+        opt_start_offset: Option<u64>,
+        haystack: &mut LazyCache<R>,
+        db: &'r MagicDb,
+        switch_endianness: bool,
+        depth: usize,
+    ) -> Result<(), Error> {
+        self.entries
+            .matches(
+                self.source.as_ref().map(|s| s.as_str()),
+                magic,
+                &mut MatchState::empty(),
+                stream_kind,
+                base_offset,
+                opt_start_offset,
+                None,
+                haystack,
+                db,
+                switch_endianness,
+                depth,
+            )
+            .map(|_| ())
+    }
+
+    fn is_text(&self) -> bool {
+        self.entries.entry.test.is_text()
+            && self.entries.children.iter().all(|e| e.entry.test.is_text())
+    }
+
+    fn is_binary(&self) -> bool {
+        !self.is_text()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1787,33 +1899,6 @@ impl DependencyRule {
     }
 }
 
-impl MagicRule {
-    fn magic<'r, R: Read + Seek>(
-        &'r self,
-        magic: &mut Magic<'r>,
-        base_offset: Option<u64>,
-        opt_start_offset: Option<u64>,
-        haystack: &mut LazyCache<R>,
-        db: &'r MagicDb,
-        switch_endianness: bool,
-        depth: usize,
-    ) -> Result<(), Error> {
-        self.entries
-            .matches(
-                magic,
-                &mut MatchState::empty(),
-                base_offset,
-                opt_start_offset,
-                None,
-                haystack,
-                db,
-                switch_endianness,
-                depth,
-            )
-            .map(|_| ())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct MagicFile {
     rules: Vec<MagicRule>,
@@ -1822,6 +1907,19 @@ pub struct MagicFile {
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 struct ContinuationLevel(u8);
+
+#[derive(Debug, PartialEq, Eq)]
+enum StreamKind {
+    Binary,
+    AsciiText,
+    Utf8Text,
+}
+
+impl StreamKind {
+    const fn is_text(&self) -> bool {
+        matches!(self, StreamKind::AsciiText | StreamKind::Utf8Text)
+    }
+}
 
 #[derive(Debug)]
 struct MatchState {
@@ -1860,21 +1958,30 @@ impl MatchState {
 
 #[derive(Debug, Default)]
 pub struct Magic<'m> {
+    source: Option<Cow<'m, str>>,
     message: Vec<Cow<'m, str>>,
     mime: Option<Cow<'m, str>>,
     strength: Option<u64>,
 }
 
 impl<'m> Magic<'m> {
+    fn with_source(source: Option<&'m str>) -> Self {
+        Self {
+            source: source.map(|s| Cow::Borrowed(s)),
+            ..Default::default()
+        }
+    }
+
     fn into_static(self) -> Magic<'static> {
         Magic {
+            source: self.source.map(|s| Cow::Owned(s.into_owned())),
             message: self
                 .message
                 .into_iter()
                 .map(Cow::into_owned)
                 .map(Cow::Owned)
                 .collect(),
-            mime: self.mime.map(|cow| Cow::Owned(cow.into_owned())),
+            mime: self.mime.map(|m| Cow::Owned(m.into_owned())),
             strength: self.strength,
         }
     }
@@ -1928,6 +2035,14 @@ impl<'m> Magic<'m> {
     pub fn is_empty(&self) -> bool {
         self.message.is_empty() && self.mime.is_none() && self.strength.is_none()
     }
+
+    pub fn strength(&self) -> Option<u64> {
+        self.strength
+    }
+
+    pub fn source(&self) -> Option<&Cow<'m, str>> {
+        self.source.as_ref()
+    }
 }
 
 impl MagicFile {
@@ -1938,8 +2053,27 @@ impl MagicFile {
 
 #[derive(Debug, Default, Clone)]
 pub struct MagicDb {
-    rules: Vec<MagicRule>,
+    binary_rules: Vec<MagicRule>,
+    text_rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
+}
+
+#[inline(always)]
+fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
+    let s = String::from_utf8_lossy(stream.as_ref());
+    let count = s.chars().count();
+    let mut is_ascii = true;
+    for c in s.chars().take(count.saturating_sub(1)) {
+        if c == REPLACEMENT_CHARACTER {
+            return StreamKind::Binary;
+        }
+        is_ascii &= c.is_ascii()
+    }
+    if is_ascii {
+        StreamKind::AsciiText
+    } else {
+        StreamKind::Utf8Text
+    }
 }
 
 impl MagicDb {
@@ -1948,20 +2082,78 @@ impl MagicDb {
     }
 
     pub fn load(&mut self, mf: MagicFile) -> Result<&mut Self, Error> {
-        self.rules.extend(mf.rules);
+        // it seems rules are evaluated in their reverse definition order
+        for rule in mf.rules.into_iter() {
+            if rule.is_binary() {
+                self.binary_rules.push(rule);
+            } else {
+                self.text_rules.push(rule)
+            }
+        }
         self.dependencies.extend(mf.dependencies);
         Ok(self)
     }
 
-    pub fn magic<R: Read + Seek>(
+    pub fn magic_first<R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+    ) -> Result<Option<Magic<'_>>, Error> {
+        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+
+        let iter = self
+            .binary_rules
+            .iter()
+            .map(|r| (true, r))
+            .chain(self.text_rules.iter().map(|r| (false, r)));
+
+        for (bin, r) in iter {
+            if !bin && matches!(stream_kind, StreamKind::Binary) {
+                break;
+            } else if bin && stream_kind.is_text() {
+                continue;
+            }
+
+            let mut magic = Magic::with_source(r.source.as_ref().map(|s| s.as_str()));
+
+            r.magic(
+                &mut magic,
+                &stream_kind,
+                None,
+                None,
+                haystack,
+                &self,
+                false,
+                0,
+            )?;
+
+            if !magic.message.is_empty() {
+                return Ok(Some(magic));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub fn magic_all<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let mut out = Vec::new();
-        // using a BufReader to gain speed
-        for r in self.rules.iter() {
-            let mut magic = Magic::default();
-            r.magic(&mut magic, None, None, haystack, &self, false, 0)?;
+        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+
+        for rule in self.binary_rules.iter().chain(self.text_rules.iter()) {
+            let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
+
+            rule.magic(
+                &mut magic,
+                &stream_kind,
+                None,
+                None,
+                haystack,
+                &self,
+                false,
+                0,
+            )?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
@@ -1970,6 +2162,15 @@ impl MagicDb {
         }
 
         Ok(out)
+    }
+
+    pub fn magic_best<R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+    ) -> Result<Option<Magic<'_>>, Error> {
+        let mut magics = self.magic_all(haystack)?;
+        magics.sort_by(|a, b| b.0.cmp(&a.0));
+        return Ok(magics.into_iter().map(|(_, m)| m).next());
     }
 }
 
@@ -1984,13 +2185,13 @@ mod tests {
     fn first_magic(rule: &str, content: &[u8]) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
         md.load(
-            FileMagicParser::parse_str(rule)
+            FileMagicParser::parse_str(rule, None)
                 .inspect_err(|e| eprintln!("{e}"))
                 .unwrap(),
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
-        let v = md.magic(&mut reader)?;
+        let v = md.magic_all(&mut reader)?;
         Ok(v.into_iter().next().map(|(_, m)| m.into_static()))
     }
 
@@ -2006,7 +2207,7 @@ mod tests {
 
     macro_rules! parse_assert {
         ($rule:literal) => {
-            FileMagicParser::parse_str($rule)
+            FileMagicParser::parse_str($rule, None)
                 .inspect_err(|e| eprintln!("{e}"))
                 .unwrap();
         };
@@ -2186,8 +2387,10 @@ mod tests {
         assert_magic_match!("0 ubyte|0x0f 0xff bitor works", b"\xf0");
         assert_magic_match!("0 ubyte^0x0f 0xf0 bitxor works", b"\xff");
 
-        FileMagicParser::parse_str("0 ubyte%0 mod by zero").expect_err("expect div by zero error");
-        FileMagicParser::parse_str("0 ubyte/0 div by zero").expect_err("expect div by zero error");
+        FileMagicParser::parse_str("0 ubyte%0 mod by zero", None)
+            .expect_err("expect div by zero error");
+        FileMagicParser::parse_str("0 ubyte/0 div by zero", None)
+            .expect_err("expect div by zero error");
     }
 
     #[test]

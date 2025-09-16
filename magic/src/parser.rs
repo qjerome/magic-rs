@@ -119,13 +119,17 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
     result
 }
 
-pub(crate) fn unescape_string_to_vec(s: &str) -> Vec<u8> {
+pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
     let mut result = Vec::new();
     let mut chars = s.bytes().peekable();
+    // this flags wether we replaced some binary values encoded in the
+    // pattern. It seems libmagic doesn't care if the encoded value is
+    // actually a valid ASCII character.
+    let mut binary = false;
     while let Some(c) = chars.next() {
         // string termination
         if c == b'\0' {
-            return result;
+            return (binary, result);
         }
 
         if c == b'\\' {
@@ -166,6 +170,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> Vec<u8> {
                         }
 
                         if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
+                            binary = true;
                             result.push(hex);
                         } else {
                             result.push(c as u8); // Push the backslash if the hex sequence is invalid
@@ -187,6 +192,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> Vec<u8> {
                         }
                         //let octal_str: String = chars.by_ref().take(1).collect();
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
+                            binary = true;
                             result.push(octal);
                         } else {
                             result.push(c as u8); // Push the backslash if the octal sequence is invalid
@@ -204,7 +210,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> Vec<u8> {
         }
     }
 
-    result
+    (binary, result)
 }
 
 #[inline]
@@ -338,7 +344,10 @@ impl ScalarDataType {
 }
 
 impl FileMagicParser {
-    pub(crate) fn parse_str<S: AsRef<str>>(s: S) -> Result<MagicFile, Error> {
+    pub(crate) fn parse_str<S: AsRef<str>>(
+        s: S,
+        source: Option<String>,
+    ) -> Result<MagicFile, Error> {
         let pairs = FileMagicParser::parse(Rule::file, s.as_ref()).map_err(Box::new)?;
 
         let mut rules = vec![];
@@ -347,10 +356,10 @@ impl FileMagicParser {
             for rule in file.into_inner() {
                 match rule.as_rule() {
                     Rule::rule => {
-                        rules.push(MagicRule::from_pair(rule)?);
+                        rules.push(MagicRule::from_pair(rule, source.clone())?);
                     }
                     Rule::rule_dependency => {
-                        let d = DependencyRule::from_pair(rule)?;
+                        let d = DependencyRule::from_pair(rule, source.clone())?;
                         dependencies.insert(d.name.clone(), d);
                     }
                     Rule::EOI => {}
@@ -366,8 +375,13 @@ impl FileMagicParser {
     }
 
     pub(crate) fn parse_file<P: AsRef<Path>>(p: P) -> Result<MagicFile, Error> {
-        let s = fs::read_to_string(p)?;
-        Self::parse_str(s)
+        let s = fs::read_to_string(&p)?;
+        Self::parse_str(
+            s,
+            p.as_ref()
+                .file_name()
+                .map(|os| os.to_string_lossy().to_string()),
+        )
     }
 }
 
@@ -645,6 +659,7 @@ impl StringTest {
     fn from_pair_with_slice(
         pair: Pair<'_, Rule>,
         str: &[u8],
+        binary: bool,
         cmp_op: CmpOp,
     ) -> Result<Self, Error> {
         let mut length = None;
@@ -662,12 +677,13 @@ impl StringTest {
             cmp_op,
             length,
             mods,
+            binary,
         })
     }
 }
 
 impl SearchTest {
-    fn from_pair_with_slice(pair: Pair<'_, Rule>, str: &[u8]) -> Self {
+    fn from_pair_with_slice(pair: Pair<'_, Rule>, str: &[u8], binary: bool) -> Self {
         let mut length = None;
         let mut str_mods: FlagSet<StringMod> = FlagSet::empty();
         let mut re_mods: FlagSet<ReMod> = FlagSet::empty();
@@ -699,12 +715,13 @@ impl SearchTest {
             n_pos: length,
             str_mods,
             re_mods,
+            binary,
         }
     }
 }
 
 impl RegexTest {
-    fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str) -> Result<Self, Error> {
+    fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str, binary: bool) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
         let str_mods = FlagSet::empty();
@@ -740,6 +757,7 @@ impl RegexTest {
             mods,
             str_mods,
             search: false,
+            binary,
         })
     }
 }
@@ -834,19 +852,16 @@ impl Test {
                 assert_eq!(test_value.as_rule(), Rule::string_value);
 
                 match test_type.as_rule() {
-                    Rule::search => SearchTest::from_pair_with_slice(
-                        test_type,
-                        &unescape_string_to_vec(&test_value.as_str()),
-                        //test_value.as_str(),
-                    )
-                    .into(),
+                    Rule::search => {
+                        let (bin, v) = unescape_string_to_vec(&test_value.as_str());
+                        SearchTest::from_pair_with_slice(test_type, &v, bin).into()
+                    }
 
-                    Rule::regex => RegexTest::from_pair_with_re(
-                        test_type,
-                        &prepare_bytes_re(&unescape_string_to_vec(test_value.as_str()), false),
-                        //test_value.as_str(),
-                    )?
-                    .into(),
+                    Rule::regex => {
+                        let (bin, s) = unescape_string_to_vec(test_value.as_str());
+                        RegexTest::from_pair_with_re(test_type, &prepare_bytes_re(&s, false), bin)?
+                            .into()
+                    }
                     _ => unimplemented!(),
                 }
             }
@@ -875,16 +890,20 @@ impl Test {
 
                 match test_value.as_rule() {
                     Rule::string_value => match test_type.as_rule() {
-                        Rule::string => StringTest::from_pair_with_slice(
-                            test_type,
-                            &unescape_string_to_vec(test_value.as_str()),
-                            cmp_op.unwrap_or(CmpOp::Eq),
-                        )?
-                        .into(),
+                        Rule::string => {
+                            let (bin, s) = unescape_string_to_vec(test_value.as_str());
+                            StringTest::from_pair_with_slice(
+                                test_type,
+                                &s,
+                                bin,
+                                cmp_op.unwrap_or(CmpOp::Eq),
+                            )?
+                            .into()
+                        }
 
                         Rule::pstring => Self::PString(
                             // FIXME: fix unwrap
-                            str::from_utf8(&unescape_string_to_vec(test_value.as_str()))
+                            str::from_utf8(&unescape_string_to_vec(test_value.as_str()).1)
                                 .unwrap()
                                 .into(),
                         ),
@@ -907,6 +926,7 @@ impl Test {
                             orig = Some(unescape_string_to_string(p.as_str()));
                             str = Some(
                                 unescape_string_to_vec(p.as_str())
+                                    .1
                                     .iter()
                                     .map(|b| *b as u16)
                                     .collect(),
@@ -1119,7 +1139,7 @@ impl Match {
 }
 
 impl DependencyRule {
-    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+    fn from_pair(pair: Pair<'_, Rule>, source: Option<String>) -> Result<Self, Error> {
         let mut pairs = pair.clone().into_inner();
 
         let name_entry = pairs.next().expect("expecting name entry");
@@ -1134,13 +1154,13 @@ impl DependencyRule {
 
         Ok(Self {
             name,
-            rule: MagicRule::from_pair(pair)?,
+            rule: MagicRule::from_pair(pair, source)?,
         })
     }
 }
 
 impl MagicRule {
-    pub(crate) fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+    pub(crate) fn from_pair(pair: Pair<'_, Rule>, source: Option<String>) -> Result<Self, Error> {
         let mut items = vec![];
         for pair in pair.into_inner() {
             match pair.as_rule() {
@@ -1181,6 +1201,7 @@ impl MagicRule {
         }
 
         Ok(Self {
+            source,
             entries: EntryNode::from_entries(items),
         })
     }
@@ -1194,14 +1215,17 @@ mod test {
     #[test]
     fn test_unescape() {
         assert_eq!(
-            str::from_utf8(&unescape_string_to_vec(r#"\ hello"#)).unwrap(),
+            str::from_utf8(&unescape_string_to_vec(r#"\ hello"#).1).unwrap(),
             " hello"
         );
-        assert_eq!(unescape_string_to_vec(r#"hello\ world"#), b"hello world");
-        assert_eq!(unescape_string_to_vec(r#"\^[[:space:]]"#), b"^[[:space:]]");
-        assert_eq!(unescape_string_to_vec(r#"\x41"#), b"A");
-        assert_eq!(unescape_string_to_vec(r#"\xF\xA"#), b"\x0f\n");
-        assert_eq!(unescape_string_to_vec(r#"\101"#), b"A");
+        assert_eq!(unescape_string_to_vec(r#"hello\ world"#).1, b"hello world");
+        assert_eq!(
+            unescape_string_to_vec(r#"\^[[:space:]]"#).1,
+            b"^[[:space:]]"
+        );
+        assert_eq!(unescape_string_to_vec(r#"\x41"#).1, b"A");
+        assert_eq!(unescape_string_to_vec(r#"\xF\xA"#).1, b"\x0f\n");
+        assert_eq!(unescape_string_to_vec(r#"\101"#).1, b"A");
         println!(
             "{:?}",
             unescape_string_to_vec(r#"\1\0\0\0\0\0\0\300\0\2\0\0"#)
