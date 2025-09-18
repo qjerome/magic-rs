@@ -1513,7 +1513,10 @@ impl Match {
                 Ok(true)
             }
             Test::Name(name) => {
-                trace!("source={source} line={} running rule {name}", self.line);
+                trace!(
+                    "source={source} line={} running rule {name} switch_endianness={switch_endianness}",
+                    self.line
+                );
                 if let Some(msg) = self.message.as_ref() {
                     magic.push_message(msg.format_with(None));
                 }
@@ -1522,7 +1525,7 @@ impl Match {
 
             Test::Use(switch_endianness, rule_name) => {
                 trace!(
-                    "source={source} line={} use {rule_name} switch_endianness={switch_endianness}",
+                    "source={source} line={} use {rule_name} switch_endianness={flip_endianness}",
                     self.line
                 );
 
@@ -1551,7 +1554,7 @@ impl Match {
 
             Test::Indirect(m) => {
                 trace!(
-                    "source={source} line={} indirect mods={:?} offset={offset}",
+                    "source={source} line={} indirect mods={:?} offset={offset:#x}",
                     self.line, m
                 );
 
@@ -1605,7 +1608,7 @@ impl Match {
 
                 if enabled!(Level::DEBUG) {
                     trace_msg = Some(vec![format!(
-                        "source={source} line={} stream_offset={} ",
+                        "source={source} line={} stream_offset={:#x} ",
                         self.line,
                         haystack.stream_position().unwrap_or_default()
                     )])
