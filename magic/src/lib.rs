@@ -1523,11 +1523,14 @@ impl Match {
                 Ok(true)
             }
 
-            Test::Use(switch_endianness, rule_name) => {
+            Test::Use(flip_endianness, rule_name) => {
                 trace!(
                     "source={source} line={} use {rule_name} switch_endianness={flip_endianness}",
                     self.line
                 );
+
+                // switch_endianness must propagate down the rule call stack
+                let switch_endianness = switch_endianness ^ flip_endianness;
 
                 let dr: &DependencyRule = db
                     .dependencies
