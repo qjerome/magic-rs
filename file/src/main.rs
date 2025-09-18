@@ -118,9 +118,11 @@ fn main() -> Result<(), anyhow::Error> {
                 for f in wo.clone().walk(item).flatten() {
                     let start = Instant::now();
                     let Ok(mut haystack) =
-                        LazyCache::<File>::open(&f, 4096, FILE_BYTES_MAX as u64 * 2).inspect_err(
-                            |e| error!("cannot open file={}: {e}", f.to_string_lossy()),
-                        )
+                        LazyCache::<File>::open(&f, 4096, FILE_BYTES_MAX as u64 * 2)
+                            .inspect_err(|e| {
+                                error!("cannot open file={}: {e}", f.to_string_lossy())
+                            })
+                            .map(|lc| lc.with_header(2 * FILE_BYTES_MAX).unwrap())
                     else {
                         continue;
                     };
