@@ -16,6 +16,7 @@ where
     R: Read + Seek,
 {
     source: R,
+    header: Vec<u8>,
     chunks_lru: LruHashMap<u64, Vec<u8>>,
     chunks_map: HashMap<u64, u64>, // maps the chunks id to a larger chunk in LRU
     block_size: u64,
@@ -56,6 +57,7 @@ where
 
         Ok(Self {
             source: rs,
+            header: vec![],
             chunks_lru: LruHashMap::with_max_entries(cap as usize),
             chunks_map: HashMap::with_capacity(cap as usize),
             block_size,
@@ -64,6 +66,14 @@ where
             stream_pos: 0,
             pos_end,
         })
+    }
+
+    pub fn with_header(mut self, size: usize) -> Result<Self, io::Error> {
+        self.source.seek(SeekFrom::Start(0))?;
+        let mut buf = vec![0u8; min(self.pos_end as usize, size)];
+        self.source.read(buf.as_mut_slice())?;
+        self.header = buf;
+        Ok(self)
     }
 
     #[inline(always)]
@@ -230,6 +240,11 @@ where
         } else {
             range
         };
+
+        if range.start < self.header.len() as u64 && range.end <= self.header.len() as u64 {
+            self.seek(SeekFrom::Start(range.end))?;
+            return Ok(&self.header[range.start as usize..range.end as usize]);
+        }
 
         self.load_range_if_needed(range.clone())?;
         self.seek(SeekFrom::Start(range.end))?;
