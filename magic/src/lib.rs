@@ -1098,7 +1098,10 @@ impl Test {
                         }
                     }
 
-                    Self::Search(t) => return t.matches(&buf).map(|(p, m)| MatchRes::Bytes(p, m)),
+                    Self::Search(t) => {
+                        // the offset of the string is computed from the start of the buffer
+                        return t.matches(&buf).map(|(p, m)| MatchRes::Bytes(o + p, m));
+                    }
 
                     _ => unimplemented!(),
                 }
