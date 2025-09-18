@@ -532,6 +532,138 @@ impl From<StringTest> for Test {
     }
 }
 
+#[inline(always)]
+fn string_match<'str>(str: &'str [u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usize) {
+    let mut consumed = 0;
+    // we can do a simple string comparison
+    if mods.is_disjoint(
+        StringMod::UpperInsensitive
+            | StringMod::LowerInsensitive
+            | StringMod::FullWordMatch
+            | StringMod::CompactWhitespace
+            | StringMod::OptBlank,
+    ) {
+        // we check if target contains
+        if buf.starts_with(str) {
+            (true, str.len())
+        } else {
+            // FIXME: this is wrong
+            (false, 1)
+        }
+    } else {
+        let mut i_src = 0;
+        let mut iter = buf.iter().peekable();
+
+        macro_rules! consume_target {
+            () => {{
+                iter.next();
+                consumed += 1;
+            }};
+        }
+
+        macro_rules! continue_next_iteration {
+            () => {{
+                consume_target!();
+                i_src += 1;
+                continue;
+            }};
+        }
+
+        while let Some(&&b) = iter.peek() {
+            let Some(&ref_byte) = str.get(i_src) else {
+                break;
+            };
+
+            if mods.contains(StringMod::OptBlank) && (b == b' ' || ref_byte == b' ') {
+                if b == b' ' {
+                    // we ignore whitespace in target
+                    consume_target!();
+                }
+
+                if ref_byte == b' ' {
+                    // we ignore whitespace in test
+                    i_src += 1;
+                }
+
+                continue;
+            }
+
+            if mods.contains(StringMod::UpperInsensitive) {
+                //upper case characters in the magic match both lower and upper case characters in the target
+                if ref_byte.is_ascii_uppercase() && ref_byte == b.to_ascii_uppercase()
+                    || ref_byte == b
+                {
+                    continue_next_iteration!()
+                }
+            }
+
+            if mods.contains(StringMod::LowerInsensitive) {
+                if ref_byte.is_ascii_lowercase() && ref_byte == b.to_ascii_lowercase()
+                    || ref_byte == b
+                {
+                    continue_next_iteration!()
+                }
+            }
+
+            if mods.contains(StringMod::CompactWhitespace) && ref_byte == b' ' {
+                let mut src_blk = 0;
+                while let Some(b' ') = str.get(i_src) {
+                    src_blk += 1;
+                    i_src += 1;
+                }
+
+                let mut tgt_blk = 0;
+                while let Some(b' ') = iter.peek() {
+                    tgt_blk += 1;
+                    consume_target!();
+                }
+
+                if src_blk > tgt_blk {
+                    return (false, consumed);
+                }
+
+                continue;
+            }
+
+            if ref_byte == b {
+                continue_next_iteration!()
+            } else {
+                return (false, consumed);
+            }
+        }
+
+        if mods.contains(StringMod::FullWordMatch) {
+            if let Some(b) = iter.peek() {
+                if !b.is_ascii_whitespace() {
+                    return (false, consumed);
+                }
+            }
+        }
+
+        (true, consumed)
+    }
+}
+
+impl StringTest {
+    fn has_length_mod(&self) -> bool {
+        !self.mods.is_disjoint(
+            StringMod::UpperInsensitive
+                | StringMod::LowerInsensitive
+                | StringMod::FullWordMatch
+                | StringMod::CompactWhitespace
+                | StringMod::OptBlank,
+        )
+    }
+
+    fn matches(&self, buf: &[u8]) -> Option<&[u8]> {
+        if let (true, _) = string_match(&self.str, self.mods, buf) {
+            Some(&self.str)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SearchTest {
     str: Vec<u8>,
@@ -546,6 +678,36 @@ struct SearchTest {
 impl From<SearchTest> for Test {
     fn from(value: SearchTest) -> Self {
         Self::Search(value)
+    }
+}
+
+impl SearchTest {
+    fn matches<'buf>(&self, buf: &'buf [u8]) -> Option<(u64, &'buf [u8])> {
+        let mut i = 0;
+        while i < buf.len() {
+            if let Some(npos) = self.n_pos {
+                if i > npos {
+                    return None;
+                }
+            }
+
+            // we cannot match if the first character isn't the same
+            // so we accelerate the search by finding potential matches
+            while i < buf.len() && self.str.get(0) != buf.get(i) {
+                i += 1
+            }
+
+            let pos = i;
+            let (ok, consumed) = string_match(&self.str, self.str_mods, &buf[i..]);
+
+            if ok {
+                return Some((pos as u64, &buf[i..i + consumed]));
+            } else {
+                i += max(consumed, 1)
+            }
+        }
+
+        None
     }
 }
 
@@ -679,127 +841,10 @@ enum Test {
 }
 
 impl Test {
-    // we convert a string with mods into a regexp pattern
-    fn string_to_re_pattern(src: &str, mods: FlagSet<StringMod>, match_start: bool) -> String {
-        // we escape all regex related characters
-        let mut out = String::from(src);
-
-        if match_start {
-            // we insert start of expression test
-            out.insert(0, '^');
-        }
-
-        // any blank character is optional
-        let mut tmp = String::new();
-        let mut chars = out.chars().peekable();
-
-        while let Some(c) = chars.next() {
-            if c == ' ' && mods.contains(StringMod::OptBlank) {
-                tmp.push(c);
-                tmp.push('*');
-            } else if c == ' ' && mods.contains(StringMod::CompactWhitespace) {
-                tmp.push(c);
-                let mut space_rep = 1;
-                for c in chars.by_ref() {
-                    if c == ' ' {
-                        space_rep += 1;
-                        continue;
-                    }
-                    tmp.push_str(&format!("{{{space_rep},}}"));
-                    tmp.push(c);
-                    break;
-                }
-            } else if c.is_uppercase() && mods.contains(StringMod::UpperInsensitive)
-                || (c.is_lowercase() && mods.contains(StringMod::LowerInsensitive))
-            {
-                tmp.push_str("(?i:");
-                tmp.push(c);
-
-                while let Some(c) = chars.by_ref().peek() {
-                    if c.is_uppercase() && mods.contains(StringMod::UpperInsensitive)
-                        || (c.is_lowercase() && mods.contains(StringMod::LowerInsensitive))
-                    {
-                        tmp.push(*c);
-                        chars.by_ref().next();
-                    } else {
-                        break;
-                    }
-                }
-
-                tmp.push_str(")");
-            } else {
-                tmp.push(c);
-            }
-        }
-        out = tmp;
-
-        // we insert word boundary check in regex
-        if mods.contains(StringMod::FullWordMatch) {
-            out.push_str(r"\b");
-        }
-
-        // disable unicode
-        out.insert_str(0, "(?-u)");
-
-        out
-    }
-
-    fn transform(self) -> Self {
-        match self {
-            Self::Search(s) => {
-                // if we search only at one position it means we must match
-                // start of string
-                let re = prepare_bytes_re(&s.str, true);
-                let pattern = Self::string_to_re_pattern(&re, s.str_mods, false);
-
-                RegexTest {
-                    // FIXME: remove unwrap
-                    re: Regex::new(&pattern).unwrap(),
-                    length: None,
-                    n_pos: s.n_pos,
-                    mods: s.re_mods,
-                    str_mods: s.str_mods,
-                    search: true,
-                    binary: s.binary,
-                }
-                .into()
-            }
-            Self::String(st) => {
-                // test if  we need to turn the string test into a regex
-                if st.mods.contains(StringMod::CompactWhitespace)
-                    || st.mods.contains(StringMod::FullWordMatch)
-                    || st.mods.contains(StringMod::LowerInsensitive)
-                    || st.mods.contains(StringMod::UpperInsensitive)
-                    || st.mods.contains(StringMod::OptBlank)
-                {
-                    // FIXME: return error instead of unwrap
-                    // Here string must be valid UTF8
-                    let pattern = prepare_bytes_re(&st.str, true);
-                    let re = Self::string_to_re_pattern(&pattern, st.mods, true);
-                    RegexTest {
-                        // FIXME: remove unwrap
-                        re: Regex::new(&re).unwrap(),
-                        length: st.length,
-                        n_pos: None,
-                        mods: FlagSet::empty(),
-                        str_mods: st.mods,
-                        search: false,
-                        binary: st.binary,
-                    }
-                    .into()
-                } else {
-                    st.into()
-                }
-            }
-            _ => self,
-        }
-    }
-
     // read the value to test from the haystack
     fn read_test_value<'haystack, R: Read + Seek>(
         &self,
         haystack: &'haystack mut LazyCache<R>,
-        stream_kind: &StreamKind,
         switch_endianness: bool,
     ) -> Result<TestValue<'haystack>, Error> {
         let test_value_offset = haystack.lazy_stream_position();
@@ -817,7 +862,13 @@ impl Test {
                 } else {
                     // no length specified we read until end of string
                     let read = match t.cmp_op {
-                        CmpOp::Eq => haystack.read_exact(t.str.len() as u64)?,
+                        CmpOp::Eq => {
+                            if !t.has_length_mod() {
+                                haystack.read_exact(t.str.len() as u64)?
+                            } else {
+                                haystack.read(FILE_BYTES_MAX as u64)?
+                            }
+                        }
                         CmpOp::Lt | CmpOp::Gt => {
                             let read = haystack.read_until_any_delim_or_limit(b"\n\0", 8092)?;
 
@@ -847,6 +898,11 @@ impl Test {
                 let _ = read_le!(haystack, u8);
                 let read = haystack.read_exact(buf.len() as u64)?;
                 Ok(TestValue::Bytes(test_value_offset, read))
+            }
+
+            Self::Search(_) => {
+                let buf = haystack.read(FILE_BYTES_MAX as u64)?;
+                Ok(TestValue::Bytes(test_value_offset, buf))
             }
 
             Self::Regex(r) => {
@@ -982,8 +1038,8 @@ impl Test {
                     Self::String(st) => {
                         match st.cmp_op {
                             CmpOp::Eq => {
-                                if *buf == st.str {
-                                    return Some(MatchRes::Bytes(*o, buf));
+                                if let Some(b) = st.matches(buf) {
+                                    return Some(MatchRes::Bytes(*o, b));
                                 }
                             }
                             CmpOp::Gt => {
@@ -1042,6 +1098,8 @@ impl Test {
                         }
                     }
 
+                    Self::Search(t) => return t.matches(&buf).map(|(p, m)| MatchRes::Bytes(p, m)),
+
                     _ => unimplemented!(),
                 }
             }
@@ -1093,7 +1151,25 @@ impl Test {
 
     #[inline(always)]
     fn is_text(&self) -> bool {
-        !self.is_binary()
+        match self {
+            Self::Any(Any::String) => true,
+            Self::Name(_) => true,
+            Self::Use(_, _) => true,
+            Self::String(t) => !t.binary && t.mods.contains(StringMod::ForceBin),
+            Self::Clear => true,
+            Self::Default => true,
+            _ => !self.is_binary(),
+        }
+    }
+
+    #[inline(always)]
+    fn is_only_text(&self) -> bool {
+        self.is_text() && !self.is_binary()
+    }
+
+    #[inline(always)]
+    fn is_only_binary(&self) -> bool {
+        self.is_binary() && !self.is_text()
     }
 }
 
@@ -1376,7 +1452,7 @@ impl Match {
         &'a self,
         source: Option<&str>,
         magic: &mut Magic<'a>,
-        stream_kind: &StreamKind,
+        stream_kind: Option<StreamKind>,
         state: &mut MatchState,
         base_offset: Option<u64>,
         start_offset: Option<u64>,
@@ -1387,6 +1463,24 @@ impl Match {
         depth: usize,
     ) -> Result<bool, Error> {
         let source = source.unwrap_or("unknown");
+
+        if let Some(stream_kind) = stream_kind {
+            if self.test.is_only_binary() && stream_kind.is_text() {
+                trace!(
+                    "skip binary test source={source} line={} stream_kind={stream_kind:?}",
+                    self.line
+                );
+                return Ok(false);
+            }
+
+            if self.test.is_only_text() && !stream_kind.is_text() {
+                trace!(
+                    "skip text test source={source} line={} stream_kind={stream_kind:?}",
+                    self.line
+                );
+                return Ok(false);
+            }
+        }
 
         if depth >= MAX_RECURSION {
             return Err(Error::MaximumRecursion(MAX_RECURSION));
@@ -1521,7 +1615,7 @@ impl Match {
                 // need to read the value.
                 if let Ok(tv) = self
                     .test
-                    .read_test_value(haystack, stream_kind, switch_endianness)
+                    .read_test_value(haystack, switch_endianness)
                     .inspect_err(|e| {
                         trace!(
                             "source={source} line={} error while reading test value: {e}",
@@ -1574,7 +1668,12 @@ impl Match {
                             if let Some(o) = opt_adjusted_offset {
                                 haystack.seek(SeekFrom::Start(o))?;
                             }
+                        } else if let (Test::Search(_), MatchRes::Bytes(o, buf)) = (&self.test, mr)
+                        {
+                            let opt_adjusted_offset = o + buf.len() as u64;
+                            haystack.seek(SeekFrom::Start(opt_adjusted_offset))?;
                         }
+
                         state.set_continuation_level(self.continuation_level());
                         return Ok(true);
                     }
@@ -1778,7 +1877,7 @@ impl EntryNode {
         source: Option<&str>,
         magic: &mut Magic<'r>,
         state: &mut MatchState,
-        stream_kind: &StreamKind,
+        stream_kind: Option<StreamKind>,
         base_offset: Option<u64>,
         opt_start_offset: Option<u64>,
         last_level_offset: Option<u64>,
@@ -1848,7 +1947,7 @@ impl MagicRule {
     fn magic<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
-        stream_kind: &StreamKind,
+        stream_kind: Option<StreamKind>,
         base_offset: Option<u64>,
         opt_start_offset: Option<u64>,
         haystack: &mut LazyCache<R>,
@@ -1856,21 +1955,19 @@ impl MagicRule {
         switch_endianness: bool,
         depth: usize,
     ) -> Result<(), Error> {
-        self.entries
-            .matches(
-                self.source.as_ref().map(|s| s.as_str()),
-                magic,
-                &mut MatchState::empty(),
-                stream_kind,
-                base_offset,
-                opt_start_offset,
-                None,
-                haystack,
-                db,
-                switch_endianness,
-                depth,
-            )
-            .map(|_| ())
+        self.entries.matches(
+            self.source.as_ref().map(|s| s.as_str()),
+            magic,
+            &mut MatchState::empty(),
+            stream_kind,
+            base_offset,
+            opt_start_offset,
+            None,
+            haystack,
+            db,
+            switch_endianness,
+            depth,
+        )
     }
 
     fn is_text(&self) -> bool {
@@ -1908,16 +2005,22 @@ pub struct MagicFile {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 struct ContinuationLevel(u8);
 
-#[derive(Debug, PartialEq, Eq)]
+// FIXME: magic handles many more text encodings
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum TextEncoding {
+    Ascii,
+    Utf8,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum StreamKind {
     Binary,
-    AsciiText,
-    Utf8Text,
+    Text(TextEncoding),
 }
 
 impl StreamKind {
     const fn is_text(&self) -> bool {
-        matches!(self, StreamKind::AsciiText | StreamKind::Utf8Text)
+        matches!(self, StreamKind::Text(_))
     }
 }
 
@@ -2070,9 +2173,9 @@ fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
         is_ascii &= c.is_ascii()
     }
     if is_ascii {
-        StreamKind::AsciiText
+        StreamKind::Text(TextEncoding::Ascii)
     } else {
-        StreamKind::Utf8Text
+        StreamKind::Text(TextEncoding::Utf8)
     }
 }
 
@@ -2094,30 +2197,18 @@ impl MagicDb {
         Ok(self)
     }
 
-    pub fn magic_first<R: Read + Seek>(
+    #[inline]
+    fn magic_first_with_opt_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
+        stream_kind: Option<StreamKind>,
     ) -> Result<Option<Magic<'_>>, Error> {
-        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+        for rule in self.binary_rules.iter().chain(self.text_rules.iter()) {
+            let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
 
-        let iter = self
-            .binary_rules
-            .iter()
-            .map(|r| (true, r))
-            .chain(self.text_rules.iter().map(|r| (false, r)));
-
-        for (bin, r) in iter {
-            if !bin && matches!(stream_kind, StreamKind::Binary) {
-                break;
-            } else if bin && stream_kind.is_text() {
-                continue;
-            }
-
-            let mut magic = Magic::with_source(r.source.as_ref().map(|s| s.as_str()));
-
-            r.magic(
+            rule.magic(
                 &mut magic,
-                &stream_kind,
+                stream_kind,
                 None,
                 None,
                 haystack,
@@ -2134,6 +2225,14 @@ impl MagicDb {
         Ok(None)
     }
 
+    pub fn magic_first<R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+    ) -> Result<Option<Magic<'_>>, Error> {
+        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+        self.magic_first_with_opt_stream_kind(haystack, Some(stream_kind))
+    }
+
     pub fn magic_all<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
@@ -2146,7 +2245,7 @@ impl MagicDb {
 
             rule.magic(
                 &mut magic,
-                &stream_kind,
+                Some(stream_kind),
                 None,
                 None,
                 haystack,
@@ -2191,8 +2290,8 @@ mod tests {
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
-        let v = md.magic_all(&mut reader)?;
-        Ok(v.into_iter().next().map(|(_, m)| m.into_static()))
+        let v = md.magic_first_with_opt_stream_kind(&mut reader, None)?;
+        Ok(v.map(|m| m.into_static()))
     }
 
     /// helper macro to debug tests
@@ -2260,12 +2359,60 @@ mod tests {
     #[test]
     fn test_string_with_mods() {
         assert_magic_match!(
-            r#"0	string/fwt	#!\ \ \ /usr/bin/env\ bash	Bourne-Again shell script text executable
-!:mime	text/x-shellscript
-"#,
-            b"#!/usr/bin/env bash i 
+            r#"0	string/w	#!\ \ \ /usr/bin/env\ bash	BASH
+        "#,
+            b"#! /usr/bin/env bash i
         echo hello world"
         );
+
+        // test uppercase insensitive
+        assert_magic_match!(
+            r#"0	string/C	HelloWorld	it works
+        "#,
+            b"helloworld"
+        );
+
+        assert_magic_not_match!(
+            r#"0	string/C	HelloWorld	it works
+        "#,
+            b"hELLOwORLD"
+        );
+
+        // test lowercase insensitive
+        assert_magic_match!(
+            r#"0	string/c	HelloWorld	it works
+        "#,
+            b"HELLOWORLD"
+        );
+
+        assert_magic_not_match!(
+            r#"0	string/c	HelloWorld	it works
+        "#,
+            b"helloworld"
+        );
+
+        // test full word match
+        assert_magic_match!(
+            r#"0	string/f	#!/usr/bin/env\ bash	BASH
+        "#,
+            b"#!/usr/bin/env bash"
+        );
+
+        assert_magic_not_match!(
+            r#"0	string/f	#!/usr/bin/python PYTHON"#,
+            b"#!/usr/bin/pythonic"
+        );
+
+        // testing whitespace compacting
+        assert_magic_match!(
+            r#"0	string/W	#!/usr/bin/env\ python  PYTHON"#,
+            b"#!/usr/bin/env    python"
+        );
+
+        assert_magic_not_match!(
+            r#"0	string/W	#!/usr/bin/env\ \ python  PYTHON"#,
+            b"#!/usr/bin/env python"
+        )
     }
 
     #[test]

@@ -1005,7 +1005,7 @@ impl Test {
             _ => unimplemented!(),
         };
 
-        Ok(t.transform())
+        Ok(t)
     }
 }
 
