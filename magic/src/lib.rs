@@ -1219,10 +1219,7 @@ impl IndOffset {
     ) -> Result<Option<u64>, io::Error> {
         let main_offset_offset = match self.off_addr {
             DirOffset::Start(s) => {
-                let Some(o) = s
-                    .checked_add(base_offset.unwrap_or_default())
-                    .and_then(|o| o.checked_add(opt_start.unwrap_or_default()))
-                else {
+                let Some(o) = s.checked_add(opt_start.unwrap_or_default()) else {
                     return Ok(None);
                 };
 
@@ -1486,10 +1483,20 @@ impl Match {
             return Err(Error::MaximumRecursion(MAX_RECURSION));
         }
 
-        let Some(offset) =
+        let Some(mut offset) =
             self.offset_from_start(haystack, base_offset, start_offset, last_level_offset)?
         else {
             return Ok(false);
+        };
+
+        offset = match self.offset {
+            Offset::Indirect(_) => {
+                // offset has been read from stream so we don't want
+                // to alter it, unless we decided to re-base
+                // the stream after a relative indirect test
+                offset.saturating_add(base_offset.unwrap_or_default())
+            }
+            _ => offset.saturating_add(start_offset.unwrap_or_default()),
         };
 
         match &self.test {
@@ -1526,10 +1533,10 @@ impl Match {
                     magic,
                     stream_kind,
                     base_offset,
-                    Some(offset + start_offset.unwrap_or_default()),
+                    Some(offset),
                     haystack,
                     db,
-                    *switch_endianness,
+                    switch_endianness,
                     depth.saturating_add(1),
                 )?;
 
@@ -1549,16 +1556,23 @@ impl Match {
                 };
 
                 for r in db.binary_rules.iter().chain(db.text_rules.iter()) {
+                    let messages_cnt = magic.message.len();
+
                     r.magic(
                         magic,
                         stream_kind,
                         base_offset,
-                        None,
+                        Some(offset),
                         haystack,
                         db,
                         false,
                         depth.saturating_add(1),
                     )?;
+
+                    // this means we matched a rule
+                    if magic.message.len() != messages_cnt {
+                        break;
+                    }
                 }
 
                 Ok(false)
@@ -1580,26 +1594,7 @@ impl Match {
             }
 
             _ => {
-                match self.offset {
-                    Offset::Indirect(_) => {
-                        // offset has been read from stream so we don't want
-                        // don't want to alter it, unless we decided to re-base
-                        // the stream after a relative indirect test
-                        haystack.seek(SeekFrom::Start(
-                            offset.saturating_add(base_offset.unwrap_or_default()),
-                        ))?;
-                    }
-                    _ => {
-                        // if offset is anything else than indirect we must
-                        // also jump to the start offset passed by a use test
-                        haystack.seek(SeekFrom::Start(
-                            offset
-                                .saturating_add(base_offset.unwrap_or_default())
-                                .saturating_add(start_offset.unwrap_or_default()),
-                        ))?;
-                    }
-                }
-
+                haystack.seek(SeekFrom::Start(offset))?;
                 let mut trace_msg = None;
 
                 if enabled!(Level::DEBUG) {
