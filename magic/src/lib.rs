@@ -1,32 +1,28 @@
 #![deny(unsafe_code)]
 
-use chrono::{DateTime, Local, TimeZone};
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
 use lazy_cache::LazyCache;
-use pest::{Parser, Span, error::ErrorVariant, iterators::Pair};
-use pest_derive::Parser;
-use regex::bytes::{self, Regex};
+use pest::{Span, error::ErrorVariant};
+use regex::bytes::{self};
 use std::{
     borrow::Cow,
     char::REPLACEMENT_CHARACTER,
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
-    fs,
     io::{self, Read, Seek, SeekFrom},
     iter::Peekable,
-    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Sub},
+    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
     str::Utf8Error,
 };
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
-use uuid::Uuid;
 
 use crate::{
     numeric::{Float, FloatDataType},
-    parser::{FileMagicParser, Rule, prepare_bytes_re},
+    parser::{FileMagicParser, Rule},
     utils::nonmagic,
 };
 

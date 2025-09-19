@@ -12,7 +12,7 @@ use crate::{
     FloatTransform, IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message,
     Name, Offset, OffsetType, Op, ReMod, RegexTest, ScalarTest, ScalarTransform, SearchTest, Shift,
     StrengthMod, String16Test, StringMod, StringTest, Test, Use,
-    numeric::{Float, FloatDataType, Scalar, ScalarDataType},
+    numeric::{FloatDataType, Scalar, ScalarDataType},
 };
 
 pub(crate) fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
