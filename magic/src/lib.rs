@@ -1426,7 +1426,6 @@ impl Match {
     fn offset_from_start<'a, R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        base_offset: Option<u64>,
         opt_start: Option<u64>,
         last_level_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
@@ -1496,8 +1495,7 @@ impl Match {
             return Err(Error::MaximumRecursion(MAX_RECURSION));
         }
 
-        let Some(mut offset) =
-            self.offset_from_start(haystack, base_offset, start_offset, last_level_offset)?
+        let Some(mut offset) = self.offset_from_start(haystack, start_offset, last_level_offset)?
         else {
             return Ok(false);
         };
