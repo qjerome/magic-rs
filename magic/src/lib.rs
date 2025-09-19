@@ -1220,7 +1220,6 @@ impl IndOffset {
     fn read_offset<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        base_offset: Option<u64>,
         opt_start: Option<u64>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
@@ -1444,8 +1443,7 @@ impl Match {
                 DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
             Offset::Indirect(ind_offset) => {
-                let Some(o) =
-                    ind_offset.read_offset(haystack, base_offset, opt_start, last_level_offset)?
+                let Some(o) = ind_offset.read_offset(haystack, opt_start, last_level_offset)?
                 else {
                     return Ok(None);
                 };
