@@ -2094,7 +2094,7 @@ impl<'m> Magic<'m> {
         }
     }
 
-    fn into_static(self) -> Magic<'static> {
+    pub fn into_owned<'owned>(self) -> Magic<'owned> {
         Magic {
             source: self.source.map(|s| Cow::Owned(s.into_owned())),
             message: self
@@ -2296,7 +2296,9 @@ impl MagicDb {
 mod tests {
     use std::io::Cursor;
 
-    use crate::{parser::unescape_string_to_vec, utils::unix_local_time_to_string};
+    use regex::bytes::Regex;
+
+    use crate::utils::unix_local_time_to_string;
 
     use super::*;
 
@@ -2310,7 +2312,7 @@ mod tests {
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
         let v = md.magic_first_with_opt_stream_kind(&mut reader, None)?;
-        Ok(v.map(|m| m.into_static()))
+        Ok(v.map(|m| m.into_owned()))
     }
 
     /// helper macro to debug tests
