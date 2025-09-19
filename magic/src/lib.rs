@@ -1816,7 +1816,7 @@ enum Flag {
 }
 
 #[derive(Debug, Clone)]
-pub struct Name {
+struct Name {
     line: usize,
     offset: Offset,
     name: String,
@@ -1824,13 +1824,13 @@ pub struct Name {
 }
 
 #[derive(Debug, Clone)]
-pub enum Entry {
+enum Entry {
     Match(Match),
     Flag(Flag),
 }
 
 #[derive(Debug, Clone)]
-pub struct EntryNode {
+struct EntryNode {
     entry: Match,
     children: Vec<EntryNode>,
     mimetype: Option<String>,
