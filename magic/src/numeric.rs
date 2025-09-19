@@ -3,7 +3,9 @@ use std::fmt;
 use dyf::DynDisplay;
 use uuid::Uuid;
 
-use crate::utils::{unix_local_time_to_string, unix_utc_time_to_string};
+use crate::utils::{
+    unix_local_time_to_string, unix_utc_time_to_string, windows_filetime_to_string,
+};
 
 macro_rules! impl_numeric_types {
     ($($name: tt($ty: ty)),* $(,)?) => {
@@ -166,6 +168,7 @@ impl_numeric_types!(
     ldate(i32),
     short(i16),
     quad(i64),
+    qwdate(i64),
     belong(i32),
     bequad(i64),
     beshort(i16),
@@ -178,6 +181,7 @@ impl_numeric_types!(
     lequad(i64),
     leldate(i32),
     leqdate(i64),
+    leqwdate(i64),
     leqldate(i64),
     ushort(u16),
     ulong(u32),
@@ -207,6 +211,7 @@ impl fmt::Display for Scalar {
             Scalar::date(value) => write!(f, "date({})", value),
             Scalar::ldate(value) => write!(f, "ldate({})", value),
             Scalar::quad(value) => write!(f, "{}", value),
+            Scalar::qwdate(value) => write!(f, "qwdate{value}"),
             Scalar::uquad(value) => write!(f, "{}", value),
             Scalar::belong(value) => write!(f, "{}", value),
             Scalar::bequad(value) => write!(f, "{}", value),
@@ -241,6 +246,7 @@ impl fmt::Display for Scalar {
             Scalar::leldate(value) => write!(f, "leldate({})", value),
             Scalar::leqdate(value) => write!(f, "leqdate({})", value),
             Scalar::leqldate(value) => write!(f, "leqldate({})", value),
+            Scalar::leqwdate(value) => write!(f, "leqwdate({value})"),
             Scalar::guid(value) => {
                 write!(
                     f,
@@ -261,6 +267,7 @@ impl DynDisplay for Scalar {
             Scalar::date(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Scalar::ldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
+            Scalar::qwdate(value) => Ok(windows_filetime_to_string(*value)),
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
@@ -295,6 +302,7 @@ impl DynDisplay for Scalar {
             Scalar::leqdate(value) => Ok(unix_utc_time_to_string(*value)),
             Scalar::leldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::leqldate(value) => Ok(unix_local_time_to_string(*value)),
+            Scalar::leqwdate(value) => Ok(windows_filetime_to_string(*value)),
             Scalar::guid(value) => Ok(Uuid::from_u128(*value)
                 .hyphenated()
                 .to_string()

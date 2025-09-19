@@ -312,6 +312,7 @@ impl ScalarDataType {
             date,
             ldate,
             quad,
+            qwdate,
             uquad,
             lelong,
             ledate,
@@ -336,6 +337,7 @@ impl ScalarDataType {
             offset,
             lemsdosdate,
             lemsdostime,
+            leqwdate,
             medate,
             meldate,
             melong

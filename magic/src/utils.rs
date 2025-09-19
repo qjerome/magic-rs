@@ -1,23 +1,6 @@
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use crate::TIMESTAMP_FORMAT;
-
-/// Parses a u16 FAT/DOS date into a `NaiveDate`.
-// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-dosdatetimetofiletime?redirectedfrom=MSDN
-pub(crate) fn parse_fat_date(fat_date: u16) -> Option<NaiveDate> {
-    let day = (fat_date & 0x1f) as u32; // Bits 0-4
-    let month = ((fat_date >> 5) & 0xf) as u32; // Bits 5-8
-    let year = (fat_date >> 9) as i32 + 1980; // Bits 9-15 + 1980
-    NaiveDate::from_ymd_opt(year, month, day)
-}
-
-pub(crate) fn parse_fat_time(fat_time: u16) -> Option<NaiveTime> {
-    // time is encoded in 2 sec
-    let sec = (fat_time & 0x1f) * 2;
-    let min = (fat_time >> 5) & 0b111111;
-    let hour = (fat_time >> 11) & 0b11111;
-    NaiveTime::from_hms_opt(hour as u32, min as u32, sec as u32)
-}
 
 // test this properly
 pub(crate) fn nonmagic(str: &str) -> usize {
@@ -70,18 +53,51 @@ pub(crate) fn nonmagic(str: &str) -> usize {
     if rv == 0 { 1 } else { rv }
 }
 
+/// Parses a u16 FAT/DOS date into a `NaiveDate`.
+// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-dosdatetimetofiletime?redirectedfrom=MSDN
+pub(crate) fn parse_fat_date(fat_date: u16) -> Option<NaiveDate> {
+    let day = (fat_date & 0x1f) as u32; // Bits 0-4
+    let month = ((fat_date >> 5) & 0xf) as u32; // Bits 5-8
+    let year = (fat_date >> 9) as i32 + 1980; // Bits 9-15 + 1980
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
+pub(crate) fn parse_fat_time(fat_time: u16) -> Option<NaiveTime> {
+    // time is encoded in 2 sec
+    let sec = (fat_time & 0x1f) * 2;
+    let min = (fat_time >> 5) & 0b111111;
+    let hour = (fat_time >> 11) & 0b11111;
+    NaiveTime::from_hms_opt(hour as u32, min as u32, sec as u32)
+}
+
+fn windows_time_to_datetime(filetime: i64) -> Option<DateTime<Utc>> {
+    // FILETIME starts 1601-01-01
+    let windows_epoch = Utc.with_ymd_and_hms(1601, 1, 1, 0, 0, 0).single()?;
+    // convert 100ns units into seconds + nanos
+    let secs = filetime / 10_000_000;
+    let nanos = (filetime % 10_000_000) * 100;
+    Some(windows_epoch + chrono::Duration::seconds(secs) + chrono::Duration::nanoseconds(nanos))
+}
+
 #[inline(always)]
 pub(crate) fn unix_local_time_to_string(timestamp: i64) -> String {
     Local
         .timestamp_opt(timestamp, 0)
         .earliest()
-        .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+        .map(|ts| ts.naive_local().format(TIMESTAMP_FORMAT).to_string())
         .unwrap_or("invalid timestamp".into())
 }
 
 #[inline(always)]
 pub(crate) fn unix_utc_time_to_string(timestamp: i64) -> String {
     DateTime::from_timestamp(timestamp, 0)
+        .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
+        .unwrap_or("invalid timestamp".into())
+}
+
+#[inline(always)]
+pub(crate) fn windows_filetime_to_string(timestamp: i64) -> String {
+    windows_time_to_datetime(timestamp)
         .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
         .unwrap_or("invalid timestamp".into())
 }
@@ -121,5 +137,14 @@ mod tests {
         assert_eq!(parse_fat_time(0xbf7d), NaiveTime::from_hms_opt(23, 59, 58));
 
         assert_eq!(parse_fat_time(18301), NaiveTime::from_hms_opt(8, 59, 58));
+    }
+
+    #[test]
+    fn test_windows_date() {
+        assert_eq!(windows_filetime_to_string(0), "1601-01-01 00:00:00");
+        assert_eq!(
+            windows_filetime_to_string(132723834270000000),
+            "2021-08-02 13:10:27"
+        );
     }
 }
