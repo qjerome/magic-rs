@@ -13,7 +13,7 @@ rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWL
 match_no_depth = { stream_offset ~ test ~ message? }
 match_depth    = { depth+ ~ stream_offset ~ test ~ message? }
 
-test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test | guid_test }
+test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test | guid_test | float_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
@@ -21,19 +21,19 @@ endianness_switch = @{ "\\^" }
 use = { depth+ ~ stream_offset ~ "use" ~ endianness_switch? ~ rule_name ~ message? }
 
 // operators
-op_add    = ${ "+" }
-op_mul    = ${ "*" }
-op_sub    = ${ "-" }
-op_div    = ${ "/" }
-op_and    = ${ "&" }
-op_mod    = ${ "%" }
-op_or     = ${ "|" }
-op_xor    = ${ "^" }
-op_not    = ${ "~" }
-op_negate = ${ "!" }
-op_gt     = ${ ">" }
-op_eq     = ${ "=" }
-op_lt     = ${ "<" }
+op_add = ${ "+" }
+op_mul = ${ "*" }
+op_sub = ${ "-" }
+op_div = ${ "/" }
+op_and = ${ "&" }
+op_mod = ${ "%" }
+op_or  = ${ "|" }
+op_xor = ${ "^" }
+op_not = ${ "~" }
+op_neq = ${ "!" }
+op_gt  = ${ ">" }
+op_eq  = ${ "=" }
+op_lt  = ${ "<" }
 
 // flags
 printable_no_ws =  { '\u{21}'..'\u{7E}' }
@@ -146,10 +146,18 @@ any_value = { "x" }
 scalar_type      = ${ ldate | date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset | medate | melong | meldate | uquad | uquad | leqldate | ubeqdate }
 scalar_value     = ${ number }
 scalar_transform = ${ (op_and | op_or | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
-scalar_condition = ${ op_eq | op_gt | op_lt | op_negate | op_xor | op_and | op_not }
+scalar_condition = ${ op_eq | op_gt | op_lt | op_neq | op_xor | op_and | op_not }
 // there must be no whitespace for transform operations
 scalar_type_transform = ${ scalar_type ~ scalar_transform? }
 scalar_test           =  { scalar_type_transform ~ (any_value | (scalar_condition? ~ scalar_value)) }
+
+sign                 = @{ "+" | "-" }
+float_number         = ${ sign? ~ ((ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* | (ASCII_DIGIT* ~ "." ~ ASCII_DIGIT+) | ASCII_DIGIT+) ~ (("e" | "E") ~ sign? ~ ASCII_DIGIT+)?) }
+float_type           = ${ bedouble | ledouble | lefloat | befloat }
+float_transform      = ${ (op_div | op_add | op_sub | op_mod | op_mul) ~ float_number }
+float_type_transform = ${ float_type ~ float_transform? }
+float_condition      = ${ op_eq | op_gt | op_lt | op_neq }
+float_test           =  { float_type_transform ~ (any_value | (float_condition? ~ float_number)) }
 
 // corresponds to `clear x` test
 clear_test = ${ clear ~ WHITESPACE+ ~ any_value }
@@ -169,9 +177,6 @@ string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) |
 
 // string16 test
 string16_test = ${ (lestring16 | bestring16) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | string_value) }
-
-// Test value (could be a hex, string, or integer)
-// test = ${ (b16_number ~ ASCII_DIGIT* | (PUNCTUATION | ASCII_ALPHANUMERIC | ("\\x" ~ ASCII_HEX_DIGIT{2}))+) | "x" }
 
 // Parses the optional message that describes the file type
 message = @{ (!NEWLINE ~ ANY)* }

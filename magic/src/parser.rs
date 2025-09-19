@@ -8,11 +8,11 @@ use regex::bytes;
 use uuid::Uuid;
 
 use crate::{
-    Any, CmpOp, DependencyRule, DirOffset, Encoding, Entry, EntryNode, Error, Flag, IndOffset,
-    IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message, Name, Offset, OffsetType, Op,
-    ReMod, RegexTest, ScalarTest, SearchTest, Shift, StrengthMod, String16Test, StringMod,
-    StringTest, Test, Transform, Use,
-    numeric::{Scalar, ScalarDataType},
+    Any, CmpOp, DependencyRule, DirOffset, Encoding, Entry, EntryNode, Error, Flag, FloatTest,
+    FloatTransform, IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message,
+    Name, Offset, OffsetType, Op, ReMod, RegexTest, ScalarTest, ScalarTransform, SearchTest, Shift,
+    StrengthMod, String16Test, StringMod, StringTest, Test, Use,
+    numeric::{Float, FloatDataType, Scalar, ScalarDataType},
 };
 
 pub(crate) fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
@@ -261,7 +261,7 @@ impl CmpOp {
             Rule::op_lt => Ok(Self::Lt),
             Rule::op_gt => Ok(Self::Gt),
             Rule::op_and => Ok(Self::BitAnd),
-            Rule::op_negate => Ok(Self::Neg),
+            Rule::op_neq => Ok(Self::Neq),
             Rule::op_eq => Ok(Self::Eq),
             Rule::op_xor => Ok(Self::Xor),
             Rule::op_not => Ok(Self::Not),
@@ -340,6 +340,25 @@ impl ScalarDataType {
             meldate,
             melong
         )
+    }
+}
+
+impl FloatDataType {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+        let dt = pair.into_inner().next().expect("data type expected");
+
+        macro_rules! handle_types {
+            ($($ty: ident),*) => {
+                match dt.as_rule() {
+                    $(
+                        Rule::$ty => Ok(Self::$ty),
+                    )*
+                    _ => Err(Error::parser("unimplemented data type", dt.as_span())),
+                }
+            };
+        }
+
+        handle_types!(bedouble, ledouble, befloat, lefloat)
     }
 }
 
@@ -809,7 +828,7 @@ impl Test {
                                             }
                                         }
 
-                                        transform = Some(Transform { op, num });
+                                        transform = Some(ScalarTransform { op, num });
                                     }
                                     _ => {}
                                 }
@@ -970,6 +989,68 @@ impl Test {
                     value: Scalar::guid(guid.unwrap().as_u128()),
                 })
             }
+
+            Rule::float_test => {
+                let mut float = None;
+                let mut ty = None;
+                let mut cmp_op = CmpOp::Eq;
+                let mut transform = None;
+                for p in pair.into_inner() {
+                    let span = p.as_span();
+                    match p.as_rule() {
+                        Rule::any_value => {
+                            return Ok(Self::Any(Any::Float(ty.expect("type must be known"))));
+                        }
+                        Rule::float_type_transform => {
+                            for p in p.into_inner() {
+                                match p.as_rule() {
+                                    Rule::float_type => ty = Some(FloatDataType::from_pair(p)?),
+                                    Rule::float_transform => {
+                                        let mut pairs = p.into_inner();
+                                        let op = Op::from_pair(pairs.next().unwrap())?;
+
+                                        let float_pair = pairs.next().unwrap();
+                                        let value: f64 =
+                                            float_pair.as_str().parse().map_err(|_| {
+                                                Error::parser(
+                                                    "cannot parse str to float",
+                                                    float_pair.as_span(),
+                                                )
+                                            })?;
+
+                                        let ty = ty.expect("type must be known");
+
+                                        let num = ty.float_from_f64(value);
+                                        transform = Some(FloatTransform { op, num })
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Rule::float_number => {
+                            let f: f64 = p
+                                .as_str()
+                                .parse()
+                                .map_err(|_| Error::parser("cannot parse str to float", span))?;
+
+                            let ty = ty.expect("type must be known");
+                            float = Some(ty.float_from_f64(f));
+                        }
+                        Rule::float_condition => {
+                            cmp_op = CmpOp::from_pair(p.into_inner().next().unwrap())?
+                        }
+                        _ => {}
+                    }
+                }
+
+                Self::Float(FloatTest {
+                    value: float.expect("float value must be known"),
+                    ty: ty.expect("type must be known"),
+                    cmp_op,
+                    transform,
+                })
+            }
+
             Rule::clear_test => Self::Clear,
             Rule::default_test => Self::Default,
             Rule::indirect_test => {

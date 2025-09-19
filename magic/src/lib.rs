@@ -25,6 +25,7 @@ use tracing::{Level, debug, enabled, error, trace};
 use uuid::Uuid;
 
 use crate::{
+    numeric::{Float, FloatDataType},
     parser::{FileMagicParser, Rule, prepare_bytes_re},
     utils::nonmagic,
 };
@@ -106,6 +107,10 @@ impl Message {
                             Cow::Owned(dformat!(fs, mr).unwrap())
                         }
                         MatchRes::Bytes(_, _) => {
+                            // FIX: unwrap
+                            Cow::Owned(dformat!(fs, mr).unwrap())
+                        }
+                        MatchRes::Float(_, _) => {
                             // FIX: unwrap
                             Cow::Owned(dformat!(fs, mr).unwrap())
                         }
@@ -265,6 +270,58 @@ impl ScalarDataType {
     }
 }
 
+impl FloatDataType {
+    #[inline(always)]
+    fn read<R: Read + Seek>(
+        &self,
+        from: &mut LazyCache<R>,
+        switch_endianness: bool,
+    ) -> Result<Float, Error> {
+        macro_rules! _read_le {
+            ($ty: ty) => {{
+                if switch_endianness {
+                    <$ty>::from_be_bytes(read!(from, $ty))
+                } else {
+                    <$ty>::from_le_bytes(read!(from, $ty))
+                }
+            }};
+        }
+
+        macro_rules! _read_be {
+            ($ty: ty) => {{
+                if switch_endianness {
+                    <$ty>::from_le_bytes(read!(from, $ty))
+                } else {
+                    <$ty>::from_be_bytes(read!(from, $ty))
+                }
+            }};
+        }
+
+        macro_rules! _read_ne {
+            ($ty: ty) => {{
+                if cfg!(target_endian = "big") {
+                    _read_be!($ty)
+                } else {
+                    _read_le!($ty)
+                }
+            }};
+        }
+
+        macro_rules! _read_me {
+            () => {
+                ((_read_le!(u16) as i32) << 16) | (_read_le!(u16) as i32)
+            };
+        }
+
+        Ok(match self {
+            Self::lefloat => Float::lefloat(_read_le!(f32)),
+            Self::befloat => Float::befloat(_read_le!(f32)),
+            Self::ledouble => Float::ledouble(_read_le!(f64)),
+            Self::bedouble => Float::bedouble(_read_be!(f64)),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Op {
     Mul,
@@ -298,7 +355,7 @@ enum CmpOp {
     Lt,
     Gt,
     BitAnd,
-    Neg, // ! operator
+    Neq, // ! operator
     Xor,
     // FIXME: this operator might be useless
     // it could be turned into Eq and transforming
@@ -307,12 +364,12 @@ enum CmpOp {
 }
 
 #[derive(Debug, Clone)]
-struct Transform {
+struct ScalarTransform {
     op: Op,
     num: Scalar,
 }
 
-impl Transform {
+impl ScalarTransform {
     fn apply(&self, s: Scalar) -> Scalar {
         match self.op {
             // FIXME: impl checked_ fn
@@ -332,6 +389,34 @@ impl Transform {
     }
 }
 
+#[derive(Debug, Clone)]
+struct FloatTransform {
+    op: Op,
+    num: Float,
+}
+
+impl FloatTransform {
+    fn apply(&self, s: Float) -> Float {
+        match self.op {
+            // FIXME: impl checked_ fn
+            Op::Add => s.add(self.num),
+            // FIXME: impl checked_ fn
+            Op::Sub => s.sub(self.num),
+            // FIXME: impl checked_ fn
+            Op::Mul => s.mul(self.num),
+            // FIXME: impl checked_ fn
+            Op::Div => s.div(self.num),
+            // FIXME: impl checked_ fn
+            Op::Mod => s.rem(self.num),
+            // parser makes sure those operators cannot be used
+            Op::And | Op::Xor | Op::Or => {
+                debug_panic!("unsupported operation");
+                s
+            }
+        }
+    }
+}
+
 // Any Magic Data type
 // FIXME: Any must carry StringTest so that we know the string mods / length
 #[derive(Debug, Clone)]
@@ -340,6 +425,7 @@ enum Any {
     String16(Encoding),
     PString,
     Scalar(ScalarDataType),
+    Float(FloatDataType),
 }
 
 impl Any {
@@ -593,16 +679,25 @@ impl SearchTest {
 #[derive(Debug, Clone)]
 struct ScalarTest {
     ty: ScalarDataType,
-    transform: Option<Transform>,
+    transform: Option<ScalarTransform>,
     cmp_op: CmpOp,
     value: Scalar,
+}
+
+#[derive(Debug, Clone)]
+struct FloatTest {
+    ty: FloatDataType,
+    transform: Option<FloatTransform>,
+    cmp_op: CmpOp,
+    value: Float,
 }
 
 // the value read from the haystack we want to
 // match against
 // 'buf is the lifetime of the buffer we are scanning
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum TestValue<'buf> {
+    Float(u64, Float),
     Scalar(u64, Scalar),
     Bytes(u64, &'buf [u8]),
 }
@@ -610,6 +705,7 @@ enum TestValue<'buf> {
 impl DynDisplay for TestValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
+            Self::Float(_, s) => DynDisplay::dyn_fmt(s, f),
             Self::Scalar(_, s) => DynDisplay::dyn_fmt(s, f),
             Self::Bytes(_, b) => Ok(format!("{:?}", b)),
         }
@@ -626,8 +722,9 @@ impl DynDisplay for &TestValue<'_> {
 impl Display for TestValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Scalar(_, s) => write!(f, "{}", s),
-            Self::Bytes(_, b) => write!(f, "{:?}", b),
+            Self::Float(_, v) => write!(f, "{v}"),
+            Self::Scalar(_, s) => write!(f, "{s}"),
+            Self::Bytes(_, b) => write!(f, "{b:?}"),
         }
     }
 }
@@ -641,6 +738,7 @@ enum MatchRes<'buf> {
     String(u64, &'buf str),
     Bytes(u64, &'buf [u8]),
     Scalar(u64, Scalar),
+    Float(u64, Float),
 }
 
 impl DynDisplay for &MatchRes<'_> {
@@ -652,10 +750,11 @@ impl DynDisplay for &MatchRes<'_> {
 impl DynDisplay for MatchRes<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
-            Self::Scalar(_, s) => s.dyn_fmt(f),
-            Self::String(_, s) => s.dyn_fmt(f),
-            Self::OwnedString(_, s) => s.dyn_fmt(f),
-            Self::Bytes(_, s) => Ok(String::from_utf8_lossy(s).to_string()),
+            Self::Scalar(_, v) => v.dyn_fmt(f),
+            Self::Float(_, v) => v.dyn_fmt(f),
+            Self::String(_, v) => v.dyn_fmt(f),
+            Self::OwnedString(_, v) => v.dyn_fmt(f),
+            Self::Bytes(_, v) => Ok(String::from_utf8_lossy(v).to_string()),
         }
     }
 }
@@ -707,6 +806,7 @@ enum Test {
     Name(String),
     Use(bool, String),
     Scalar(ScalarTest),
+    Float(FloatTest),
     String(StringTest),
     Search(SearchTest),
     PString(Vec<u8>),
@@ -732,6 +832,10 @@ impl Test {
             Self::Scalar(t) => {
                 t.ty.read(haystack, switch_endianness)
                     .map(|s| TestValue::Scalar(test_value_offset, s))
+            }
+            Self::Float(t) => {
+                t.ty.read(haystack, switch_endianness)
+                    .map(|f| TestValue::Float(test_value_offset, f))
             }
             Self::String(t) => {
                 let buf = if let Some(length) = t.length {
@@ -845,6 +949,9 @@ impl Test {
                 Any::Scalar(d) => d
                     .read(haystack, switch_endianness)
                     .map(|s| TestValue::Scalar(test_value_offset, s)),
+                Any::Float(ty) => ty
+                    .read(haystack, switch_endianness)
+                    .map(|f| TestValue::Float(test_value_offset, f)),
             },
 
             // FIXME: all other tests should have been handled
@@ -902,13 +1009,33 @@ impl Test {
                         CmpOp::Eq => read_value == t.value,
                         CmpOp::Lt => read_value < t.value,
                         CmpOp::Gt => read_value > t.value,
-                        CmpOp::Neg => read_value != t.value,
+                        CmpOp::Neq => read_value != t.value,
                         CmpOp::BitAnd => read_value & t.value == t.value,
                         CmpOp::Xor => (read_value & t.value).is_zero(),
                     };
 
                     if ok {
                         return Some(MatchRes::Scalar(*o, read_value));
+                    }
+                }
+            }
+            TestValue::Float(o, f) => {
+                if let Self::Float(t) = self {
+                    let read_value: Float = t.transform.as_ref().map(|t| t.apply(*f)).unwrap_or(*f);
+
+                    let ok = match t.cmp_op {
+                        CmpOp::Eq => read_value == t.value,
+                        CmpOp::Lt => read_value < t.value,
+                        CmpOp::Gt => read_value > t.value,
+                        CmpOp::Neq => read_value != t.value,
+                        _ => {
+                            debug_panic!("unsupported float comparison");
+                            false
+                        }
+                    };
+
+                    if ok {
+                        return Some(MatchRes::Float(*o, read_value));
                     }
                 }
             }
@@ -1007,10 +1134,12 @@ impl Test {
                 Any::String => true,
                 Any::String16(_) => true,
                 Any::Scalar(_) => true,
+                Any::Float(_) => true,
             },
             Self::Name(_) => true,
             Self::Use(_, _) => true,
             Self::Scalar(_) => true,
+            Self::Float(_) => true,
             Self::String(t) => t.binary || t.mods.contains(StringMod::ForceBin),
             Self::Search(search_test) => {
                 search_test.str_mods.contains(StringMod::ForceBin)
@@ -1588,9 +1717,16 @@ impl Match {
         // FIXME: octal is missing but it is not used in practice ...
         match &self.test {
             Test::Default => return 0,
+
             Test::Scalar(s) => match s.ty {
                 _ => {
                     out += s.ty.type_size() * MULT;
+                }
+            },
+
+            Test::Float(t) => match t.ty {
+                _ => {
+                    out += t.ty.type_size() * MULT;
                 }
             },
 
@@ -1624,7 +1760,7 @@ impl Match {
         if let Some(op) = self.test.cmp_op() {
             match op {
                 // matching almost any gets penalty
-                CmpOp::Neg => out = 0,
+                CmpOp::Neq => out = 0,
                 CmpOp::Eq | CmpOp::Not => out += MULT,
                 CmpOp::Lt | CmpOp::Gt => out -= 2 * MULT,
                 CmpOp::Xor | CmpOp::BitAnd => out -= MULT,

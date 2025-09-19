@@ -305,3 +305,123 @@ impl DynDisplay for Scalar {
         }
     }
 }
+
+macro_rules! impl_float_type {
+    ($($name: tt($ty: ty)),* $(,)?) => {
+        #[allow(non_camel_case_types)]
+        #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
+
+        pub(crate) enum Float {
+            $($name($ty),)*
+        }
+
+        impl std::ops::Add for Float {
+            type Output = Self;
+
+            fn add(self, other: Self) -> Self::Output {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Self::$name(a.add(b)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+        }
+
+        impl std::ops::Sub for Float {
+            type Output = Self;
+
+            fn sub(self, other: Self) -> Self::Output {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Self::$name(a.sub(b)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+        }
+
+        impl std::ops::Mul for Float {
+            type Output = Self;
+
+            fn mul(self, other: Self) -> Self::Output {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Self::$name(a.mul(b)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+        }
+
+        impl std::ops::Div for Float {
+            type Output = Self;
+
+            fn div(self, other: Self) -> Self::Output {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Self::$name(a.div(b)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+        }
+
+        impl std::ops::Rem for Float {
+            type Output = Self;
+
+            fn rem(self, other: Self) -> Self::Output {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Self::$name(a.rem(b)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+        }
+
+        #[derive(Debug, Clone, Copy)]
+        #[allow(non_camel_case_types)]
+        pub(crate) enum FloatDataType {
+            $($name,)*
+        }
+
+        impl FloatDataType {
+            pub(crate) const fn type_size(&self) -> usize {
+                match self {
+                    $(Self::$name => core::mem::size_of::<$ty>(),)*
+                }
+            }
+
+            pub(crate) fn float_from_f64(&self, i: f64) -> Float {
+                match self {
+                    $(Self::$name => Float::$name(i as $ty),)*
+                }
+            }
+        }
+    };
+}
+
+impl_float_type!(bedouble(f64), ledouble(f64), lefloat(f32), befloat(f32));
+
+impl fmt::Display for Float {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Float::bedouble(v) => write!(f, "{v}"),
+            Float::ledouble(v) => write!(f, "{v}"),
+            Float::lefloat(v) => write!(f, "{v}"),
+            Float::befloat(v) => write!(f, "{v}"),
+        }
+    }
+}
+
+impl DynDisplay for Float {
+    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+        match self {
+            Float::bedouble(v) => DynDisplay::dyn_fmt(v, f),
+            Float::ledouble(v) => DynDisplay::dyn_fmt(v, f),
+            Float::lefloat(v) => DynDisplay::dyn_fmt(v, f),
+            Float::befloat(v) => DynDisplay::dyn_fmt(v, f),
+        }
+    }
+}
