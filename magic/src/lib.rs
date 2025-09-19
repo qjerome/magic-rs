@@ -2084,7 +2084,7 @@ impl MatchState {
 pub struct Magic<'m> {
     source: Option<Cow<'m, str>>,
     message: Vec<Cow<'m, str>>,
-    mime: Option<Cow<'m, str>>,
+    mimetype: Option<Cow<'m, str>>,
     strength: Option<u64>,
 }
 
@@ -2105,7 +2105,7 @@ impl<'m> Magic<'m> {
                 .map(Cow::into_owned)
                 .map(Cow::Owned)
                 .collect(),
-            mime: self.mime.map(|m| Cow::Owned(m.into_owned())),
+            mimetype: self.mimetype.map(|m| Cow::Owned(m.into_owned())),
             strength: self.strength,
         }
     }
@@ -2138,7 +2138,9 @@ impl<'m> Magic<'m> {
 
     #[inline(always)]
     pub fn mimetype(&self) -> &str {
-        self.mime.as_deref().unwrap_or("application/octet-stream")
+        self.mimetype
+            .as_deref()
+            .unwrap_or("application/octet-stream")
     }
 
     #[inline(always)]
@@ -2150,14 +2152,14 @@ impl<'m> Magic<'m> {
     }
 
     fn insert_mimetype<'a: 'm>(&mut self, mime: Cow<'a, str>) {
-        if self.mime.is_none() {
+        if self.mimetype.is_none() {
             debug!("insert mime: {:?}", mime);
-            self.mime = Some(mime)
+            self.mimetype = Some(mime)
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.message.is_empty() && self.mime.is_none() && self.strength.is_none()
+        self.message.is_empty() && self.mimetype.is_none() && self.strength.is_none()
     }
 
     pub fn strength(&self) -> Option<u64> {
@@ -2238,7 +2240,7 @@ impl MagicDb {
                 0,
             )?;
 
-            if !magic.message.is_empty() {
+            if !magic.mimetype.is_none() {
                 return Ok(Some(magic));
             }
         }
@@ -2254,19 +2256,20 @@ impl MagicDb {
         self.magic_first_with_opt_stream_kind(haystack, Some(stream_kind))
     }
 
-    pub fn magic_all<R: Read + Seek>(
+    #[inline(always)]
+    fn magic_all_with_opt_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
+        stream_kind: Option<StreamKind>,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let mut out = Vec::new();
-        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
 
         for rule in self.binary_rules.iter().chain(self.text_rules.iter()) {
             let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
 
             rule.magic(
                 &mut magic,
-                Some(stream_kind),
+                stream_kind,
                 None,
                 None,
                 haystack,
@@ -2284,13 +2287,31 @@ impl MagicDb {
         Ok(out)
     }
 
+    pub fn magic_all<R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+    ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+        self.magic_all_with_opt_stream_kind(haystack, Some(stream_kind))
+    }
+
+    #[inline(always)]
+    fn magic_best_with_opt_stream_kind<R: Read + Seek>(
+        &self,
+        haystack: &mut LazyCache<R>,
+        stream_kind: Option<StreamKind>,
+    ) -> Result<Option<Magic<'_>>, Error> {
+        let mut magics = self.magic_all_with_opt_stream_kind(haystack, stream_kind)?;
+        magics.sort_by(|a, b| b.0.cmp(&a.0));
+        return Ok(magics.into_iter().map(|(_, m)| m).next());
+    }
+
     pub fn magic_best<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
     ) -> Result<Option<Magic<'_>>, Error> {
-        let mut magics = self.magic_all(haystack)?;
-        magics.sort_by(|a, b| b.0.cmp(&a.0));
-        return Ok(magics.into_iter().map(|(_, m)| m).next());
+        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+        self.magic_best_with_opt_stream_kind(haystack, Some(stream_kind))
     }
 }
 
@@ -2313,7 +2334,7 @@ mod tests {
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
-        let v = md.magic_first_with_opt_stream_kind(&mut reader, None)?;
+        let v = md.magic_best_with_opt_stream_kind(&mut reader, None)?;
         Ok(v.map(|m| m.into_owned()))
     }
 
