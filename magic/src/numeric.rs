@@ -4,7 +4,8 @@ use dyf::DynDisplay;
 use uuid::Uuid;
 
 use crate::utils::{
-    unix_local_time_to_string, unix_utc_time_to_string, windows_filetime_to_string,
+    parse_fat_date, parse_fat_time, unix_local_time_to_string, unix_utc_time_to_string,
+    windows_filetime_to_string,
 };
 
 macro_rules! impl_numeric_types {
@@ -293,9 +294,6 @@ impl DynDisplay for Scalar {
             Scalar::uleshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::uledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Scalar::ubeqdate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Self::offset(value) => DynDisplay::dyn_fmt(value, f),
-            Self::lemsdosdate(value) => Ok(format!("mdosdate({})", value)),
-            Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
             Scalar::medate(value) => Ok(unix_utc_time_to_string(*value as i64)),
             Scalar::meldate(value) => Ok(unix_local_time_to_string(*value as i64)),
             Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
@@ -307,9 +305,13 @@ impl DynDisplay for Scalar {
                 .hyphenated()
                 .to_string()
                 .to_uppercase()),
-            Scalar::offset(_) => todo!(),
-            Scalar::lemsdosdate(_) => todo!(),
-            Scalar::lemsdostime(_) => todo!(),
+            Scalar::offset(v) => Ok(format!("{v:#x}")),
+            Scalar::lemsdosdate(v) => Ok(parse_fat_date(*v)
+                .map(|fd| fd.to_string())
+                .unwrap_or("invalid msdos date".into())),
+            Scalar::lemsdostime(v) => Ok(parse_fat_time(*v)
+                .map(|ft| ft.to_string())
+                .unwrap_or("invalid msdos time".into())),
         }
     }
 }
