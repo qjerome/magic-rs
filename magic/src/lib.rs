@@ -65,96 +65,22 @@ macro_rules! read_be {
     ($r:expr, $ty: ty ) => {{ <$ty>::from_be_bytes(read!($r, $ty)) }};
 }
 
-#[derive(Debug, Clone)]
-enum Message {
-    String(String),
-    Format {
-        printf_spec: String,
-        fs: FormatString,
-    },
-}
-
-impl Display for Message {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::String(s) => write!(f, "{}", s),
-            Self::Format { printf_spec: _, fs } => write!(f, "{}", fs.to_string_lossy()),
-        }
-    }
-}
-
-impl Message {
-    #[inline(always)]
-    fn format_with(&self, mr: Option<&MatchRes>) -> Cow<'_, str> {
-        match self {
-            Self::String(s) => Cow::Borrowed(s.as_str()),
-            Self::Format {
-                printf_spec: c_spec,
-                fs,
-            } => {
-                if let Some(mr) = mr {
-                    match mr {
-                        MatchRes::OwnedString(_, _) => {
-                            // FIXME: fix unwrap
-                            Cow::Owned(dformat!(fs, mr).unwrap())
-                        }
-                        MatchRes::String(_, _) => {
-                            // FIXME: fix unwrap
-                            Cow::Owned(dformat!(fs, mr).unwrap())
-                        }
-                        MatchRes::Bytes(_, _) => {
-                            // FIX: unwrap
-                            Cow::Owned(dformat!(fs, mr).unwrap())
-                        }
-                        MatchRes::Float(_, _) => {
-                            // FIX: unwrap
-                            Cow::Owned(dformat!(fs, mr).unwrap())
-                        }
-                        MatchRes::Scalar(_, scalar) => {
-                            // we want to print a byte as char
-                            if c_spec.as_str() == "c" {
-                                match scalar {
-                                    Scalar::byte(b) => {
-                                        let b = (*b as u8) as char;
-                                        // FIXME: fix unwrap
-                                        Cow::Owned(dformat!(fs, b).unwrap())
-                                    }
-                                    Scalar::ubyte(b) => {
-                                        let b = *b as char;
-                                        // FIXME: fix unwrap
-                                        Cow::Owned(dformat!(fs, b).unwrap())
-                                    }
-                                    // FIXME: fix unwrap
-                                    _ => Cow::Owned(dformat!(fs, mr).unwrap()),
-                                }
-                            } else {
-                                // FIXME: fix unwrap
-                                Cow::Owned(dformat!(fs, mr).unwrap())
-                            }
-                        }
-                    }
-                } else {
-                    fs.to_string_lossy()
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("unexpected rule: {0}")]
     UnexpectedRule(String),
     #[error("missing rule: {0}")]
     MissingRule(String),
+    #[error("maximum recursion reached: {0}")]
+    MaximumRecursion(usize),
     #[error("io: {0}")]
     Io(#[from] io::Error),
     #[error("parser error: {0}")]
     Parse(#[from] Box<pest::error::Error<Rule>>),
     #[error("from-utf8: {0}")]
     Utf8(#[from] Utf8Error),
-    #[error("maximum recursion reached: {0}")]
-    MaximumRecursion(usize),
+    #[error("formatting: {0}")]
+    Format(#[from] dyf::Error),
 }
 
 impl Error {
@@ -175,6 +101,73 @@ pub struct ParserError(pest::error::Error<Rule>);
 impl From<pest::error::Error<Rule>> for ParserError {
     fn from(value: pest::error::Error<Rule>) -> Self {
         Self(value)
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Message {
+    String(String),
+    Format {
+        printf_spec: String,
+        fs: FormatString,
+    },
+}
+
+impl Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(s) => write!(f, "{}", s),
+            Self::Format { printf_spec: _, fs } => write!(f, "{}", fs.to_string_lossy()),
+        }
+    }
+}
+
+impl Message {
+    fn to_string_lossy(&self) -> Cow<'_, str> {
+        match self {
+            Message::String(s) => Cow::Borrowed(s),
+            Message::Format { printf_spec: _, fs } => fs.to_string_lossy(),
+        }
+    }
+
+    #[inline(always)]
+    fn format_with(&self, mr: Option<&MatchRes>) -> Result<Cow<'_, str>, Error> {
+        match self {
+            Self::String(s) => Ok(Cow::Borrowed(s.as_str())),
+            Self::Format {
+                printf_spec: c_spec,
+                fs,
+            } => {
+                if let Some(mr) = mr {
+                    match mr {
+                        MatchRes::OwnedString(_, _)
+                        | MatchRes::String(_, _)
+                        | MatchRes::Float(_, _)
+                        | MatchRes::Bytes(_, _) => Ok(Cow::Owned(dformat!(fs, mr)?)),
+                        MatchRes::Scalar(_, scalar) => {
+                            // we want to print a byte as char
+                            if c_spec.as_str() == "c" {
+                                match scalar {
+                                    Scalar::byte(b) => {
+                                        let b = (*b as u8) as char;
+                                        Ok(Cow::Owned(dformat!(fs, b)?))
+                                    }
+                                    Scalar::ubyte(b) => {
+                                        let b = *b as char;
+                                        Ok(Cow::Owned(dformat!(fs, b)?))
+                                    }
+                                    _ => Ok(Cow::Owned(dformat!(fs, mr)?)),
+                                }
+                            } else {
+                                Ok(Cow::Owned(dformat!(fs, mr)?))
+                            }
+                        }
+                    }
+                } else {
+                    Ok(fs.to_string_lossy())
+                }
+            }
+        }
     }
 }
 
@@ -733,6 +726,7 @@ enum MatchRes<'buf> {
     // FIXME: maybe we can optimize here by having it as Bytes
     // and managing encoding at display time.
     OwnedString(u64, String),
+    // FIXME: it may be un-necessary
     String(u64, &'buf str),
     Bytes(u64, &'buf [u8]),
     Scalar(u64, Scalar),
@@ -1472,21 +1466,16 @@ impl Match {
         depth: usize,
     ) -> Result<bool, Error> {
         let source = source.unwrap_or("unknown");
+        let line = self.line;
 
         if let Some(stream_kind) = stream_kind {
             if self.test.is_only_binary() && stream_kind.is_text() {
-                trace!(
-                    "skip binary test source={source} line={} stream_kind={stream_kind:?}",
-                    self.line
-                );
+                trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}",);
                 return Ok(false);
             }
 
             if self.test.is_only_text() && !stream_kind.is_text() {
-                trace!(
-                    "skip text test source={source} line={} stream_kind={stream_kind:?}",
-                    self.line
-                );
+                trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}",);
                 return Ok(false);
             }
         }
@@ -1513,25 +1502,23 @@ impl Match {
         match &self.test {
             Test::Clear => {
                 // handle clear and default tests
-                trace!("source={source} line={} clear", self.line);
+                trace!("source={source} line={line} clear");
                 state.clear_continuation_level(&self.continuation_level());
                 Ok(true)
             }
             Test::Name(name) => {
                 trace!(
-                    "source={source} line={} running rule {name} switch_endianness={switch_endianness}",
-                    self.line
+                    "source={source} line={line} running rule {name} switch_endianness={switch_endianness}",
                 );
                 if let Some(msg) = self.message.as_ref() {
-                    magic.push_message(msg.format_with(None));
+                    magic.push_message(msg.to_string_lossy());
                 }
                 Ok(true)
             }
 
             Test::Use(flip_endianness, rule_name) => {
                 trace!(
-                    "source={source} line={} use {rule_name} switch_endianness={flip_endianness}",
-                    self.line
+                    "source={source} line={line} use {rule_name} switch_endianness={flip_endianness}",
                 );
 
                 // switch_endianness must propagate down the rule call stack
@@ -1543,7 +1530,7 @@ impl Match {
                     .ok_or(Error::MissingRule(rule_name.clone()))?;
 
                 if let Some(msg) = self.message.as_ref() {
-                    magic.push_message(msg.format_with(None));
+                    magic.push_message(msg.to_string_lossy());
                 }
 
                 dr.rule.magic(
@@ -1562,8 +1549,8 @@ impl Match {
 
             Test::Indirect(m) => {
                 trace!(
-                    "source={source} line={} indirect mods={:?} offset={offset:#x}",
-                    self.line, m
+                    "source={source} line={line} indirect mods={:?} offset={offset:#x}",
+                    m
                 );
 
                 let base_offset = if m.contains(IndirectMod::Relative) {
@@ -1599,10 +1586,10 @@ impl Match {
                 // default matches if nothing else at the continuation level matched
                 let ok = !state.get_continuation_level(&self.continuation_level());
 
-                trace!("source={source} line={} default match={ok}", self.line);
+                trace!("source={source} line={line} default match={ok}");
                 if ok {
                     if let Some(msg) = self.message.as_ref() {
-                        magic.push_message(msg.format_with(None));
+                        magic.push_message(msg.to_string_lossy());
                     }
                     state.set_continuation_level(self.continuation_level());
                 }
@@ -1616,8 +1603,7 @@ impl Match {
 
                 if enabled!(Level::DEBUG) {
                     trace_msg = Some(vec![format!(
-                        "source={source} line={} stream_offset={:#x} ",
-                        self.line,
+                        "source={source} line={line} stream_offset={:#x} ",
                         haystack.stream_position().unwrap_or_default()
                     )])
                 }
@@ -1629,10 +1615,7 @@ impl Match {
                     .test
                     .read_test_value(haystack, switch_endianness)
                     .inspect_err(|e| {
-                        trace!(
-                            "source={source} line={} error while reading test value: {e}",
-                            self.line
-                        )
+                        debug!("source={source} line={line} error while reading test value: {e}",)
                     })
                 {
                     // we need to adjust stream offset if this is a regex test since we read beyond the match
@@ -1664,7 +1647,11 @@ impl Match {
 
                     if let Some(mr) = match_res {
                         if let Some(s) = self.message.as_ref() {
-                            magic.push_message(s.format_with(Some(&mr)));
+                            if let Ok(msg) = s.format_with(Some(&mr)).inspect_err(|e| {
+                                debug!("source={source} line={line} failed to format message: {e}")
+                            }) {
+                                magic.push_message(msg);
+                            }
                         }
                         // we re-ajust the stream offset only if we have a match
                         if adjust_stream_offset {
