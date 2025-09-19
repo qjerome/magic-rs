@@ -169,7 +169,7 @@ default_test = ${ default ~ WHITESPACE+ ~ any_value }
 indirect_test = ${ indirect ~ WHITESPACE+ ~ any_value }
 
 // regex / search test
-search_test = ${ (regex | search) ~ WHITESPACE+ ~ string_value }
+search_test = ${ (regex | search) ~ WHITESPACE+ ~ "="? ~ string_value }
 
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
