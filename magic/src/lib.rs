@@ -42,7 +42,7 @@ pub const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
 
-const TIMESTAMP_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
+pub(crate) const TIMESTAMP_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
 
 macro_rules! debug_panic {
     ($($arg:tt)*) => {
@@ -174,127 +174,6 @@ pub struct ParserError(pest::error::Error<Rule>);
 impl From<pest::error::Error<Rule>> for ParserError {
     fn from(value: pest::error::Error<Rule>) -> Self {
         Self(value)
-    }
-}
-
-#[inline(always)]
-fn unix_local_time_to_string(timestamp: i64) -> String {
-    Local
-        .timestamp_opt(timestamp, 0)
-        .earliest()
-        .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
-        .unwrap_or("invalid timestamp".into())
-}
-
-#[inline(always)]
-fn unix_utc_time_to_string(timestamp: i64) -> String {
-    DateTime::from_timestamp(timestamp, 0)
-        .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-        .unwrap_or("invalid timestamp".into())
-}
-
-impl DynDisplay for Scalar {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
-        match self {
-            Scalar::date(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::ldate(value) => Ok(unix_local_time_to_string(*value as i64)),
-            Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::bedate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::beldate(value) => Ok(unix_local_time_to_string(*value as i64)),
-            Scalar::beqdate(value) => Ok(unix_utc_time_to_string(*value)),
-            Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::lelong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::leshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::lequad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::long(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::short(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ushort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ulong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::uquad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ubelong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ubequad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ubeshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ubyte(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ulelong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ulequad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::uleshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::uledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::ubeqdate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Self::offset(value) => DynDisplay::dyn_fmt(value, f),
-            Self::lemsdosdate(value) => Ok(format!("mdosdate({})", value)),
-            Self::lemsdostime(value) => Ok(format!("mdostime({})", value)),
-            Scalar::medate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::meldate(value) => Ok(unix_local_time_to_string(*value as i64)),
-            Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::leqdate(value) => Ok(unix_utc_time_to_string(*value)),
-            Scalar::leldate(value) => Ok(unix_local_time_to_string(*value as i64)),
-            Scalar::leqldate(value) => Ok(unix_local_time_to_string(*value)),
-            Scalar::guid(value) => Ok(Uuid::from_u128(*value)
-                .hyphenated()
-                .to_string()
-                .to_uppercase()),
-            Scalar::offset(_) => todo!(),
-            Scalar::lemsdosdate(_) => todo!(),
-            Scalar::lemsdostime(_) => todo!(),
-        }
-    }
-}
-
-impl fmt::Display for Scalar {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Scalar::date(value) => write!(f, "date({})", value),
-            Scalar::ldate(value) => write!(f, "ldate({})", value),
-            Scalar::quad(value) => write!(f, "{}", value),
-            Scalar::uquad(value) => write!(f, "{}", value),
-            Scalar::belong(value) => write!(f, "{}", value),
-            Scalar::bequad(value) => write!(f, "{}", value),
-            Scalar::beshort(value) => write!(f, "{}", value),
-            Scalar::bedate(value) => write!(f, "bedate({})", value),
-            Scalar::beldate(value) => write!(f, "beldate({})", value),
-            Scalar::beqdate(value) => write!(f, "beqdate({})", value),
-            Scalar::byte(value) => write!(f, "{}", value),
-            Scalar::ledate(value) => write!(f, "ledate({})", value),
-            Scalar::lelong(value) => write!(f, "{}", value),
-            Scalar::leshort(value) => write!(f, "{}", value),
-            Scalar::lequad(value) => write!(f, "{}", value),
-            Scalar::long(value) => write!(f, "{}", value),
-            Scalar::short(value) => write!(f, "{}", value),
-            Scalar::ushort(value) => write!(f, "{}", value),
-            Scalar::ulong(value) => write!(f, "{}", value),
-            Scalar::ubelong(value) => write!(f, "{}", value),
-            Scalar::ubequad(value) => write!(f, "{}", value),
-            Scalar::ubeshort(value) => write!(f, "{}", value),
-            Scalar::ubyte(value) => write!(f, "{}", value),
-            Scalar::ulelong(value) => write!(f, "{}", value),
-            Scalar::ulequad(value) => write!(f, "{}", value),
-            Scalar::uleshort(value) => write!(f, "{}", value),
-            Scalar::uledate(value) => write!(f, "uledate({})", value),
-            Scalar::ubeqdate(value) => write!(f, "ubeqdate({value})"),
-            Scalar::offset(value) => write!(f, "{:p}", value),
-            Scalar::lemsdosdate(value) => write!(f, "lemsdosdate({})", value),
-            Scalar::lemsdostime(value) => write!(f, "lemsdostime({})", value),
-            Scalar::medate(value) => write!(f, "medate({})", value),
-            Scalar::melong(value) => write!(f, "{}", value),
-            Scalar::meldate(value) => write!(f, "meldate({})", value),
-            Scalar::leldate(value) => write!(f, "leldate({})", value),
-            Scalar::leqdate(value) => write!(f, "leqdate({})", value),
-            Scalar::leqldate(value) => write!(f, "leqldate({})", value),
-            Scalar::guid(value) => {
-                write!(
-                    f,
-                    "{}",
-                    Uuid::from_u128(*value)
-                        .hyphenated()
-                        .to_string()
-                        .to_uppercase()
-                )
-            }
-        }
     }
 }
 
@@ -2287,7 +2166,7 @@ impl MagicDb {
 mod tests {
     use std::io::Cursor;
 
-    use crate::parser::unescape_string_to_vec;
+    use crate::{parser::unescape_string_to_vec, utils::unix_local_time_to_string};
 
     use super::*;
 

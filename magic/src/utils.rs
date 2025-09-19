@@ -1,4 +1,6 @@
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone};
+
+use crate::TIMESTAMP_FORMAT;
 
 /// Parses a u16 FAT/DOS date into a `NaiveDate`.
 // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-dosdatetimetofiletime?redirectedfrom=MSDN
@@ -66,6 +68,22 @@ pub(crate) fn nonmagic(str: &str) -> usize {
     }
 
     if rv == 0 { 1 } else { rv }
+}
+
+#[inline(always)]
+pub(crate) fn unix_local_time_to_string(timestamp: i64) -> String {
+    Local
+        .timestamp_opt(timestamp, 0)
+        .earliest()
+        .map(|ts| ts.naive_local().format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or("invalid timestamp".into())
+}
+
+#[inline(always)]
+pub(crate) fn unix_utc_time_to_string(timestamp: i64) -> String {
+    DateTime::from_timestamp(timestamp, 0)
+        .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
+        .unwrap_or("invalid timestamp".into())
 }
 
 #[cfg(test)]
