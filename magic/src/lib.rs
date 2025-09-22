@@ -982,170 +982,166 @@ impl Test {
                     .map(|f| TestValue::Float(test_value_offset, f)),
             },
 
-            // FIXME: all other tests should have been handled
-            // before -> make this cleaner
-            _ => unimplemented!(),
+            Self::Name(_)
+            | Self::Use(_, _)
+            | Self::Indirect(_)
+            | Self::Clear
+            | Self::Default
+            | Self::Der => Err(Error::msg("no value to read for this test")),
         }
     }
 
+    // FIXME: this function must return a result
     #[inline(always)]
     fn match_value<'s>(&'s self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
-        // always true when we want to read value
-        if let Self::Any(v) = self {
-            match tv {
-                TestValue::Bytes(o, buf) => match v {
-                    Any::String | Any::PString => {
-                        if let Ok(s) = str::from_utf8(buf) {
-                            return Some(MatchRes::String(*o, s));
+        match (self, tv) {
+            (Self::Any(v), TestValue::Bytes(o, buf)) => match v {
+                Any::String | Any::PString => {
+                    if let Ok(s) = str::from_utf8(buf) {
+                        Some(MatchRes::String(*o, s))
+                    } else {
+                        Some(MatchRes::Bytes(*o, buf))
+                    }
+                }
+
+                Any::String16(enc) => {
+                    let utf16_vec: Vec<u16> = slice_to_utf16_iter(buf, *enc).collect();
+                    if let Ok(s) = String::from_utf16(&utf16_vec) {
+                        Some(MatchRes::OwnedString(*o, s))
+                    } else {
+                        Some(MatchRes::Bytes(*o, buf))
+                    }
+                }
+
+                _ => None,
+            },
+
+            (Self::Any(Any::Scalar(_)), TestValue::Scalar(o, s)) => Some(MatchRes::Scalar(*o, *s)),
+
+            (Self::Scalar(t), TestValue::Scalar(o, ts)) => {
+                let read_value: Scalar = t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
+
+                let ok = match t.cmp_op {
+                    CmpOp::Not => read_value == !t.value,
+                    CmpOp::Eq => read_value == t.value,
+                    CmpOp::Lt => read_value < t.value,
+                    CmpOp::Gt => read_value > t.value,
+                    CmpOp::Neq => read_value != t.value,
+                    CmpOp::BitAnd => read_value & t.value == t.value,
+                    CmpOp::Xor => (read_value & t.value).is_zero(),
+                };
+
+                if ok {
+                    Some(MatchRes::Scalar(*o, read_value))
+                } else {
+                    None
+                }
+            }
+
+            (Self::Float(t), TestValue::Float(o, f)) => {
+                let read_value: Float = t.transform.as_ref().map(|t| t.apply(*f)).unwrap_or(*f);
+
+                let ok = match t.cmp_op {
+                    CmpOp::Eq => read_value == t.value,
+                    CmpOp::Lt => read_value < t.value,
+                    CmpOp::Gt => read_value > t.value,
+                    CmpOp::Neq => read_value != t.value,
+                    _ => {
+                        debug_panic!("unsupported float comparison");
+                        false
+                    }
+                };
+
+                if ok {
+                    Some(MatchRes::Float(*o, read_value))
+                } else {
+                    None
+                }
+            }
+
+            (Self::String(st), TestValue::Bytes(o, buf)) => {
+                match st.cmp_op {
+                    CmpOp::Eq => {
+                        if let Some(b) = st.matches(buf) {
+                            Some(MatchRes::Bytes(*o, b))
                         } else {
-                            return Some(MatchRes::Bytes(*o, buf));
+                            None
                         }
                     }
-
-                    Any::String16(enc) => {
-                        let utf16_vec: Vec<u16> = slice_to_utf16_iter(buf, *enc).collect();
-                        if let Ok(s) = String::from_utf16(&utf16_vec) {
-                            return Some(MatchRes::OwnedString(*o, s));
+                    CmpOp::Gt => {
+                        if buf.len() > st.str.len() {
+                            Some(MatchRes::Bytes(*o, buf))
                         } else {
-                            return Some(MatchRes::Bytes(*o, buf));
+                            None
                         }
                     }
-
-                    _ => unimplemented!(),
-                },
-
-                TestValue::Scalar(o, s) => {
-                    if matches!(v, Any::Scalar(_)) {
-                        return Some(MatchRes::Scalar(*o, *s));
+                    CmpOp::Lt => {
+                        if buf.len() < st.str.len() {
+                            Some(MatchRes::Bytes(*o, buf))
+                        } else {
+                            None
+                        }
                     }
-                }
-                _ => panic!("not good"),
-            }
-
-            // FIXME: remove this
-            panic!("any test not properly handled")
-        }
-
-        match tv {
-            TestValue::Scalar(o, ts) => {
-                if let Self::Scalar(t) = self {
-                    let read_value: Scalar =
-                        t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
-
-                    let ok = match t.cmp_op {
-                        CmpOp::Not => read_value == !t.value,
-                        CmpOp::Eq => read_value == t.value,
-                        CmpOp::Lt => read_value < t.value,
-                        CmpOp::Gt => read_value > t.value,
-                        CmpOp::Neq => read_value != t.value,
-                        CmpOp::BitAnd => read_value & t.value == t.value,
-                        CmpOp::Xor => (read_value & t.value).is_zero(),
-                    };
-
-                    if ok {
-                        return Some(MatchRes::Scalar(*o, read_value));
+                    // unsupported for strings
+                    _ => {
+                        debug_panic!("unsupported cmp operator for string");
+                        None
                     }
                 }
             }
-            TestValue::Float(o, f) => {
-                if let Self::Float(t) = self {
-                    let read_value: Float = t.transform.as_ref().map(|t| t.apply(*f)).unwrap_or(*f);
 
-                    let ok = match t.cmp_op {
-                        CmpOp::Eq => read_value == t.value,
-                        CmpOp::Lt => read_value < t.value,
-                        CmpOp::Gt => read_value > t.value,
-                        CmpOp::Neq => read_value != t.value,
-                        _ => {
-                            debug_panic!("unsupported float comparison");
-                            false
-                        }
-                    };
-
-                    if ok {
-                        return Some(MatchRes::Float(*o, read_value));
-                    }
+            (Self::PString(m), TestValue::Bytes(o, buf)) => {
+                if buf == m {
+                    Some(MatchRes::Bytes(*o, buf))
+                } else {
+                    None
                 }
             }
-            TestValue::Bytes(o, buf) => {
-                match self {
-                    Self::String(st) => {
-                        match st.cmp_op {
-                            CmpOp::Eq => {
-                                if let Some(b) = st.matches(buf) {
-                                    return Some(MatchRes::Bytes(*o, b));
-                                }
-                            }
-                            CmpOp::Gt => {
-                                if buf.len() > st.str.len() {
-                                    return Some(MatchRes::Bytes(*o, buf));
-                                }
-                            }
-                            CmpOp::Lt => {
-                                if buf.len() < st.str.len() {
-                                    return Some(MatchRes::Bytes(*o, buf));
-                                }
-                            }
-                            // unsupported for strings
-                            _ => {
-                                debug_panic!("unsupported cmp operator for string")
-                            }
-                        }
-                    }
 
-                    Self::PString(m) => {
-                        if buf == m {
-                            return Some(MatchRes::Bytes(*o, buf));
-                        }
-                    }
+            (Self::String16(t), TestValue::Bytes(o, buf)) => {
+                // strings cannot be equal
+                if t.str16.len() * 2 != buf.len() {
+                    return None;
+                }
 
-                    Self::String16(t) => {
-                        // strings cannot be equal
-                        if t.str16.len() * 2 != buf.len() {
+                // we check string equality
+                for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
+                    if t.str16[i] != utf16_char {
+                        return None;
+                    }
+                }
+
+                Some(MatchRes::String(*o, &t.orig))
+            }
+
+            (Self::Regex(r), TestValue::Bytes(o, buf)) => {
+                if let Some(re_match) = r.re.find(&buf) {
+                    if let Some(n_pos) = r.n_pos {
+                        // we check for positinal match inherited from search conversion
+                        if re_match.start() >= n_pos {
                             return None;
                         }
-
-                        // we check string equality
-                        for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
-                            if t.str16[i] != utf16_char {
-                                return None;
-                            }
-                        }
-
-                        return Some(MatchRes::String(*o, &t.orig));
                     }
 
-                    Self::Regex(r) => {
-                        if let Some(re_match) = r.re.find(&buf) {
-                            if let Some(n_pos) = r.n_pos {
-                                // we check for positinal match inherited from search conversion
-                                if re_match.start() >= n_pos {
-                                    return None;
-                                }
-                            }
-
-                            return Some(MatchRes::Bytes(
-                                // the offset of the string is computed from the start of the buffer
-                                o + re_match.start() as u64,
-                                re_match.as_bytes(),
-                            ));
-                        }
-                    }
-
-                    Self::Search(t) => {
+                    Some(MatchRes::Bytes(
                         // the offset of the string is computed from the start of the buffer
-                        return t.matches(&buf).map(|(p, m)| MatchRes::Bytes(o + p, m));
-                    }
-
-                    _ => unimplemented!(),
+                        o + re_match.start() as u64,
+                        re_match.as_bytes(),
+                    ))
+                } else {
+                    None
                 }
             }
-        }
 
-        None
+            (Self::Search(t), TestValue::Bytes(o, buf)) => {
+                // the offset of the string is computed from the start of the buffer
+                t.matches(&buf).map(|(p, m)| MatchRes::Bytes(o + p, m))
+            }
+
+            _ => None,
+        }
     }
 
-    //FIXME: complete with all possible operators
     #[inline(always)]
     fn cmp_op(&self) -> Option<CmpOp> {
         match self {
