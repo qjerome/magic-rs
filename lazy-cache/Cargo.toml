@@ -7,7 +7,6 @@ edition = "2024"
 lru-st = "0.3.0"
 
 [dev-dependencies]
-tempfile = "3.21.0"
 criterion = "0.7.0"
 rand = "0.9.2"
 

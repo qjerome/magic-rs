@@ -434,14 +434,12 @@ where
 mod tests {
     use super::*;
     use std::io::{Seek, SeekFrom, Write};
-    use tempfile::NamedTempFile;
 
-    // Helper function to create a test file with known content
-    fn create_test_file(content: &[u8]) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content).unwrap();
-        file.seek(SeekFrom::Start(0)).unwrap();
-        file
+    macro_rules! lazy_cache {
+        ($content: literal, $block_size: literal, $max_size: literal) => {
+            LazyCache::from_read_seek(std::io::Cursor::new($content), $block_size, $max_size)
+                .unwrap()
+        };
     }
 
     fn verify<R: Read + Seek>(lf: &LazyCache<R>) {
@@ -452,8 +450,7 @@ mod tests {
 
     #[test]
     fn test_open_file() {
-        let file = create_test_file(b"hello world");
-        let cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let cache = lazy_cache!(b"hello world", 4, 1024);
         assert_eq!(cache.block_size, 4);
         assert_eq!(cache.max_size, 1024);
         verify(&cache);
@@ -461,8 +458,7 @@ mod tests {
 
     #[test]
     fn test_get_single_block() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_range(0..4).unwrap();
         assert_eq!(data, b"hell");
         verify(&cache);
@@ -470,8 +466,7 @@ mod tests {
 
     #[test]
     fn test_get_across_blocks() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_range(2..7).unwrap();
         assert_eq!(data, b"llo w");
         verify(&cache);
@@ -479,8 +474,7 @@ mod tests {
 
     #[test]
     fn test_get_entire_file() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_range(0..11).unwrap();
         assert_eq!(data, b"hello world");
         verify(&cache);
@@ -488,8 +482,7 @@ mod tests {
 
     #[test]
     fn test_get_empty_range() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_range(0..0).unwrap();
         assert!(data.is_empty());
         verify(&cache);
@@ -497,8 +490,7 @@ mod tests {
 
     #[test]
     fn test_get_out_of_bounds() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         // This should not panic, but return an error or empty slice depending on your design
         // Currently, your code will panic due to `unwrap()` on `None`
         // You may want to handle this case more gracefully
@@ -508,8 +500,7 @@ mod tests {
 
     #[test]
     fn test_cache_eviction() {
-        let file = create_test_file(b"0123456789abcdef");
-        let mut cache = LazyCache::open(file.path(), 4, 8).unwrap();
+        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 8);
         // Load blocks 0 and 1
         let _ = cache.read_range(0..8).unwrap();
         // Load block 2, which should evict block 0 or 1 due to max_size=8
@@ -522,8 +513,7 @@ mod tests {
 
     #[test]
     fn test_chunk_consolidation() {
-        let file = create_test_file(b"0123456789abcdef");
-        let mut cache = LazyCache::open(file.path(), 4, 16).unwrap();
+        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 16);
         // Load blocks 0 and 1 separately
         let _ = cache.read_range(0..4).unwrap();
         let _ = cache.read_range(4..8).unwrap();
@@ -539,8 +529,7 @@ mod tests {
 
     #[test]
     fn test_overlapping_ranges() {
-        let file = create_test_file(b"0123456789abcdef");
-        let mut cache = LazyCache::open(file.path(), 4, 16).unwrap();
+        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 16);
         // Load overlapping ranges
         let _ = cache.read_range(2..6).unwrap();
         let _ = cache.read_range(4..10).unwrap();
@@ -552,8 +541,7 @@ mod tests {
 
     #[test]
     fn test_lru_behavior() {
-        let file = create_test_file(b"0123456789abcdef");
-        let mut cache = LazyCache::open(file.path(), 4, 8).unwrap();
+        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 8);
         // Load block 0
         let _ = cache.read_range(0..4).unwrap();
         // Load block 1
@@ -568,8 +556,7 @@ mod tests {
 
     #[test]
     fn test_small_block_size() {
-        let file = create_test_file(b"abc");
-        let mut cache = LazyCache::open(file.path(), 1, 3).unwrap();
+        let mut cache = lazy_cache!(b"abc", 1, 3);
         let data = cache.read_range(0..3).unwrap();
         assert_eq!(data, b"abc");
         verify(&cache);
@@ -577,8 +564,7 @@ mod tests {
 
     #[test]
     fn test_large_block_size() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 1024, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 1024, 1024);
         let data = cache.read_range(0..11).unwrap();
         assert_eq!(data, b"hello world");
         verify(&cache);
@@ -586,8 +572,7 @@ mod tests {
 
     #[test]
     fn test_file_smaller_than_block() {
-        let file = create_test_file(b"abc");
-        let mut cache = LazyCache::open(file.path(), 1024, 1024).unwrap();
+        let mut cache = lazy_cache!(b"abc", 1024, 1024);
         let data = cache.read_range(0..3).unwrap();
         assert_eq!(data, b"abc");
         verify(&cache);
@@ -595,8 +580,7 @@ mod tests {
 
     #[test]
     fn test_multiple_gets_same_block() {
-        let file = create_test_file(b"0123456789abcdef");
-        let mut cache = LazyCache::open(file.path(), 4, 16).unwrap();
+        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 16);
         // Get the same block multiple times
         let _ = cache.read_range(0..4).unwrap();
         let _ = cache.read_range(0..4).unwrap();
@@ -609,9 +593,7 @@ mod tests {
 
     #[test]
     fn test_read_method() {
-        let data = b"hello world";
-        let file = create_test_file(data);
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let _ = cache.read(6).unwrap();
         let data = cache.read(5).unwrap();
         assert_eq!(data, b"world");
@@ -622,9 +604,7 @@ mod tests {
 
     #[test]
     fn test_read_empty() {
-        let data = b"hello world";
-        let file = create_test_file(data);
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read(0).unwrap();
         assert!(data.is_empty());
         verify(&cache);
@@ -632,9 +612,7 @@ mod tests {
 
     #[test]
     fn test_read_beyond_end() {
-        let data = b"hello world";
-        let file = create_test_file(data);
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let _ = cache.read(11).unwrap();
         let data = cache.read(5).unwrap();
         assert!(data.is_empty());
@@ -643,8 +621,7 @@ mod tests {
 
     #[test]
     fn test_read_exact_range() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_exact_range(0..5).unwrap();
         assert_eq!(data, b"hello");
         assert_eq!(cache.read_exact_range(5..11).unwrap(), b" world");
@@ -654,8 +631,7 @@ mod tests {
 
     #[test]
     fn test_read_exact_range_error() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let result = cache.read_exact_range(0..20);
         assert!(result.is_err());
         verify(&cache);
@@ -663,8 +639,7 @@ mod tests {
 
     #[test]
     fn test_read_exact() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_exact(5).unwrap();
         assert_eq!(data, b"hello");
         assert_eq!(cache.read_exact(6).unwrap(), b" world");
@@ -675,8 +650,7 @@ mod tests {
 
     #[test]
     fn test_read_exact_error() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let result = cache.read_exact(20);
         assert!(result.is_err());
         verify(&cache);
@@ -684,8 +658,7 @@ mod tests {
 
     #[test]
     fn test_read_until_limit() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_until_or_limit(b' ', 10).unwrap();
         assert_eq!(data, b"hello ");
         assert_eq!(cache.read_exact(5).unwrap(), b"world");
@@ -694,8 +667,7 @@ mod tests {
 
     #[test]
     fn test_read_until_limit_not_found() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_until_or_limit(b'\n', 11).unwrap();
         assert_eq!(data, b"hello world");
         assert!(cache.read(1).unwrap().is_empty());
@@ -704,8 +676,7 @@ mod tests {
 
     #[test]
     fn test_read_until_limit_beyond_stream() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_until_or_limit(b'\n', 42).unwrap();
         assert_eq!(data, b"hello world");
         assert!(cache.read(1).unwrap().is_empty());
@@ -714,8 +685,7 @@ mod tests {
 
     #[test]
     fn test_read_until_limit_with_limit() {
-        let file = create_test_file(b"hello world");
-        let mut cache = LazyCache::open(file.path(), 4, 1024).unwrap();
+        let mut cache = lazy_cache!(b"hello world", 4, 1024);
         let data = cache.read_until_or_limit(b' ', 42).unwrap();
         assert_eq!(data, b"hello ");
 
@@ -729,10 +699,11 @@ mod tests {
 
     #[test]
     fn test_read_until_utf16_limit() {
-        let content = io::Cursor::new(
+        let mut cache = lazy_cache!(
             b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64\x00\x00",
+            3,
+            512
         );
-        let mut cache = LazyCache::from_read_seek(content, 3, 512).unwrap();
         let data = cache.read_until_utf16_or_limit(b"\x00\x00", 512).unwrap();
         assert_eq!(data, b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00");
 
