@@ -392,21 +392,16 @@ struct ScalarTransform {
 }
 
 impl ScalarTransform {
-    fn apply(&self, s: Scalar) -> Scalar {
+    fn apply(&self, s: Scalar) -> Option<Scalar> {
         match self.op {
-            // FIXME: impl checked_ fn
-            Op::Add => s.add(self.num),
-            // FIXME: impl checked_ fn
-            Op::Sub => s.sub(self.num),
-            // FIXME: impl checked_ fn
-            Op::Mul => s.mul(self.num),
-            // FIXME: impl checked_ fn
-            Op::Div => s.div(self.num),
-            // FIXME: impl checked_ fn
-            Op::Mod => s.rem(self.num),
-            Op::And => s.bitand(self.num),
-            Op::Xor => s.bitxor(self.num),
-            Op::Or => s.bitor(self.num),
+            Op::Add => s.checked_add(self.num),
+            Op::Sub => s.checked_sub(self.num),
+            Op::Mul => s.checked_mul(self.num),
+            Op::Div => s.checked_div(self.num),
+            Op::Mod => s.checked_rem(self.num),
+            Op::And => Some(s.bitand(self.num)),
+            Op::Xor => Some(s.bitxor(self.num)),
+            Op::Or => Some(s.bitor(self.num)),
         }
     }
 }
@@ -420,15 +415,12 @@ struct FloatTransform {
 impl FloatTransform {
     fn apply(&self, s: Float) -> Float {
         match self.op {
-            // FIXME: impl checked_ fn
             Op::Add => s.add(self.num),
-            // FIXME: impl checked_ fn
             Op::Sub => s.sub(self.num),
-            // FIXME: impl checked_ fn
             Op::Mul => s.mul(self.num),
-            // FIXME: impl checked_ fn
+            // returns inf when div by 0
             Op::Div => s.div(self.num),
-            // FIXME: impl checked_ fn
+            // returns NaN when rem by 0
             Op::Mod => s.rem(self.num),
             // parser makes sure those operators cannot be used
             Op::And | Op::Xor | Op::Or => {
@@ -1061,7 +1053,10 @@ impl Test {
             (Self::Any(Any::Scalar(_)), TestValue::Scalar(o, s)) => Some(MatchRes::Scalar(*o, *s)),
 
             (Self::Scalar(t), TestValue::Scalar(o, ts)) => {
-                let read_value: Scalar = t.transform.as_ref().map(|t| t.apply(*ts)).unwrap_or(*ts);
+                let read_value: Scalar = match t.transform.as_ref() {
+                    Some(t) => t.apply(*ts)?,
+                    None => *ts,
+                };
 
                 let ok = match t.cmp_op {
                     CmpOp::Not => read_value == !t.value,
@@ -1733,8 +1728,8 @@ impl Match {
                     }
 
                     if let Some(mr) = match_res {
-                        if let Some(s) = self.message.as_ref() {
-                            if let Ok(msg) = s.format_with(Some(&mr)).inspect_err(|e| {
+                        if let Some(m) = self.message.as_ref() {
+                            if let Ok(msg) = m.format_with(Some(&mr)).inspect_err(|e| {
                                 debug!("source={source} line={line} failed to format message: {e}")
                             }) {
                                 magic.push_message(msg);

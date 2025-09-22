@@ -23,6 +23,51 @@ macro_rules! impl_numeric_types {
                     $(Self::$name(x) => *x == 0,)*
                 }
             }
+
+            pub(crate) fn checked_add(&self, other: Self) -> Option<Self> {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Some(Self::$name(a.checked_add(b)?)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+
+            pub(crate) fn checked_sub(&self, other: Self) -> Option<Self> {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Some(Self::$name(a.checked_sub(b)?)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+
+            pub(crate) fn checked_mul(&self, other: Self) -> Option<Self> {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Some(Self::$name(a.checked_mul(b)?)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+
+            pub(crate) fn checked_div(&self, other: Self) -> Option<Self> {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Some(Self::$name(a.checked_div(b)?)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
+
+            pub(crate) fn checked_rem(&self, other: Self) -> Option<Self> {
+                match (self, other) {
+                    $(
+                        (Self::$name(a), Self::$name(b)) => Some(Self::$name(a.checked_rem(b)?)),
+                    )*
+                    _=> panic!("operation not supported between different numeric variants")
+                }
+            }
         }
 
         impl std::ops::Not for Scalar {
@@ -36,57 +81,6 @@ macro_rules! impl_numeric_types {
             }
         }
 
-        impl std::ops::Add for Scalar {
-            type Output = Self;
-
-            fn add(self, other: Self) -> Self::Output {
-                match (self, other) {
-                    $(
-                        (Self::$name(a), Self::$name(b)) => Self::$name(a.add(b)),
-                    )*
-                    _=> panic!("operation not supported between different numeric variants")
-                }
-            }
-        }
-
-        impl std::ops::Sub for Scalar {
-            type Output = Self;
-
-            fn sub(self, other: Self) -> Self::Output {
-                match (self, other) {
-                    $(
-                        (Self::$name(a), Self::$name(b)) => Self::$name(a.sub(b)),
-                    )*
-                    _=> panic!("operation not supported between different numeric variants")
-                }
-            }
-        }
-
-        impl std::ops::Mul for Scalar {
-            type Output = Self;
-
-            fn mul(self, other: Self) -> Self::Output {
-                match (self, other) {
-                    $(
-                        (Self::$name(a), Self::$name(b)) => Self::$name(a.mul(b)),
-                    )*
-                    _=> panic!("operation not supported between different numeric variants")
-                }
-            }
-        }
-
-        impl std::ops::Div for Scalar {
-            type Output = Self;
-
-            fn div(self, other: Self) -> Self::Output {
-                match (self, other) {
-                    $(
-                        (Self::$name(a), Self::$name(b)) => Self::$name(a.div(b)),
-                    )*
-                    _=> panic!("operation not supported between different numeric variants")
-                }
-            }
-        }
 
         impl std::ops::BitAnd for Scalar {
             type Output = Self;
@@ -127,18 +121,7 @@ macro_rules! impl_numeric_types {
             }
         }
 
-        impl std::ops::Rem for Scalar {
-            type Output = Self;
 
-            fn rem(self, other: Self) -> Self::Output {
-                match (self, other) {
-                    $(
-                        (Self::$name(a), Self::$name(b)) => Self::$name(a.rem(b)),
-                    )*
-                    _=> panic!("operation not supported between different numeric variants")
-                }
-            }
-        }
 
         #[derive(Debug, Clone, Copy)]
         #[allow(non_camel_case_types)]
