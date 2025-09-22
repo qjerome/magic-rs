@@ -1666,9 +1666,6 @@ impl Match {
                         debug!("source={source} line={line} error while reading test value: {e}",)
                     })
                 {
-                    // we need to adjust stream offset if this is a regex test since we read beyond the match
-                    let adjust_stream_offset = matches!(&self.test, Test::Regex(_));
-
                     trace_msg
                         .as_mut()
                         .map(|v| v.push(format!("test={:?}", self.test)));
@@ -1701,24 +1698,26 @@ impl Match {
                                 magic.push_message(msg);
                             }
                         }
-                        // we re-ajust the stream offset only if we have a match
-                        if adjust_stream_offset {
-                            // we need to compute offset before modifying haystack as
-                            // match_res holds a reference to the haystack, not satisfying
-                            // borrow checking rules
-                            let opt_adjusted_offset = if let MatchRes::Bytes(o, s) = mr {
-                                Some(o + s.len() as u64)
-                            } else {
-                                None
-                            };
 
-                            if let Some(o) = opt_adjusted_offset {
-                                haystack.seek(SeekFrom::Start(o))?;
+                        // we re-ajust the stream offset only if we have a match
+                        if let (Test::Regex(t), MatchRes::Bytes(o, buf)) = (&self.test, &mr) {
+                            let after_match_offset = o + buf.len() as u64;
+
+                            if t.mods.contains(ReMod::StartOffsetUpdate) {
+                                haystack.seek(SeekFrom::Start(*o))?;
+                            } else {
+                                haystack.seek(SeekFrom::Start(after_match_offset))?;
                             }
-                        } else if let (Test::Search(_), MatchRes::Bytes(o, buf)) = (&self.test, mr)
+                        } else if let (Test::Search(t), MatchRes::Bytes(o, buf)) = (&self.test, &mr)
                         {
-                            let opt_adjusted_offset = o + buf.len() as u64;
-                            haystack.seek(SeekFrom::Start(opt_adjusted_offset))?;
+                            let after_match_offset = o + buf.len() as u64;
+
+                            // we adjust offset to the start of the match
+                            if t.re_mods.contains(ReMod::StartOffsetUpdate) {
+                                haystack.seek(SeekFrom::Start(*o))?;
+                            } else {
+                                haystack.seek(SeekFrom::Start(after_match_offset))?;
+                            }
                         }
 
                         state.set_continuation_level(self.continuation_level());
@@ -2435,9 +2434,21 @@ mod tests {
             b"\x00\x00\x00\x00\x00\x00\x42\x82"
         );
 
+        // test regex continuation after match
         assert_magic_match!(
-            r#"0 search \040\x42\x82 binary regex match"#,
-            b"\x00\x00\x00\x00\x00\x20\x42\x82"
+            r#"
+            0 regex \x42\x82
+            >&0 string \xde\xad\xbe\xef it works
+            "#,
+            b"\x00\x00\x00\x00\x00\x00\x42\x82\xde\xad\xbe\xef"
+        );
+
+        assert_magic_match!(
+            r#"
+            0 regex/s \x42\x82
+            >&0 string \x42\x82\xde\xad\xbe\xef it works
+            "#,
+            b"\x00\x00\x00\x00\x00\x00\x42\x82\xde\xad\xbe\xef"
         );
     }
 
@@ -2497,7 +2508,7 @@ mod tests {
         assert_magic_not_match!(
             r#"0	string/W	#!/usr/bin/env\ \ python  PYTHON"#,
             b"#!/usr/bin/env python"
-        )
+        );
     }
 
     #[test]
@@ -2505,6 +2516,23 @@ mod tests {
         assert_magic_match!(
             r#"0	search/1/fwt	#!\ /usr/bin/luatex	LuaTex script text executable"#,
             b"#!          /usr/bin/luatex "
+        );
+
+        // test matching from the beginning
+        assert_magic_match!(
+            r#"
+            0	search/s	/usr/bin/env
+            >&0 string /usr/bin/env it works
+            "#,
+            b"#!/usr/bin/env    python"
+        );
+
+        assert_magic_not_match!(
+            r#"
+            0	search	/usr/bin/env
+            >&0 string /usr/bin/env it works
+            "#,
+            b"#!/usr/bin/env    python"
         );
     }
 
