@@ -1917,16 +1917,14 @@ struct EntryNode {
 }
 
 impl EntryNode {
-    fn from_entries(entries: Vec<Entry>) -> Self {
+    fn from_entries(entries: Vec<Entry>) -> Result<Self, Error> {
         Self::from_peekable(&mut entries.into_iter().peekable())
     }
 
-    fn from_peekable(entries: &mut Peekable<impl Iterator<Item = Entry>>) -> Self {
+    fn from_peekable(entries: &mut Peekable<impl Iterator<Item = Entry>>) -> Result<Self, Error> {
         let root = match entries.next().unwrap() {
             Entry::Match(m) => m,
-
-            // FIXME: rm dumb panic msg
-            Entry::Flag(_) => panic!("should never happen"),
+            Entry::Flag(_) => return Err(Error::msg("first rule entry must be a match")),
         };
 
         let mut children = vec![];
@@ -1941,7 +1939,8 @@ impl EntryNode {
                     if m.depth <= root.depth {
                         break;
                     } else if m.depth == root.depth + 1 {
-                        children.push(EntryNode::from_peekable(entries))
+                        // we cannot panic since we guarantee first item is a Match
+                        children.push(EntryNode::from_peekable(entries).unwrap())
                     } else {
                         panic!(
                             "unexpected continuation level: line={} level={}",
@@ -1964,14 +1963,14 @@ impl EntryNode {
             }
         }
 
-        Self {
+        Ok(Self {
             entry: root,
             children,
             mimetype,
             apple,
             strength_mod,
             exts,
-        }
+        })
     }
 
     fn matches<'r, R: Read + Seek>(

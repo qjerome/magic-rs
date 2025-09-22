@@ -1292,6 +1292,8 @@ impl DependencyRule {
 impl MagicRule {
     pub(crate) fn from_pair(pair: Pair<'_, Rule>, source: Option<String>) -> Result<Self, Error> {
         let mut items = vec![];
+        let span = pair.as_span();
+
         for pair in pair.into_inner() {
             match pair.as_rule() {
                 Rule::name_entry => {
@@ -1332,7 +1334,8 @@ impl MagicRule {
 
         Ok(Self {
             source,
-            entries: EntryNode::from_entries(items),
+            entries: EntryNode::from_entries(items)
+                .map_err(|e| Error::parser(e.to_string(), span))?,
         })
     }
 }
