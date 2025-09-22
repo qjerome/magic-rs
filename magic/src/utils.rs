@@ -2,6 +2,14 @@ use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use crate::TIMESTAMP_FORMAT;
 
+#[inline(always)]
+pub(crate) const fn decode_id3(v: u32) -> u32 {
+    (((v >> 0) & 0x7f) << 0)
+        | (((v >> 8) & 0x7f) << 7)
+        | (((v >> 16) & 0x7f) << 14)
+        | (((v >> 24) & 0x7f) << 21)
+}
+
 // test this properly
 pub(crate) fn nonmagic(str: &str) -> usize {
     let mut rv = 0;
@@ -146,5 +154,14 @@ mod tests {
             windows_filetime_to_string(132723834270000000),
             "2021-08-02 13:10:27"
         );
+    }
+
+    #[test]
+    fn test_decode_id3() {
+        assert_eq!(decode_id3(0x00000000), 0);
+        assert_eq!(decode_id3(0x0000007F), 127);
+        assert_eq!(decode_id3(0x00007F7F), 16_383);
+        assert_eq!(decode_id3(0x0000017E), 254);
+        assert_eq!(decode_id3(0x7F7F7F7F), 268_435_455);
     }
 }
