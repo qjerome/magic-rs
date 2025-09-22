@@ -1702,7 +1702,7 @@ impl Match {
                 // FIXME: we may have a way to optimize here. In case we do a Any
                 // test and we don't use the value to format the message, we don't
                 // need to read the value.
-                if let Ok(Some(tv)) = self
+                if let Ok(opt_test_value) = self
                     .test
                     .read_test_value(haystack, switch_endianness)
                     .inspect_err(|e| {
@@ -1713,7 +1713,7 @@ impl Match {
                         .as_mut()
                         .map(|v| v.push(format!("test={:?}", self.test)));
 
-                    let match_res = self.test.match_value(&tv);
+                    let match_res = opt_test_value.and_then(|tv| self.test.match_value(&tv));
 
                     trace_msg.as_mut().map(|v| {
                         v.push(format!(
