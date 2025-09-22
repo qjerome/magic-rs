@@ -503,7 +503,6 @@ flags! {
     }
 }
 
-// FIXME: implement string operators
 #[derive(Debug, Clone)]
 struct StringTest {
     str: Vec<u8>,
@@ -655,9 +654,7 @@ impl StringTest {
 struct SearchTest {
     str: Vec<u8>,
     n_pos: Option<usize>,
-    // FIXME: handle all string mods
     str_mods: FlagSet<StringMod>,
-    // FIXME: handle all re mods
     re_mods: FlagSet<ReMod>,
     binary: bool,
 }
