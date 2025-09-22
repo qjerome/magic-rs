@@ -446,7 +446,7 @@ impl Flag {
             }
             Rule::apple_flag => {
                 let creatype = flag.into_inner().next().expect("expecting a creatype");
-                assert_eq!(creatype.as_rule(), Rule::printable_no_ws);
+                assert_eq!(creatype.as_rule(), Rule::apple_ty);
                 Ok(Self::Apple(creatype.as_str().to_string()))
             }
 

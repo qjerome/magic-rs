@@ -1911,7 +1911,9 @@ struct EntryNode {
     entry: Match,
     children: Vec<EntryNode>,
     mimetype: Option<String>,
+    apple: Option<String>,
     strength_mod: Option<StrengthMod>,
+    exts: HashSet<String>,
 }
 
 impl EntryNode {
@@ -1930,6 +1932,8 @@ impl EntryNode {
         let mut children = vec![];
         let mut mimetype = None;
         let mut strength_mod = None;
+        let mut exts = HashSet::new();
+        let mut apple = None;
 
         while let Some(e) = entries.peek() {
             match e {
@@ -1951,11 +1955,9 @@ impl EntryNode {
                     if let Some(Entry::Flag(f)) = entries.next() {
                         match f {
                             Flag::Mime(m) => mimetype = Some(m),
-
                             Flag::Strength(s) => strength_mod = Some(s),
-                            _ => {
-                                // FIXME: implement other flags
-                            }
+                            Flag::Ext(s) => exts = s,
+                            Flag::Apple(a) => apple = Some(a),
                         }
                     }
                 }
@@ -1966,7 +1968,9 @@ impl EntryNode {
             entry: root,
             children,
             mimetype,
+            apple,
             strength_mod,
+            exts,
         }
     }
 
@@ -2001,6 +2005,14 @@ impl EntryNode {
         if ok {
             if let Some(mimetype) = self.mimetype.as_ref() {
                 magic.insert_mimetype(Cow::Borrowed(mimetype));
+            }
+
+            if let Some(apple_ty) = self.apple.as_ref() {
+                magic.insert_apple_type(Cow::Borrowed(apple_ty));
+            }
+
+            if !self.exts.is_empty() {
+                magic.insert_extensions(&self.exts);
             }
 
             // FIXME: probably strength modifier applies on the magic's
@@ -2162,7 +2174,9 @@ pub struct Magic<'m> {
     source: Option<Cow<'m, str>>,
     message: Vec<Cow<'m, str>>,
     mimetype: Option<Cow<'m, str>>,
+    apple: Option<Cow<'m, str>>,
     strength: Option<u64>,
+    exts: HashSet<Cow<'m, str>>,
 }
 
 impl<'m> Magic<'m> {
@@ -2183,7 +2197,13 @@ impl<'m> Magic<'m> {
                 .map(Cow::Owned)
                 .collect(),
             mimetype: self.mimetype.map(|m| Cow::Owned(m.into_owned())),
+            apple: self.apple.map(|m| Cow::Owned(m.into_owned())),
             strength: self.strength,
+            exts: self
+                .exts
+                .into_iter()
+                .map(|e| Cow::Owned(e.into_owned()))
+                .collect(),
         }
     }
 
@@ -2228,10 +2248,28 @@ impl<'m> Magic<'m> {
         }
     }
 
+    #[inline(always)]
     fn insert_mimetype<'a: 'm>(&mut self, mime: Cow<'a, str>) {
         if self.mimetype.is_none() {
             debug!("insert mime: {:?}", mime);
             self.mimetype = Some(mime)
+        }
+    }
+
+    #[inline(always)]
+    fn insert_apple_type<'a: 'm>(&mut self, apple_ty: Cow<'a, str>) {
+        if self.apple.is_none() {
+            debug!("insert apple type: {apple_ty:?}");
+            self.apple = Some(apple_ty)
+        }
+    }
+
+    #[inline(always)]
+    fn insert_extensions<'a: 'm>(&mut self, exts: &'a HashSet<String>) {
+        if self.exts.is_empty() {
+            debug!("insert extensions: {exts:?}");
+            self.exts
+                .extend(exts.iter().map(|e| Cow::Borrowed(e.as_str())))
         }
     }
 
