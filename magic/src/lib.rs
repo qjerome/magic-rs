@@ -523,8 +523,7 @@ fn string_match<'str>(str: &'str [u8], mods: FlagSet<StringMod>, buf: &[u8]) -> 
         if buf.starts_with(str) {
             (true, str.len())
         } else {
-            // FIXME: this is wrong
-            (false, 1)
+            (false, consumed)
         }
     } else {
         let mut i_src = 0;
