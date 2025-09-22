@@ -313,6 +313,24 @@ where
         delims: &[u8],
         limit: u64,
     ) -> Result<&[u8], io::Error> {
+        self._read_while_or_limit(|b| !delims.contains(&b), limit, true)
+    }
+
+    pub fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
+        self._read_while_or_limit(|b| b != byte, limit, true)
+    }
+
+    // reads while f returns true or we reach limit
+    #[inline(always)]
+    fn _read_while_or_limit<F>(
+        &mut self,
+        f: F,
+        limit: u64,
+        include_last: bool,
+    ) -> Result<&[u8], io::Error>
+    where
+        F: Fn(u8) -> bool,
+    {
         let limit = min(self.max_size, limit);
         let start = self.stream_pos;
         let mut end = 0;
@@ -325,12 +343,15 @@ where
                     break 'outer;
                 }
 
-                end += 1;
-
-                if delims.contains(b) {
+                if !f(*b) {
+                    if include_last {
+                        end += 1;
+                    }
                     // read_until includes delimiter
                     break 'outer;
                 }
+
+                end += 1;
             }
 
             // we processed last chunk
@@ -342,8 +363,11 @@ where
         self.read_exact_range(start..start + end)
     }
 
-    pub fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
-        self.read_until_any_delim_or_limit(&[byte], limit)
+    pub fn read_while_or_limit<F>(&mut self, f: F, limit: u64) -> Result<&[u8], io::Error>
+    where
+        F: Fn(u8) -> bool,
+    {
+        self._read_while_or_limit(f, limit, false)
     }
 
     // limit is expressed in numbers of utf16 chars
