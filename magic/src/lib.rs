@@ -67,6 +67,8 @@ macro_rules! read_be {
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("{0}")]
+    Msg(String),
     #[error("unexpected rule: {0}")]
     UnexpectedRule(String),
     #[error("missing rule: {0}")]
@@ -853,7 +855,12 @@ impl Test {
                                 read
                             }
                         }
-                        _ => unimplemented!(),
+                        _ => {
+                            return Err(Error::Msg(format!(
+                                "string test does not support {:?} operator",
+                                t.cmp_op
+                            )));
+                        }
                     };
                     read
                 };
@@ -1114,6 +1121,7 @@ impl Test {
     fn cmp_op(&self) -> Option<CmpOp> {
         match self {
             Self::Scalar(s) => Some(s.cmp_op),
+            Self::Float(t) => Some(t.cmp_op),
             _ => None,
         }
     }
@@ -1382,7 +1390,6 @@ impl Default for DirOffset {
 
 #[derive(Debug, Clone)]
 pub struct Match {
-    // FIXME: add file name as &str
     line: usize,
     depth: u8,
     offset: Offset,
@@ -1685,7 +1692,6 @@ impl Match {
 
     #[inline(always)]
     fn continuation_level(&self) -> ContinuationLevel {
-        //ContinuationLevel(self.depth, self.offset)
         ContinuationLevel(self.depth)
     }
 
