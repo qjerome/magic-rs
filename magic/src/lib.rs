@@ -445,19 +445,9 @@ impl FloatTransform {
 enum Any {
     String,
     String16(Encoding),
-    PString,
+    PString(PStringTest),
     Scalar(ScalarDataType),
     Float(FloatDataType),
-}
-
-impl Any {
-    fn from_rule(r: Rule) -> Self {
-        match r {
-            Rule::string => Any::String,
-            Rule::pstring => Any::PString,
-            _ => unimplemented!(),
-        }
-    }
 }
 
 flags! {
@@ -819,6 +809,62 @@ flags! {
 
 type IndirectMods = FlagSet<IndirectMod>;
 
+#[derive(Debug, Clone, Copy)]
+enum PStringLen {
+    Byte,    // B
+    ShortBe, // H
+    ShortLe, // h
+    LongBe,  // L
+    LongLe,  // l
+}
+
+impl PStringLen {
+    #[inline(always)]
+    const fn size_of_len(&self) -> usize {
+        match self {
+            PStringLen::Byte => 1,
+            PStringLen::ShortBe => 2,
+            PStringLen::ShortLe => 2,
+            PStringLen::LongBe => 4,
+            PStringLen::LongLe => 4,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PStringTest {
+    val: Vec<u8>,
+    len: PStringLen,
+    include_len: bool,
+}
+
+impl PStringTest {
+    fn read<'cache, R: Read + Seek>(
+        &self,
+        haystack: &'cache mut LazyCache<R>,
+    ) -> Result<Option<&'cache [u8]>, Error> {
+        let mut len = match self.len {
+            PStringLen::Byte => read_le!(haystack, u8) as u32,
+            PStringLen::ShortBe => read_be!(haystack, u16) as u32,
+            PStringLen::ShortLe => read_le!(haystack, u16) as u32,
+            PStringLen::LongBe => read_be!(haystack, u32),
+            PStringLen::LongLe => read_le!(haystack, u32),
+        } as usize;
+
+        if self.include_len {
+            len = len.saturating_sub(self.len.size_of_len())
+        }
+
+        if len != self.val.len() {
+            return Ok(None);
+        }
+
+        let read = haystack.read_exact(len as u64)?;
+
+        Ok(Some(read))
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Test {
     /// This corresponds to a DATATYPE x test
@@ -829,7 +875,7 @@ enum Test {
     Float(FloatTest),
     String(StringTest),
     Search(SearchTest),
-    PString(Vec<u8>),
+    PString(PStringTest),
     Regex(RegexTest),
     Clear,
     Default,
@@ -845,17 +891,17 @@ impl Test {
         &self,
         haystack: &'haystack mut LazyCache<R>,
         switch_endianness: bool,
-    ) -> Result<TestValue<'haystack>, Error> {
+    ) -> Result<Option<TestValue<'haystack>>, Error> {
         let test_value_offset = haystack.lazy_stream_position();
 
         match self {
             Self::Scalar(t) => {
                 t.ty.read(haystack, switch_endianness)
-                    .map(|s| TestValue::Scalar(test_value_offset, s))
+                    .map(|s| Some(TestValue::Scalar(test_value_offset, s)))
             }
             Self::Float(t) => {
                 t.ty.read(haystack, switch_endianness)
-                    .map(|f| TestValue::Float(test_value_offset, f))
+                    .map(|f| Some(TestValue::Float(test_value_offset, f)))
             }
             Self::String(t) => {
                 let buf = if let Some(length) = t.length {
@@ -891,26 +937,25 @@ impl Test {
                     read
                 };
 
-                Ok(TestValue::Bytes(test_value_offset, buf))
+                Ok(Some(TestValue::Bytes(test_value_offset, buf)))
             }
 
             Self::String16(t) => {
                 let read = haystack.read_exact((t.str16.len() * 2) as u64)?;
-                Ok(TestValue::Bytes(test_value_offset, read))
+
+                Ok(Some(TestValue::Bytes(test_value_offset, read)))
             }
 
-            Self::PString(buf) => {
-                // FIXME: maybe we could optimize here by reading testing on size
-                // this is the size of the pstring
-                // FIXME: adjust the size function of pstring mods
-                let _ = read_le!(haystack, u8);
-                let read = haystack.read_exact(buf.len() as u64)?;
-                Ok(TestValue::Bytes(test_value_offset, read))
+            Self::PString(t) => {
+                let Some(read) = t.read(haystack)? else {
+                    return Ok(None);
+                };
+                Ok(Some(TestValue::Bytes(test_value_offset, read)))
             }
 
             Self::Search(_) => {
                 let buf = haystack.read(FILE_BYTES_MAX as u64)?;
-                Ok(TestValue::Bytes(test_value_offset, buf))
+                Ok(Some(TestValue::Bytes(test_value_offset, buf)))
             }
 
             Self::Regex(r) => {
@@ -936,7 +981,7 @@ impl Test {
                 };
 
                 let read = haystack.read(length as u64)?;
-                Ok(TestValue::Bytes(test_value_offset, read))
+                Ok(Some(TestValue::Bytes(test_value_offset, read)))
             }
 
             Self::Any(t) => match t {
@@ -950,12 +995,13 @@ impl Test {
                         read
                     };
 
-                    Ok(TestValue::Bytes(test_value_offset, bytes))
+                    Ok(Some(TestValue::Bytes(test_value_offset, bytes)))
                 }
-                Any::PString => {
-                    let slen = read_le!(haystack, u8) as usize;
-                    let read = haystack.read_exact(slen as u64)?;
-                    Ok(TestValue::Bytes(test_value_offset, read))
+                Any::PString(t) => {
+                    let Some(read) = t.read(haystack)? else {
+                        return Ok(None);
+                    };
+                    Ok(Some(TestValue::Bytes(test_value_offset, read)))
                 }
                 Any::String16(_) => {
                     let read = haystack.read_until_utf16_or_limit(b"\x00\x00", 8192)?;
@@ -969,14 +1015,14 @@ impl Test {
                         read.len().saturating_sub(1)
                     };
 
-                    Ok(TestValue::Bytes(test_value_offset, &read[..end]))
+                    Ok(Some(TestValue::Bytes(test_value_offset, &read[..end])))
                 }
                 Any::Scalar(d) => d
                     .read(haystack, switch_endianness)
-                    .map(|s| TestValue::Scalar(test_value_offset, s)),
+                    .map(|s| Some(TestValue::Scalar(test_value_offset, s))),
                 Any::Float(ty) => ty
                     .read(haystack, switch_endianness)
-                    .map(|f| TestValue::Float(test_value_offset, f)),
+                    .map(|f| Some(TestValue::Float(test_value_offset, f))),
             },
 
             Self::Name(_)
@@ -993,7 +1039,7 @@ impl Test {
     fn match_value<'s>(&'s self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
         match (self, tv) {
             (Self::Any(v), TestValue::Bytes(o, buf)) => match v {
-                Any::String | Any::PString => {
+                Any::String | Any::PString(_) => {
                     if let Ok(s) = str::from_utf8(buf) {
                         Some(MatchRes::String(*o, s))
                     } else {
@@ -1088,7 +1134,7 @@ impl Test {
             }
 
             (Self::PString(m), TestValue::Bytes(o, buf)) => {
-                if buf == m {
+                if buf == &m.val {
                     Some(MatchRes::Bytes(*o, buf))
                 } else {
                     None
@@ -1163,7 +1209,7 @@ impl Test {
     fn is_binary(&self) -> bool {
         match self {
             Self::Any(any) => match any {
-                Any::PString => true,
+                Any::PString(_) => true,
                 Any::String => true,
                 Any::String16(_) => true,
                 Any::Scalar(_) => true,
@@ -1656,7 +1702,7 @@ impl Match {
                 // FIXME: we may have a way to optimize here. In case we do a Any
                 // test and we don't use the value to format the message, we don't
                 // need to read the value.
-                if let Ok(tv) = self
+                if let Ok(Some(tv)) = self
                     .test
                     .read_test_value(haystack, switch_endianness)
                     .inspect_err(|e| {
@@ -1756,7 +1802,7 @@ impl Match {
 
             Test::String(t) => out += t.str.len().saturating_add(MULT),
 
-            Test::PString(t) => out += t.len().saturating_add(MULT),
+            Test::PString(t) => out += t.val.len().saturating_add(MULT),
 
             Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
 
@@ -2531,6 +2577,34 @@ mod tests {
             "#,
             b"#!/usr/bin/env    python"
         );
+    }
+
+    #[test]
+    fn test_pstring() {
+        assert_magic_match!(r#"0 pstring Toast it works"#, b"\x05Toast");
+
+        assert_magic_match!(r#"0 pstring Toast %s"#, b"\x05Toast", "Toast");
+
+        assert_magic_not_match!(r#"0 pstring Toast Doesn't work"#, b"\x07Toaster");
+
+        // testing with modifiers
+        assert_magic_match!(r#"0 pstring/H Toast it works"#, b"\x00\x05Toast");
+
+        assert_magic_match!(r#"0 pstring/HJ Toast it works"#, b"\x00\x07Toast");
+
+        assert_magic_match!(r#"0 pstring/HJ Toast %s"#, b"\x00\x07Toast", "Toast");
+
+        assert_magic_match!(r#"0 pstring/h Toast it works"#, b"\x05\x00Toast");
+
+        assert_magic_match!(r#"0 pstring/hJ Toast it works"#, b"\x07\x00Toast");
+
+        assert_magic_match!(r#"0 pstring/L Toast it works"#, b"\x00\x00\x00\x05Toast");
+
+        assert_magic_match!(r#"0 pstring/LJ Toast it works"#, b"\x00\x00\x00\x09Toast");
+
+        assert_magic_match!(r#"0 pstring/l Toast it works"#, b"\x05\x00\x00\x00Toast");
+
+        assert_magic_match!(r#"0 pstring/lJ Toast it works"#, b"\x09\x00\x00\x00Toast");
     }
 
     #[test]

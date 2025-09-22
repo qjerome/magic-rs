@@ -10,8 +10,9 @@ use uuid::Uuid;
 use crate::{
     Any, CmpOp, DependencyRule, DirOffset, Encoding, Entry, EntryNode, Error, Flag, FloatTest,
     FloatTransform, IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message,
-    Name, Offset, OffsetType, Op, ReMod, RegexTest, ScalarTest, ScalarTransform, SearchTest, Shift,
-    StrengthMod, String16Test, StringMod, StringTest, Test, Use,
+    Name, Offset, OffsetType, Op, PStringLen, PStringTest, ReMod, RegexTest, ScalarTest,
+    ScalarTransform, SearchTest, Shift, StrengthMod, String16Test, StringMod, StringTest, Test,
+    Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
 };
 
@@ -705,6 +706,38 @@ impl StringTest {
     }
 }
 
+impl PStringTest {
+    fn from_pair_with_value(pair: Pair<'_, Rule>, value: Vec<u8>) -> Self {
+        debug_assert_eq!(pair.as_rule(), Rule::pstring);
+
+        let mut len = PStringLen::Byte;
+        let mut include_len = false;
+
+        for r in pair.into_inner() {
+            match r.as_rule() {
+                Rule::pstring_mod => match r.as_str() {
+                    "B" => len = PStringLen::Byte,
+                    "H" => len = PStringLen::ShortBe,
+                    "h" => len = PStringLen::ShortLe,
+                    "L" => len = PStringLen::LongBe,
+                    "l" => len = PStringLen::LongLe,
+                    "J" => include_len = true,
+                    // parser should guarantee this branch is never reached
+                    _ => unimplemented!(),
+                },
+                // parser should guarantee this branch is never reached
+                _ => unimplemented!(),
+            }
+        }
+
+        PStringTest {
+            val: value,
+            len,
+            include_len,
+        }
+    }
+}
+
 impl SearchTest {
     fn from_pair_with_slice(pair: Pair<'_, Rule>, str: &[u8], binary: bool) -> Self {
         let mut length = None;
@@ -926,15 +959,20 @@ impl Test {
                         }
 
                         Rule::pstring => {
-                            Self::PString(unescape_string_to_vec(test_value.as_str()).1)
+                            let val = unescape_string_to_vec(test_value.as_str()).1;
+
+                            Self::PString(PStringTest::from_pair_with_value(test_type, val))
                         }
 
                         // parser should guarantee this branch is never reached
                         _ => unimplemented!(),
                     },
+
                     Rule::any_value => match test_type.as_rule() {
                         Rule::string => Self::Any(Any::String),
-                        Rule::pstring => Self::Any(Any::PString),
+                        Rule::pstring => Self::Any(Any::PString(
+                            PStringTest::from_pair_with_value(test_type, vec![]),
+                        )),
                         // parser should guarantee this branch is never reached
                         _ => unimplemented!(),
                     },
