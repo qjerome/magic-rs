@@ -23,7 +23,7 @@ use tracing::{Level, debug, enabled, error, trace};
 use crate::{
     numeric::{Float, FloatDataType},
     parser::{FileMagicParser, Rule},
-    utils::nonmagic,
+    utils::{decode_id3, nonmagic},
 };
 
 mod numeric;
@@ -65,6 +65,31 @@ macro_rules! read_be {
     ($r:expr, $ty: ty ) => {{ <$ty>::from_be_bytes(read!($r, $ty)) }};
 }
 
+macro_rules! read_me {
+    ($r: expr) => {{ ((read_le!($r, u16) as i32) << 16) | (read_le!($r, u16) as i32) }};
+}
+
+#[inline(always)]
+fn read_octal_u64<R: Read + Seek>(haystack: &mut LazyCache<R>) -> Option<u64> {
+    let s = haystack
+        .read_while_or_limit(
+            |b| match b {
+                b'0'..=b'7' => true,
+                _ => false,
+            },
+            22,
+        )
+        .map(|buf| str::from_utf8(buf))
+        .ok()?
+        .ok()?;
+
+    if !s.starts_with("0") {
+        return None;
+    }
+
+    u64::from_str_radix(s, 8).ok()
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{0}")]
@@ -93,6 +118,10 @@ impl Error {
             },
             span,
         )))
+    }
+
+    fn msg<M: AsRef<str>>(msg: M) -> Self {
+        Self::Msg(msg.as_ref().into())
     }
 }
 
@@ -1227,7 +1256,7 @@ impl IndOffset {
         opt_start: Option<u64>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
-        let main_offset_offset = match self.off_addr {
+        let offset_address = match self.off_addr {
             DirOffset::Start(s) => {
                 let Some(o) = s.checked_add(opt_start.unwrap_or_default()) else {
                     return Ok(None);
@@ -1240,8 +1269,6 @@ impl IndOffset {
             ))?,
             DirOffset::End(e) => haystack.seek(SeekFrom::End(e as i64))?,
         };
-
-        let offset_pos = haystack.lazy_stream_position();
 
         macro_rules! read_value {
             () => {
@@ -1269,8 +1296,8 @@ impl IndOffset {
                             read_be!(haystack, u16) as u64
                         }
                     }
-                    OffsetType::Id3Le => unimplemented!(),
-                    OffsetType::Id3Be => unimplemented!(),
+                    OffsetType::Id3Le => decode_id3(read_le!(haystack, u32)) as u64,
+                    OffsetType::Id3Be => decode_id3(read_be!(haystack, u32)) as u64,
                     OffsetType::LongLe => {
                         if self.signed {
                             read_le!(haystack, i32) as u64
@@ -1285,8 +1312,15 @@ impl IndOffset {
                             read_be!(haystack, u32) as u64
                         }
                     }
-                    OffsetType::Middle => unimplemented!(),
-                    OffsetType::Octal => unimplemented!(),
+                    OffsetType::Middle => read_me!(haystack) as u64,
+                    OffsetType::Octal => {
+                        if let Some(o) = read_octal_u64(haystack) {
+                            o
+                        } else {
+                            debug!("failed to read octal offset @ {offset_address}");
+                            return Ok(None);
+                        }
+                    }
                     OffsetType::QuadLe => {
                         if self.signed {
                             read_le!(haystack, i64) as u64
@@ -1309,7 +1343,7 @@ impl IndOffset {
         let o = read_value!();
 
         trace!(
-            "offset read @ {offset_pos} value={o} op={:?} shift={:?}",
+            "offset read @ {offset_address} value={o} op={:?} shift={:?}",
             self.op, self.shift
         );
 
@@ -1318,13 +1352,13 @@ impl IndOffset {
             let shift = match shift {
                 Shift::Direct(i) => i,
                 Shift::Indirect(i) => {
-                    let tmp = main_offset_offset as i128 + i as i128;
+                    let tmp = offset_address as i128 + i as i128;
                     if tmp.is_negative() {
                         return Ok(None);
                     } else {
                         haystack.seek(SeekFrom::Start(tmp as u64))?;
                     };
-                    // FIXME: here we assume that the shift has the same
+                    // NOTE: here we assume that the shift has the same
                     // type as the main offset !
                     read_value!()
                 }
@@ -2316,6 +2350,12 @@ mod tests {
 
     use super::*;
 
+    macro_rules! lazy_cache {
+        ($l: literal) => {
+            LazyCache::from_read_seek(Cursor::new($l), 4096, FILE_BYTES_MAX as u64).unwrap()
+        };
+    }
+
     fn first_magic(rule: &str, content: &[u8]) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
         md.load(
@@ -2964,6 +3004,45 @@ mod tests {
             "0 ldate x %s",
             b"\x60\xd4\xC8\x61",
             unix_local_time_to_string(1640551520)
+        );
+    }
+
+    #[test]
+    fn test_read_octal() {
+        // Basic cases
+        assert_eq!(read_octal_u64(&mut lazy_cache!("0")), Some(0));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("00")), Some(0));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("01")), Some(1));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("07")), Some(7));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("010")), Some(8));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("0123")), Some(83));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("0755")), Some(493));
+
+        // With trailing non-octal characters
+        assert_eq!(read_octal_u64(&mut lazy_cache!("0ABC")), Some(0));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("01ABC")), Some(1));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("0755ABC")), Some(493));
+        assert_eq!(read_octal_u64(&mut lazy_cache!("0123ABC")), Some(83));
+
+        // Invalid octal digits
+        assert_eq!(read_octal_u64(&mut lazy_cache!("08")), Some(0)); // stops at '8'
+        assert_eq!(read_octal_u64(&mut lazy_cache!("01238")), Some(83)); // stops at '8'
+
+        // No leading '0'
+        assert_eq!(read_octal_u64(&mut lazy_cache!("123")), None);
+        assert_eq!(read_octal_u64(&mut lazy_cache!("755")), None);
+
+        // Empty string
+        assert_eq!(read_octal_u64(&mut lazy_cache!("")), None);
+
+        // Only non-octal characters
+        assert_eq!(read_octal_u64(&mut lazy_cache!("ABC")), None);
+        assert_eq!(read_octal_u64(&mut lazy_cache!("8ABC")), None); // first char is not '0'
+
+        // Longer valid octal (but within u64 range)
+        assert_eq!(
+            read_octal_u64(&mut lazy_cache!("01777777777")),
+            Some(268435455)
         );
     }
 }
