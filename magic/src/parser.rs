@@ -448,6 +448,8 @@ impl Flag {
                 assert_eq!(creatype.as_rule(), Rule::printable_no_ws);
                 Ok(Self::Apple(creatype.as_str().to_string()))
             }
+
+            // parser should guarantee this branch is never reached
             _ => unimplemented!(),
         }
     }
@@ -689,7 +691,7 @@ impl StringTest {
             match p.as_rule() {
                 Rule::pos_number => length = Some(parse_pos_number(p) as usize),
                 Rule::string_mod => mods |= StringMod::from_pair(p)?,
-                // this should never happen
+                // parser should guarantee this branch is never reached
                 _ => unimplemented!(),
             }
         }
@@ -727,7 +729,7 @@ impl SearchTest {
                         }
                     }
                 }
-                // this should never happen
+                // parser should guarantee this branch is never reached
                 _ => unimplemented!(),
             }
         }
@@ -764,7 +766,7 @@ impl RegexTest {
                         }
                     }
                 }
-                // this should never happen
+                // parser should guarantee this branch is never reached
                 _ => unimplemented!(),
             }
         }
@@ -883,6 +885,7 @@ impl Test {
                         RegexTest::from_pair_with_re(test_type, &prepare_bytes_re(&s, false), bin)?
                             .into()
                     }
+                    // parser should guarantee this branch is never reached
                     _ => unimplemented!(),
                 }
             }
@@ -922,16 +925,20 @@ impl Test {
                             .into()
                         }
 
-                        Rule::pstring => Self::PString(
-                            // FIXME: fix unwrap
-                            str::from_utf8(&unescape_string_to_vec(test_value.as_str()).1)
-                                .unwrap()
-                                .into(),
-                        ),
+                        Rule::pstring => {
+                            Self::PString(unescape_string_to_vec(test_value.as_str()).1)
+                        }
 
+                        // parser should guarantee this branch is never reached
                         _ => unimplemented!(),
                     },
-                    Rule::any_value => Self::Any(Any::from_rule(test_type.as_rule())),
+                    Rule::any_value => match test_type.as_rule() {
+                        Rule::string => Self::Any(Any::String),
+                        Rule::pstring => Self::Any(Any::PString),
+                        // parser should guarantee this branch is never reached
+                        _ => unimplemented!(),
+                    },
+                    // parser should guarantee this branch is never reached
                     _ => unimplemented!(),
                 }
             }
@@ -1085,6 +1092,8 @@ impl Test {
                 }
                 Self::Indirect(ind_mods)
             }
+
+            // parser should guarantee this branch is never reached
             _ => unimplemented!(),
         };
 
