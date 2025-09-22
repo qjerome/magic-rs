@@ -1145,9 +1145,20 @@ impl Test {
     #[inline(always)]
     fn cmp_op(&self) -> Option<CmpOp> {
         match self {
+            Self::String(t) => Some(t.cmp_op),
             Self::Scalar(s) => Some(s.cmp_op),
             Self::Float(t) => Some(t.cmp_op),
-            _ => None,
+            Self::Any(_)
+            | Self::Name(_)
+            | Self::Use(_, _)
+            | Self::Search(_)
+            | Self::PString(_)
+            | Self::Regex(_)
+            | Self::Clear
+            | Self::Default
+            | Self::Indirect(_)
+            | Self::String16(_)
+            | Self::Der => None,
         }
     }
 
@@ -1823,7 +1834,10 @@ impl StrengthMod {
             Op::And => strength & by,
             // this should never happen as strength operators
             // are enforced by our parser
-            Op::Xor | Op::Or => unimplemented!(),
+            Op::Xor | Op::Or => {
+                debug_panic!("unsupported strength operator");
+                strength
+            }
         }
     }
 }
