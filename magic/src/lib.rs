@@ -12,7 +12,6 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
     io::{self, Read, Seek, SeekFrom},
-    iter::Peekable,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
     str::Utf8Error,
@@ -1915,64 +1914,6 @@ struct EntryNode {
 }
 
 impl EntryNode {
-    fn from_entries(entries: Vec<Entry>) -> Result<Self, Error> {
-        Self::from_peekable(&mut entries.into_iter().peekable())
-    }
-
-    fn from_peekable<'span>(
-        entries: &mut Peekable<impl Iterator<Item = Entry<'span>>>,
-    ) -> Result<Self, Error> {
-        let root = match entries.next().unwrap() {
-            Entry::Match(_, m) => m,
-            Entry::Flag(s, _) => return Err(Error::parser("first rule entry must be a match", s)),
-        };
-
-        let mut children = vec![];
-        let mut mimetype = None;
-        let mut strength_mod = None;
-        let mut exts = HashSet::new();
-        let mut apple = None;
-
-        while let Some(e) = entries.peek() {
-            match e {
-                Entry::Match(s, m) => {
-                    if m.depth <= root.depth {
-                        break;
-                    } else if m.depth == root.depth + 1 {
-                        // we cannot panic since we guarantee first item is a Match
-                        children.push(EntryNode::from_peekable(entries)?)
-                    } else {
-                        return Err(Error::parser(
-                            format!("unexpected continuation level={}", m.depth),
-                            *s,
-                        ));
-                    }
-                }
-
-                Entry::Flag(_, _) => {
-                    // it cannot be otherwise
-                    if let Some(Entry::Flag(_, f)) = entries.next() {
-                        match f {
-                            Flag::Mime(m) => mimetype = Some(m),
-                            Flag::Strength(s) => strength_mod = Some(s),
-                            Flag::Ext(s) => exts = s,
-                            Flag::Apple(a) => apple = Some(a),
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(Self {
-            entry: root,
-            children,
-            mimetype,
-            apple,
-            strength_mod,
-            exts,
-        })
-    }
-
     fn matches<'r, R: Read + Seek>(
         &'r self,
         opt_source: Option<&str>,
