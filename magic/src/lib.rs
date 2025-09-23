@@ -171,10 +171,9 @@ impl Message {
             } => {
                 if let Some(mr) = mr {
                     match mr {
-                        MatchRes::OwnedString(_, _)
-                        | MatchRes::String(_, _)
-                        | MatchRes::Float(_, _)
-                        | MatchRes::Bytes(_, _) => Ok(Cow::Owned(dformat!(fs, mr)?)),
+                        MatchRes::Float(_, _) | MatchRes::Bytes(_, _, _) => {
+                            Ok(Cow::Owned(dformat!(fs, mr)?))
+                        }
                         MatchRes::Scalar(_, scalar) => {
                             // we want to print a byte as char
                             if c_spec.as_str() == "c" {
@@ -725,15 +724,15 @@ impl Display for TestValue<'_> {
     }
 }
 
+enum Encoding {
+    Utf16(String16Encoding),
+    Utf8,
+}
+
 // Carry the offset of the start of the data in the stream
 // and the data itself
 enum MatchRes<'buf> {
-    // FIXME: maybe we can optimize here by having it as Bytes
-    // and managing encoding at display time.
-    OwnedString(u64, String),
-    // FIXME: it may be un-necessary
-    String(u64, &'buf str),
-    Bytes(u64, &'buf [u8]),
+    Bytes(u64, &'buf [u8], Encoding),
     Scalar(u64, Scalar),
     Float(u64, Float),
 }
@@ -749,9 +748,13 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
-            Self::String(_, v) => v.dyn_fmt(f),
-            Self::OwnedString(_, v) => v.dyn_fmt(f),
-            Self::Bytes(_, v) => Ok(String::from_utf8_lossy(v).to_string()),
+            Self::Bytes(_, v, enc) => match enc {
+                Encoding::Utf8 => Ok(String::from_utf8_lossy(v).to_string()),
+                Encoding::Utf16(enc) => {
+                    let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
+                    Ok(String::from_utf16_lossy(&utf16))
+                }
+            },
         }
     }
 }
@@ -761,9 +764,7 @@ impl MatchRes<'_> {
     #[inline]
     fn start_offset(&self) -> u64 {
         match self {
-            MatchRes::OwnedString(o, _) => *o,
-            MatchRes::String(o, _) => *o,
-            MatchRes::Bytes(o, _) => *o,
+            MatchRes::Bytes(o, _, _) => *o,
             MatchRes::Scalar(o, _) => *o,
             MatchRes::Float(o, _) => *o,
         }
@@ -773,9 +774,7 @@ impl MatchRes<'_> {
     #[inline]
     fn end_offset(&self) -> u64 {
         match self {
-            MatchRes::OwnedString(o, s) => o.add(s.len() as u64),
-            MatchRes::String(o, s) => o.add(s.len() as u64),
-            MatchRes::Bytes(o, buf) => o.add(buf.len() as u64),
+            MatchRes::Bytes(o, buf, _) => o.add(buf.len() as u64),
             MatchRes::Scalar(o, sc) => o.add(sc.size_of() as u64),
             MatchRes::Float(o, f) => o.add(f.size_of() as u64),
         }
@@ -1045,22 +1044,9 @@ impl Test {
     fn match_value<'s>(&'s self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
         match (self, tv) {
             (Self::Any(v), TestValue::Bytes(o, buf)) => match v {
-                Any::String | Any::PString(_) => {
-                    if let Ok(s) = str::from_utf8(buf) {
-                        Some(MatchRes::String(*o, s))
-                    } else {
-                        Some(MatchRes::Bytes(*o, buf))
-                    }
-                }
+                Any::String | Any::PString(_) => Some(MatchRes::Bytes(*o, buf, Encoding::Utf8)),
 
-                Any::String16(enc) => {
-                    let utf16_vec: Vec<u16> = slice_to_utf16_iter(buf, *enc).collect();
-                    if let Ok(s) = String::from_utf16(&utf16_vec) {
-                        Some(MatchRes::OwnedString(*o, s))
-                    } else {
-                        Some(MatchRes::Bytes(*o, buf))
-                    }
-                }
+                Any::String16(enc) => Some(MatchRes::Bytes(*o, buf, Encoding::Utf16(*enc))),
 
                 _ => None,
             },
@@ -1115,21 +1101,21 @@ impl Test {
                 match st.cmp_op {
                     CmpOp::Eq => {
                         if let Some(b) = st.matches(buf) {
-                            Some(MatchRes::Bytes(*o, b))
+                            Some(MatchRes::Bytes(*o, b, Encoding::Utf8))
                         } else {
                             None
                         }
                     }
                     CmpOp::Gt => {
                         if buf.len() > st.str.len() {
-                            Some(MatchRes::Bytes(*o, buf))
+                            Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
                         } else {
                             None
                         }
                     }
                     CmpOp::Lt => {
                         if buf.len() < st.str.len() {
-                            Some(MatchRes::Bytes(*o, buf))
+                            Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
                         } else {
                             None
                         }
@@ -1144,7 +1130,7 @@ impl Test {
 
             (Self::PString(m), TestValue::Bytes(o, buf)) => {
                 if buf == &m.val {
-                    Some(MatchRes::Bytes(*o, buf))
+                    Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
                 } else {
                     None
                 }
@@ -1163,7 +1149,11 @@ impl Test {
                     }
                 }
 
-                Some(MatchRes::String(*o, &t.orig))
+                Some(MatchRes::Bytes(
+                    *o,
+                    &t.orig.as_bytes(),
+                    Encoding::Utf16(t.encoding),
+                ))
             }
 
             (Self::Regex(r), TestValue::Bytes(o, buf)) => {
@@ -1172,6 +1162,7 @@ impl Test {
                         // the offset of the string is computed from the start of the buffer
                         o + re_match.start() as u64,
                         re_match.as_bytes(),
+                        Encoding::Utf8,
                     ))
                 } else {
                     None
@@ -1180,7 +1171,8 @@ impl Test {
 
             (Self::Search(t), TestValue::Bytes(o, buf)) => {
                 // the offset of the string is computed from the start of the buffer
-                t.matches(&buf).map(|(p, m)| MatchRes::Bytes(o + p, m))
+                t.matches(&buf)
+                    .map(|(p, m)| MatchRes::Bytes(o + p, m, Encoding::Utf8))
             }
 
             _ => None,
