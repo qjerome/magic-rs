@@ -1899,9 +1899,9 @@ struct Name {
 }
 
 #[derive(Debug, Clone)]
-enum Entry {
-    Match(Match),
-    Flag(Flag),
+enum Entry<'span> {
+    Match(Span<'span>, Match),
+    Flag(Span<'span>, Flag),
 }
 
 #[derive(Debug, Clone)]
@@ -1919,10 +1919,12 @@ impl EntryNode {
         Self::from_peekable(&mut entries.into_iter().peekable())
     }
 
-    fn from_peekable(entries: &mut Peekable<impl Iterator<Item = Entry>>) -> Result<Self, Error> {
+    fn from_peekable<'span>(
+        entries: &mut Peekable<impl Iterator<Item = Entry<'span>>>,
+    ) -> Result<Self, Error> {
         let root = match entries.next().unwrap() {
-            Entry::Match(m) => m,
-            Entry::Flag(_) => return Err(Error::msg("first rule entry must be a match")),
+            Entry::Match(_, m) => m,
+            Entry::Flag(s, _) => return Err(Error::parser("first rule entry must be a match", s)),
         };
 
         let mut children = vec![];
@@ -1933,23 +1935,23 @@ impl EntryNode {
 
         while let Some(e) = entries.peek() {
             match e {
-                Entry::Match(m) => {
+                Entry::Match(s, m) => {
                     if m.depth <= root.depth {
                         break;
                     } else if m.depth == root.depth + 1 {
                         // we cannot panic since we guarantee first item is a Match
-                        children.push(EntryNode::from_peekable(entries).unwrap())
+                        children.push(EntryNode::from_peekable(entries)?)
                     } else {
-                        panic!(
-                            "unexpected continuation level: line={} level={}",
-                            m.line, m.depth
-                        )
+                        return Err(Error::parser(
+                            format!("unexpected continuation level={}", m.depth),
+                            *s,
+                        ));
                     }
                 }
 
-                Entry::Flag(_) => {
+                Entry::Flag(_, _) => {
                     // it cannot be otherwise
-                    if let Some(Entry::Flag(f)) = entries.next() {
+                    if let Some(Entry::Flag(_, f)) = entries.next() {
                         match f {
                             Flag::Mime(m) => mimetype = Some(m),
                             Flag::Strength(s) => strength_mod = Some(s),

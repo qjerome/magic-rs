@@ -1302,6 +1302,7 @@ impl MagicRule {
         let span = pair.as_span();
 
         for pair in pair.into_inner() {
+            let span = pair.as_span();
             match pair.as_rule() {
                 Rule::name_entry => {
                     let (line, _) = pair.line_col();
@@ -1318,6 +1319,7 @@ impl MagicRule {
                     }
 
                     items.push(Entry::Match(
+                        span,
                         Name {
                             line,
                             name: name.as_str().into(),
@@ -1327,22 +1329,21 @@ impl MagicRule {
                     ))
                 }
                 Rule::r#match_depth | Rule::r#match_no_depth => {
-                    items.push(Entry::Match(Match::from_pair(pair)?));
+                    items.push(Entry::Match(pair.as_span(), Match::from_pair(pair)?));
                 }
                 Rule::r#use => {
-                    items.push(Entry::Match(Use::from_pair(pair).into()));
+                    items.push(Entry::Match(pair.as_span(), Use::from_pair(pair).into()));
                 }
-                Rule::flag => items.push(Entry::Flag(Flag::from_pair(pair)?)),
+                Rule::flag => items.push(Entry::Flag(pair.as_span(), Flag::from_pair(pair)?)),
                 Rule::EOI => {}
                 _ => panic!("unexpected parsing rule"),
             }
         }
 
-        Ok(Self {
-            source,
-            entries: EntryNode::from_entries(items)
-                .map_err(|e| Error::parser(e.to_string(), span))?,
-        })
+        let entries =
+            EntryNode::from_entries(items).map_err(|e| Error::parser(e.to_string(), span))?;
+
+        Ok(Self { source, entries })
     }
 }
 
