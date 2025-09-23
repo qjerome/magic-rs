@@ -1309,7 +1309,10 @@ impl EntryNode {
     fn from_peekable<'span>(
         entries: &mut Peekable<impl Iterator<Item = Entry<'span>>>,
     ) -> Result<Self, Error> {
-        let root = match entries.next().unwrap() {
+        let root = match entries
+            .next()
+            .ok_or(Error::msg("rule must have at least one entry"))?
+        {
             Entry::Match(_, m) => m,
             Entry::Flag(s, _) => return Err(Error::parser("first rule entry must be a match", s)),
         };
