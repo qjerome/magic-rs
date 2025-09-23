@@ -436,7 +436,7 @@ impl FloatTransform {
 #[derive(Debug, Clone)]
 enum Any {
     String,
-    String16(Encoding),
+    String16(String16Encoding),
     PString(PStringTest),
     Scalar(ScalarDataType),
     Float(FloatDataType),
@@ -457,12 +457,8 @@ flags! {
 struct RegexTest {
     re: bytes::Regex,
     length: Option<usize>,
-    n_pos: Option<usize>,
     mods: FlagSet<ReMod>,
     str_mods: FlagSet<StringMod>,
-    // this is actually a search test
-    // converted into a regex
-    search: bool,
     binary: bool,
 }
 
@@ -787,19 +783,19 @@ impl MatchRes<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Encoding {
-    Little,
-    Big,
+enum String16Encoding {
+    Le,
+    Be,
 }
 
 #[derive(Debug, Clone)]
 struct String16Test {
     orig: String,
     str16: Vec<u16>,
-    encoding: Encoding,
+    encoding: String16Encoding,
 }
 
-fn slice_to_utf16_iter(read: &[u8], encoding: Encoding) -> impl Iterator<Item = u16> {
+fn slice_to_utf16_iter(read: &[u8], encoding: String16Encoding) -> impl Iterator<Item = u16> {
     let even = read
         .iter()
         .enumerate()
@@ -813,8 +809,8 @@ fn slice_to_utf16_iter(read: &[u8], encoding: Encoding) -> impl Iterator<Item = 
         .map(|t| t.1);
 
     even.zip(odd).map(move |(e, o)| match encoding {
-        Encoding::Little => u16::from_le_bytes([*e, *o]),
-        Encoding::Big => u16::from_be_bytes([*e, *o]),
+        String16Encoding::Le => u16::from_le_bytes([*e, *o]),
+        String16Encoding::Be => u16::from_be_bytes([*e, *o]),
     })
 }
 
@@ -986,14 +982,7 @@ impl Test {
                             }
                         }
 
-                        None => {
-                            // search tests are made of FILE_BYTES_MAX
-                            if r.search {
-                                FILE_BYTES_MAX
-                            } else {
-                                FILE_REGEX_MAX
-                            }
-                        }
+                        None => FILE_REGEX_MAX,
                     }
                 };
 
@@ -1179,13 +1168,6 @@ impl Test {
 
             (Self::Regex(r), TestValue::Bytes(o, buf)) => {
                 if let Some(re_match) = r.re.find(&buf) {
-                    if let Some(n_pos) = r.n_pos {
-                        // we check for positinal match inherited from search conversion
-                        if re_match.start() >= n_pos {
-                            return None;
-                        }
-                    }
-
                     Some(MatchRes::Bytes(
                         // the offset of the string is computed from the start of the buffer
                         o + re_match.start() as u64,

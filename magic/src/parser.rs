@@ -8,11 +8,11 @@ use regex::bytes;
 use uuid::Uuid;
 
 use crate::{
-    Any, CmpOp, DependencyRule, DirOffset, Encoding, Entry, EntryNode, Error, Flag, FloatTest,
+    Any, CmpOp, DependencyRule, DirOffset, Entry, EntryNode, Error, Flag, FloatTest,
     FloatTransform, IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message,
     Name, Offset, OffsetType, Op, PStringLen, PStringTest, ReMod, RegexTest, ScalarTest,
-    ScalarTransform, SearchTest, Shift, StrengthMod, String16Test, StringMod, StringTest, Test,
-    Use,
+    ScalarTransform, SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod,
+    StringTest, Test, Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
 };
 
@@ -809,10 +809,8 @@ impl RegexTest {
             //FIXME: remove unwrap
             re: bytes::Regex::new(&re).unwrap(),
             length,
-            n_pos: None,
             mods,
             str_mods,
-            search: false,
             binary,
         })
     }
@@ -986,8 +984,8 @@ impl Test {
                 let mut str = None;
                 for p in pair.into_inner() {
                     match p.as_rule() {
-                        Rule::lestring16 => encoding = Some(Encoding::Little),
-                        Rule::bestring16 => encoding = Some(Encoding::Big),
+                        Rule::lestring16 => encoding = Some(String16Encoding::Le),
+                        Rule::bestring16 => encoding = Some(String16Encoding::Be),
                         Rule::string_value => {
                             orig = Some(unescape_string_to_string(p.as_str()));
                             str = Some(
