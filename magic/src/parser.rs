@@ -1045,6 +1045,7 @@ impl Test {
                     ty: ScalarDataType::guid,
                     transform: None,
                     cmp_op: CmpOp::Eq,
+                    // guid is guaranteed to be some by parser
                     value: Scalar::guid(guid.unwrap().as_u128()),
                 })
             }
