@@ -442,9 +442,10 @@ impl FloatTransform {
 }
 
 // Any Magic Data type
-// FIXME: Any must carry StringTest so that we know the string mods / length
 #[derive(Debug, Clone)]
 enum Any {
+    // NOTE: We don't need to carry StringTest because it is
+    // not used in any existing rules
     String,
     String16(String16Encoding),
     PString(PStringTest),
@@ -1003,7 +1004,6 @@ impl Test {
 
             Self::Any(t) => match t {
                 Any::String => {
-                    // FIXME: Any must carry  StringTest information so we must read accordingly
                     let read = haystack.read_until_any_delim_or_limit(b"\0\n", 8192)?;
                     // we don't take last byte if it matches end of string
                     let bytes = if read.ends_with(b"\0") || read.ends_with(b"\n") {
@@ -1811,7 +1811,7 @@ impl Match {
             }
 
             Test::String16(t) => {
-                // FIXME: in libmagic the result is div by 2
+                // NOTE: in libmagic the result is div by 2
                 // but I GUESS it is because the len is expressed
                 // in number bytes. In our case length is expressed
                 // in number of u16 so we shouldn't divide.
