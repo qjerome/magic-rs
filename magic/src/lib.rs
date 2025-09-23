@@ -760,6 +760,32 @@ impl DynDisplay for MatchRes<'_> {
     }
 }
 
+impl MatchRes<'_> {
+    // start offset of the match
+    #[inline]
+    fn start_offset(&self) -> u64 {
+        match self {
+            MatchRes::OwnedString(o, _) => *o,
+            MatchRes::String(o, _) => *o,
+            MatchRes::Bytes(o, _) => *o,
+            MatchRes::Scalar(o, _) => *o,
+            MatchRes::Float(o, _) => *o,
+        }
+    }
+
+    // start offset of the match
+    #[inline]
+    fn end_offset(&self) -> u64 {
+        match self {
+            MatchRes::OwnedString(o, s) => o.add(s.len() as u64),
+            MatchRes::String(o, s) => o.add(s.len() as u64),
+            MatchRes::Bytes(o, buf) => o.add(buf.len() as u64),
+            MatchRes::Scalar(o, sc) => o.add(sc.size_of() as u64),
+            MatchRes::Float(o, f) => o.add(f.size_of() as u64),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Encoding {
     Little,
@@ -1533,10 +1559,8 @@ impl Match {
         }
     }
 
-    // FIXME: handle push_message only once based on the success
-    // or not of the test.
     #[inline]
-    fn matches<'a, R: Read + Seek>(
+    fn matches<'a: 'h, 'h, R: Read + Seek>(
         &'a self,
         source: Option<&str>,
         magic: &mut Magic<'a>,
@@ -1545,33 +1569,33 @@ impl Match {
         base_offset: Option<u64>,
         start_offset: Option<u64>,
         last_level_offset: Option<u64>,
-        haystack: &mut LazyCache<R>,
+        haystack: &'h mut LazyCache<R>,
         switch_endianness: bool,
         db: &'a MagicDb,
         depth: usize,
-    ) -> Result<bool, Error> {
+    ) -> Result<(bool, Option<MatchRes<'h>>), Error> {
         let source = source.unwrap_or("unknown");
         let line = self.line;
-
-        if let Some(stream_kind) = stream_kind {
-            if self.test.is_only_binary() && stream_kind.is_text() {
-                trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}",);
-                return Ok(false);
-            }
-
-            if self.test.is_only_text() && !stream_kind.is_text() {
-                trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}",);
-                return Ok(false);
-            }
-        }
 
         if depth >= MAX_RECURSION {
             return Err(Error::MaximumRecursion(MAX_RECURSION));
         }
 
+        if let Some(stream_kind) = stream_kind {
+            if self.test.is_only_binary() && stream_kind.is_text() {
+                trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}",);
+                return Ok((false, None));
+            }
+
+            if self.test.is_only_text() && !stream_kind.is_text() {
+                trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}",);
+                return Ok((false, None));
+            }
+        }
+
         let Some(mut offset) = self.offset_from_start(haystack, start_offset, last_level_offset)?
         else {
-            return Ok(false);
+            return Ok((false, None));
         };
 
         offset = match self.offset {
@@ -1586,19 +1610,16 @@ impl Match {
 
         match &self.test {
             Test::Clear => {
-                // handle clear and default tests
                 trace!("source={source} line={line} clear");
                 state.clear_continuation_level(&self.continuation_level());
-                Ok(true)
+                Ok((true, None))
             }
+
             Test::Name(name) => {
                 trace!(
                     "source={source} line={line} running rule {name} switch_endianness={switch_endianness}",
                 );
-                if let Some(msg) = self.message.as_ref() {
-                    magic.push_message(msg.to_string_lossy());
-                }
-                Ok(true)
+                Ok((true, None))
             }
 
             Test::Use(flip_endianness, rule_name) => {
@@ -1614,6 +1635,7 @@ impl Match {
                     .get(rule_name)
                     .ok_or(Error::MissingRule(rule_name.clone()))?;
 
+                // we push the message here otherwise we push message in depth first
                 if let Some(msg) = self.message.as_ref() {
                     magic.push_message(msg.to_string_lossy());
                 }
@@ -1629,7 +1651,8 @@ impl Match {
                     depth.saturating_add(1),
                 )?;
 
-                Ok(false)
+                // we return false not to push message again
+                Ok((false, None))
             }
 
             Test::Indirect(m) => {
@@ -1643,6 +1666,11 @@ impl Match {
                 } else {
                     None
                 };
+
+                // we push the message here otherwise we push message in depth first
+                if let Some(msg) = self.message.as_ref() {
+                    magic.push_message(msg.to_string_lossy());
+                }
 
                 for r in db.binary_rules.iter().chain(db.text_rules.iter()) {
                     let messages_cnt = magic.message.len();
@@ -1664,7 +1692,8 @@ impl Match {
                     }
                 }
 
-                Ok(false)
+                // we return false not to push message again
+                Ok((false, None))
             }
 
             Test::Default => {
@@ -1673,13 +1702,10 @@ impl Match {
 
                 trace!("source={source} line={line} default match={ok}");
                 if ok {
-                    if let Some(msg) = self.message.as_ref() {
-                        magic.push_message(msg.to_string_lossy());
-                    }
                     state.set_continuation_level(self.continuation_level());
                 }
 
-                Ok(ok)
+                Ok((ok, None))
             }
 
             _ => {
@@ -1693,7 +1719,7 @@ impl Match {
                     )])
                 }
 
-                // FIXME: we may have a way to optimize here. In case we do a Any
+                // NOTE: we may have a way to optimize here. In case we do a Any
                 // test and we don't use the value to format the message, we don't
                 // need to read the value.
                 if let Ok(opt_test_value) = self
@@ -1714,7 +1740,7 @@ impl Match {
                             "message=\"{}\" match={}",
                             self.message
                                 .as_ref()
-                                .map(|fs| fs.to_string())
+                                .map(|fs| fs.to_string_lossy())
                                 .unwrap_or_default(),
                             match_res.is_some()
                         ))
@@ -1728,41 +1754,12 @@ impl Match {
                     }
 
                     if let Some(mr) = match_res {
-                        if let Some(m) = self.message.as_ref() {
-                            if let Ok(msg) = m.format_with(Some(&mr)).inspect_err(|e| {
-                                debug!("source={source} line={line} failed to format message: {e}")
-                            }) {
-                                magic.push_message(msg);
-                            }
-                        }
-
-                        // we re-ajust the stream offset only if we have a match
-                        if let (Test::Regex(t), MatchRes::Bytes(o, buf)) = (&self.test, &mr) {
-                            let after_match_offset = o + buf.len() as u64;
-
-                            if t.mods.contains(ReMod::StartOffsetUpdate) {
-                                haystack.seek(SeekFrom::Start(*o))?;
-                            } else {
-                                haystack.seek(SeekFrom::Start(after_match_offset))?;
-                            }
-                        } else if let (Test::Search(t), MatchRes::Bytes(o, buf)) = (&self.test, &mr)
-                        {
-                            let after_match_offset = o + buf.len() as u64;
-
-                            // we adjust offset to the start of the match
-                            if t.re_mods.contains(ReMod::StartOffsetUpdate) {
-                                haystack.seek(SeekFrom::Start(*o))?;
-                            } else {
-                                haystack.seek(SeekFrom::Start(after_match_offset))?;
-                            }
-                        }
-
                         state.set_continuation_level(self.continuation_level());
-                        return Ok(true);
+                        return Ok((true, Some(mr)));
                     }
                 }
 
-                Ok(false)
+                Ok((false, None))
             }
         }
     }
@@ -1969,7 +1966,7 @@ impl EntryNode {
 
     fn matches<'r, R: Read + Seek>(
         &'r self,
-        source: Option<&str>,
+        opt_source: Option<&str>,
         magic: &mut Magic<'r>,
         state: &mut MatchState,
         stream_kind: Option<StreamKind>,
@@ -1981,8 +1978,8 @@ impl EntryNode {
         switch_endianness: bool,
         depth: usize,
     ) -> Result<(), Error> {
-        let ok = self.entry.matches(
-            source,
+        let (ok, opt_match_res) = self.entry.matches(
+            opt_source,
             magic,
             stream_kind,
             state,
@@ -1995,7 +1992,46 @@ impl EntryNode {
             depth,
         )?;
 
+        let source = opt_source.unwrap_or("unknown");
+        let line = self.entry.line;
+
         if ok {
+            // update magic with message if match is successful
+            if let Some(msg) = self.entry.message.as_ref() {
+                if let Ok(msg) = msg.format_with(opt_match_res.as_ref()).inspect_err(|e| {
+                    debug!("source={source} line={line} failed to format message: {e}")
+                }) {
+                    magic.push_message(msg);
+                }
+            }
+
+            // we need to adjust stream offset in case of regex/search tests
+            if let Some(mr) = opt_match_res {
+                match &self.entry.test {
+                    Test::Search(t) => {
+                        if t.re_mods.contains(ReMod::StartOffsetUpdate) {
+                            let o = mr.start_offset();
+                            haystack.seek(SeekFrom::Start(o))?;
+                        } else {
+                            let o = mr.end_offset();
+                            haystack.seek(SeekFrom::Start(o))?;
+                        }
+                    }
+
+                    Test::Regex(t) => {
+                        if t.mods.contains(ReMod::StartOffsetUpdate) {
+                            let o = mr.start_offset();
+                            haystack.seek(SeekFrom::Start(o))?;
+                        } else {
+                            let o = mr.end_offset();
+                            haystack.seek(SeekFrom::Start(o))?;
+                        }
+                    }
+                    // other types do not need offset adjustement
+                    _ => {}
+                }
+            }
+
             if let Some(mimetype) = self.mimetype.as_ref() {
                 magic.insert_mimetype(Cow::Borrowed(mimetype));
             }
@@ -2021,7 +2057,7 @@ impl EntryNode {
 
             for e in self.children.iter() {
                 e.matches(
-                    source,
+                    opt_source,
                     magic,
                     state,
                     stream_kind,

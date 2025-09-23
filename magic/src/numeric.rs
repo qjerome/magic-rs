@@ -68,6 +68,12 @@ macro_rules! impl_numeric_types {
                     _=> panic!("operation not supported between different numeric variants")
                 }
             }
+
+            pub(crate) fn size_of(&self) -> usize{
+                match self {
+                    $(Self::$name(_) => core::mem::size_of::<$ty>(),)*
+                }
+            }
         }
 
         impl std::ops::Not for Scalar {
@@ -306,6 +312,14 @@ macro_rules! impl_float_type {
 
         pub(crate) enum Float {
             $($name($ty),)*
+        }
+
+        impl Float {
+            pub(crate) fn size_of(&self) -> usize{
+                match self {
+                    $(Self::$name(_) => core::mem::size_of::<$ty>(),)*
+                }
+            }
         }
 
         impl std::ops::Add for Float {
