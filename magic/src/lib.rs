@@ -2017,12 +2017,24 @@ impl EntryNode {
                 magic.insert_extensions(&self.exts);
             }
 
-            // FIXME: probably strength modifier applies on the magic's
-            // strength directly.
-            let strength = match self.strength_mod.as_ref() {
-                Some(sm) => sm.apply(self.entry.strength()),
-                None => self.entry.strength(),
-            };
+            // NOTE: here we try to implement a similar logic as in file_magic_strength.
+            // Sticking to the exact same strength computation logic is complicated due
+            // to implementation differences. Let's wait and see if that is a real issue.
+            let mut strength = self.entry.strength();
+
+            let continuation_level = self.entry.continuation_level().0 as u64;
+            if self.entry.message.is_none() && continuation_level < 3 {
+                strength = strength.saturating_add(continuation_level);
+            }
+
+            if let Some(sm) = self.strength_mod.as_ref() {
+                strength = sm.apply(strength);
+            }
+
+            // entries with no message get a bonus
+            if self.entry.message.is_none() {
+                strength += 1
+            }
 
             magic.update_strength(strength);
 
