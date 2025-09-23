@@ -145,13 +145,13 @@ fn main() -> Result<(), anyhow::Error> {
                             )
                         }
                     } else {
-                        let Ok(magic) = db.magic_first(&mut haystack).inspect_err(|e| {
+                        let Ok(opt_magic) = db.magic_first(&mut haystack).inspect_err(|e| {
                             error!("failed to get magic file={}: {e}", f.to_string_lossy())
                         }) else {
                             continue;
                         };
 
-                        if let Some(magic) = magic {
+                        if let Some(magic) = opt_magic {
                             let elapsed = start.elapsed();
                             println!(
                                 "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",

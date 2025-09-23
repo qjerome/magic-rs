@@ -94,6 +94,8 @@ fn read_octal_u64<R: Read + Seek>(haystack: &mut LazyCache<R>) -> Option<u64> {
 pub enum Error {
     #[error("{0}")]
     Msg(String),
+    #[error("source={0} line={1} error={2}")]
+    Localized(String, usize, Box<Error>),
     #[error("unexpected rule: {0}")]
     UnexpectedRule(String),
     #[error("missing rule: {0}")]
@@ -122,6 +124,18 @@ impl Error {
 
     fn msg<M: AsRef<str>>(msg: M) -> Self {
         Self::Msg(msg.as_ref().into())
+    }
+
+    fn localized<S: AsRef<str>>(source: S, line: usize, err: Error) -> Self {
+        Self::Localized(source.as_ref().into(), line, err.into())
+    }
+
+    /// Unwraps the localized error
+    pub fn unwrap_localized(&self) -> &Self {
+        match self {
+            Self::Localized(_, _, e) => e,
+            _ => self,
+        }
     }
 }
 
@@ -1037,7 +1051,6 @@ impl Test {
         }
     }
 
-    // FIXME: this function must return a result
     #[inline(always)]
     fn match_value<'s>(&'s self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
         match (self, tv) {
@@ -1085,7 +1098,10 @@ impl Test {
                     CmpOp::Gt => read_value > t.value,
                     CmpOp::Neq => read_value != t.value,
                     _ => {
+                        // this should never be reached as we validate
+                        // operator in parser
                         debug_panic!("unsupported float comparison");
+                        debug!("unsupported float comparison");
                         false
                     }
                 };
@@ -1122,7 +1138,10 @@ impl Test {
                     }
                     // unsupported for strings
                     _ => {
-                        debug_panic!("unsupported cmp operator for string");
+                        // this should never be reached as we validate
+                        // operator in parser
+                        debug_panic!("unsupported string comparison");
+                        debug!("unsupported string comparison");
                         None
                     }
                 }
@@ -1533,6 +1552,12 @@ impl Match {
         }
     }
 
+    // this method shoud bubble up only critical errors
+    // all the other errors should make the match result
+    // false and be logged via debug!
+    //
+    // the function returns an error if the maximum recursion
+    // has been reached or if a dependency rule is missing.
     #[inline]
     fn matches<'a: 'h, 'h, R: Read + Seek>(
         &'a self,
@@ -1552,7 +1577,11 @@ impl Match {
         let line = self.line;
 
         if depth >= MAX_RECURSION {
-            return Err(Error::MaximumRecursion(MAX_RECURSION));
+            return Err(Error::localized(
+                source,
+                line,
+                Error::MaximumRecursion(MAX_RECURSION),
+            ));
         }
 
         if let Some(stream_kind) = stream_kind {
@@ -1567,7 +1596,9 @@ impl Match {
             }
         }
 
-        let Some(mut offset) = self.offset_from_start(haystack, start_offset, last_level_offset)?
+        let Ok(Some(mut offset)) = self
+            .offset_from_start(haystack, start_offset, last_level_offset)
+            .inspect_err(|e| debug!("source={source} line={line} failed at computing offset: {e}"))
         else {
             return Ok((false, None));
         };
@@ -1604,10 +1635,9 @@ impl Match {
                 // switch_endianness must propagate down the rule call stack
                 let switch_endianness = switch_endianness ^ flip_endianness;
 
-                let dr: &DependencyRule = db
-                    .dependencies
-                    .get(rule_name)
-                    .ok_or(Error::MissingRule(rule_name.clone()))?;
+                let dr: &DependencyRule = db.dependencies.get(rule_name).ok_or(
+                    Error::localized(source, line, Error::MissingRule(rule_name.clone())),
+                )?;
 
                 // we push the message here otherwise we push message in depth first
                 if let Some(msg) = self.message.as_ref() {
@@ -1683,12 +1713,16 @@ impl Match {
             }
 
             _ => {
-                haystack.seek(SeekFrom::Start(offset))?;
+                if let Err(e) = haystack.seek(SeekFrom::Start(offset)) {
+                    debug!("source={source} line={line} failed to seek in haystack: {e}");
+                    return Ok((false, None));
+                }
+
                 let mut trace_msg = None;
 
                 if enabled!(Level::DEBUG) {
                     trace_msg = Some(vec![format!(
-                        "source={source} line={line} stream_offset={:#x} ",
+                        "source={source} line={line} stream_offset={:#x}",
                         haystack.stream_position().unwrap_or_default()
                     )])
                 }
@@ -2662,7 +2696,13 @@ mod tests {
     #[test]
     fn test_max_recursion() {
         let res = first_magic(r#"0	indirect x"#, b"#!          /usr/bin/luatex ");
-        assert!(matches!(res, Err(Error::MaximumRecursion(MAX_RECURSION))));
+        assert!(res.is_err());
+        let _ = res.inspect_err(|e| {
+            assert!(matches!(
+                e.unwrap_localized(),
+                Error::MaximumRecursion(MAX_RECURSION)
+            ))
+        });
     }
 
     #[test]
