@@ -378,9 +378,6 @@ enum CmpOp {
     BitAnd,
     Neq, // ! operator
     Xor,
-    // FIXME: this operator might be useless
-    // it could be turned into Eq and transforming
-    // the test value
     Not, // ~ operator
 }
 
@@ -1060,6 +1057,8 @@ impl Test {
                 };
 
                 let ok = match t.cmp_op {
+                    // NOTE: this should not happen in practice because
+                    // we convert it into Eq equivalent at parsing time
                     CmpOp::Not => read_value == !t.value,
                     CmpOp::Eq => read_value == t.value,
                     CmpOp::Lt => read_value < t.value,

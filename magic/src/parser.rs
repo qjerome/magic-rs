@@ -824,7 +824,7 @@ impl Test {
 
                 let mut ty = None;
                 let mut transform = None;
-                let mut condition = CmpOp::Eq;
+                let mut cmp_op = CmpOp::Eq;
                 let mut scalar = None;
                 for pair in pairs {
                     match pair.as_rule() {
@@ -870,10 +870,11 @@ impl Test {
                             }
                         }
                         Rule::scalar_condition => {
-                            condition = CmpOp::from_pair(
+                            cmp_op = CmpOp::from_pair(
                                 pair.into_inner().next().expect("expecting cmp operator"),
                             )?;
                         }
+
                         Rule::scalar_value => {
                             let number_pair =
                                 pair.into_inner().next().expect("number pair expected");
@@ -888,13 +889,21 @@ impl Test {
                     }
                 }
 
+                let mut scalar = scalar.expect("scalar must be known");
+
+                // we handle Not (~) operator only once
+                if matches!(cmp_op, CmpOp::Not) {
+                    scalar = !scalar;
+                    cmp_op = CmpOp::Eq;
+                }
+
                 Self::Scalar(ScalarTest {
                     // no panic guarantee by parser
                     ty: ty.unwrap(),
                     transform,
-                    cmp_op: condition,
+                    cmp_op,
                     // no panic guarantee by parser
-                    value: scalar.unwrap(),
+                    value: scalar,
                 })
             }
             Rule::search_test => {
