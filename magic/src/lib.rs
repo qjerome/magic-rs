@@ -886,12 +886,13 @@ enum Test {
     Search(SearchTest),
     PString(PStringTest),
     Regex(RegexTest),
-    Clear,
-    Default,
     Indirect(FlagSet<IndirectMod>),
     String16(String16Test),
-    // FIXME: placeholders for strength computation
+    // FIXME: placeholder for strength computation
+    #[allow(dead_code)]
     Der,
+    Clear,
+    Default,
 }
 
 impl Test {
@@ -1859,7 +1860,6 @@ enum Flag {
 #[derive(Debug, Clone)]
 struct Name {
     line: usize,
-    offset: Offset,
     name: String,
     message: Option<Message>,
 }

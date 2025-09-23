@@ -65,7 +65,7 @@ fn main() -> Result<(), anyhow::Error> {
     match cli.command {
         Some(Command::Parse(o)) => {
             for f in o.rules {
-                let m = MagicFile::open(f)?;
+                let _ = MagicFile::open(f)?;
 
                 /*for r in m.rules() {
                     println!("# new rule");

@@ -1320,7 +1320,6 @@ impl MagicRule {
                     items.push(Entry::Match(
                         Name {
                             line,
-                            offset: Offset::Direct(DirOffset::Start(0)),
                             name: name.as_str().into(),
                             message,
                         }

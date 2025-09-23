@@ -433,7 +433,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Seek, SeekFrom, Write};
+    use std::io::Seek;
 
     macro_rules! lazy_cache {
         ($content: literal, $block_size: literal, $max_size: literal) => {
