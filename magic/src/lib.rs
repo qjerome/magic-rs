@@ -2228,9 +2228,7 @@ impl<'m> Magic<'m> {
 
     #[inline(always)]
     pub fn mimetype(&self) -> &str {
-        self.mimetype
-            .as_deref()
-            .unwrap_or("application/octet-stream")
+        self.mimetype.as_deref().unwrap_or(OCTET_STREAM_MIMETYPE)
     }
 
     #[inline(always)]
@@ -2435,7 +2433,7 @@ mod tests {
 
     macro_rules! lazy_cache {
         ($l: literal) => {
-            LazyCache::from_read_seek(Cursor::new($l), 4096, FILE_BYTES_MAX as u64).unwrap()
+            LazyCache::from_read_seek(Cursor::new($l)).unwrap()
         };
     }
 
@@ -2447,7 +2445,7 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        let mut reader = LazyCache::from_read_seek(Cursor::new(content), 4096, 4 << 20).unwrap();
+        let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
         let v = md.magic_best_with_opt_stream_kind(&mut reader, None)?;
         Ok(v.map(|m| m.into_owned()))
     }
