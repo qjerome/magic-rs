@@ -38,6 +38,8 @@ pub const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
 
+pub const OCTET_STREAM_MIMETYPE: &str = "application/octet-stream";
+
 pub(crate) const TIMESTAMP_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
 
 macro_rules! debug_panic {

@@ -91,8 +91,12 @@ fn main() -> Result<(), anyhow::Error> {
             let start = Instant::now();
             for rule in o.rules {
                 if rule.is_dir() {
-                    let wo = WalkOptions::new().files().max_depth(1).sort(true);
-                    for p in wo.walk(rule).flatten() {
+                    let walker = WalkOptions::new()
+                        .files()
+                        .max_depth(1)
+                        .sort(true)
+                        .walk(rule);
+                    for p in walker.flatten() {
                         info!("loading magic rule: {}", p.to_string_lossy());
                         let magic = MagicFile::open(&p).inspect_err(|e| {
                             if !o.silent {
@@ -115,14 +119,13 @@ fn main() -> Result<(), anyhow::Error> {
             let wo = WalkOptions::new().files().sort(true);
 
             for item in o.files {
-                for f in wo.clone().walk(item).flatten() {
+                let walker = WalkOptions::new().files().sort(true).walk(item);
+                for f in walker.flatten() {
+                    info!("scanning file: {}", f.to_string_lossy());
                     let start = Instant::now();
-                    let Ok(mut haystack) =
-                        LazyCache::<File>::open(&f, 4096, FILE_BYTES_MAX as u64 * 2)
-                            .inspect_err(|e| {
-                                error!("cannot open file={}: {e}", f.to_string_lossy())
-                            })
-                            .map(|lc| lc.with_header(2 * FILE_BYTES_MAX).unwrap())
+                    let Ok(mut haystack) = LazyCache::<File>::open(&f)
+                        .inspect_err(|e| error!("cannot open file={}: {e}", f.to_string_lossy()))
+                        .map(|lc| lc.with_hot_cache(2 * FILE_BYTES_MAX).unwrap())
                     else {
                         continue;
                     };
@@ -151,19 +154,29 @@ fn main() -> Result<(), anyhow::Error> {
                             continue;
                         };
 
-                        if let Some(magic) = opt_magic {
-                            let elapsed = start.elapsed();
-                            println!(
-                                "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",
-                                elapsed.as_nanos(),
-                                elapsed,
-                                f.to_string_lossy(),
-                                magic.source().unwrap_or(&Cow::Borrowed("unknown")),
-                                magic.strength().unwrap_or_default(),
-                                magic.mimetype(),
-                                magic.message()
-                            )
-                        }
+                        let elapsed = start.elapsed();
+                        println!(
+                            "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",
+                            elapsed.as_nanos(),
+                            elapsed,
+                            f.to_string_lossy(),
+                            opt_magic
+                                .as_ref()
+                                .map(|m| m.source().unwrap_or(&Cow::Borrowed("unknown")))
+                                .unwrap_or(&Cow::Borrowed("none")),
+                            opt_magic
+                                .as_ref()
+                                .map(|m| m.strength().unwrap_or_default())
+                                .unwrap_or_default(),
+                            opt_magic
+                                .as_ref()
+                                .map(|m| m.mimetype())
+                                .unwrap_or(OCTET_STREAM_MIMETYPE),
+                            opt_magic
+                                .as_ref()
+                                .map(|m| m.message())
+                                .unwrap_or("data".into()),
+                        )
                     }
                 }
             }
