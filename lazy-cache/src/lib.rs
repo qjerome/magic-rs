@@ -2,29 +2,33 @@
 
 use std::{
     cmp::min,
-    collections::HashMap,
     fs::File,
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom, Write},
     ops::Range,
     path::Path,
 };
 
-use lru_st::collections::LruHashMap;
+use memmap2::MmapMut;
+
+const EMPTY_RANGE: &[u8] = &[];
 
 pub struct LazyCache<R>
 where
     R: Read + Seek,
 {
     source: R,
-    header: Vec<u8>,
-    chunks_lru: LruHashMap<u64, Vec<u8>>,
-    chunks_map: HashMap<u64, u64>, // maps the chunks id to a larger chunk in LRU
+    loaded: Vec<bool>,
+    hot_head: Vec<u8>,
+    hot_tail: Vec<u8>,
+    warm: Option<MmapMut>,
+    cold: Vec<u8>,
     block_size: u64,
-    size: u64,
-    max_size: u64,
+    warm_size: Option<u64>,
     stream_pos: u64,
     pos_end: u64,
 }
+
+const BLOCK_SIZE: usize = 4096;
 
 impl<R> Seek for LazyCache<R>
 where
@@ -38,12 +42,8 @@ where
 }
 
 impl LazyCache<File> {
-    pub fn open<P: AsRef<Path>>(
-        path: P,
-        block_size: u64,
-        max_size: u64,
-    ) -> Result<Self, io::Error> {
-        Self::from_read_seek(File::open(path)?, block_size, max_size)
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
+        Self::from_read_seek(File::open(path)?)
     }
 }
 
@@ -51,29 +51,48 @@ impl<R> LazyCache<R>
 where
     R: Read + Seek,
 {
-    pub fn from_read_seek(mut rs: R, block_size: u64, max_size: u64) -> Result<Self, io::Error> {
-        let cap = max_size / block_size;
+    pub fn from_read_seek(mut rs: R) -> Result<Self, io::Error> {
+        let block_size = BLOCK_SIZE as u64;
         let pos_end = rs.seek(SeekFrom::End(0))?;
+        let cache_cap = pos_end.div_ceil(BLOCK_SIZE as u64);
 
         Ok(Self {
             source: rs,
-            header: vec![],
-            chunks_lru: LruHashMap::with_max_entries(cap as usize),
-            chunks_map: HashMap::with_capacity(cap as usize),
+            hot_head: vec![],
+            hot_tail: vec![],
+            warm: None,
+            cold: vec![0; 4096],
+            loaded: vec![false; cache_cap as usize],
             block_size,
-            size: 0,
-            max_size,
+            warm_size: None,
             stream_pos: 0,
             pos_end,
         })
     }
 
-    pub fn with_header(mut self, size: usize) -> Result<Self, io::Error> {
+    pub fn with_hot_cache(mut self, size: usize) -> Result<Self, io::Error> {
+        let head_tail_size = size / 2;
+
         self.source.seek(SeekFrom::Start(0))?;
-        let mut buf = vec![0u8; min(self.pos_end as usize, size)];
-        self.source.read(buf.as_mut_slice())?;
-        self.header = buf;
+
+        if self.pos_end > size as u64 {
+            self.hot_head = vec![0u8; head_tail_size];
+            self.source.read_exact(&mut self.hot_head.as_mut_slice())?;
+
+            self.source.seek(SeekFrom::End(-(size as i64)))?;
+            self.hot_tail = vec![0u8; head_tail_size];
+            self.source.read_exact(self.hot_tail.as_mut_slice())?;
+        } else {
+            self.hot_head = vec![0u8; self.pos_end as usize];
+            self.source.read_exact(self.hot_head.as_mut())?;
+        }
+
         Ok(self)
+    }
+
+    pub fn with_warm_cache(mut self, warm_size: u64) -> Self {
+        self.warm_size = Some(warm_size);
+        self
     }
 
     #[inline(always)]
@@ -91,149 +110,47 @@ where
     }
 
     #[inline(always)]
-    fn cleanup_lru_item(&mut self, chunk_id: u64, data: Vec<u8>) {
-        let end = chunk_id + data.len() as u64 / self.block_size;
-        // in case data.len() == 0 the range is empty yet we
-        // need to remove the chunk_id from the map
-        self.chunks_map.remove(&chunk_id);
-
-        for cid in chunk_id..end {
-            self.chunks_map.remove(&cid);
+    fn warm(&mut self) -> Result<&mut MmapMut, io::Error> {
+        if self.warm.is_none() {
+            self.warm = Some(MmapMut::map_anon(
+                self.warm_size.unwrap_or_default() as usize
+            )?);
         }
-        self.size -= data.len() as u64;
+        Ok(self.warm.as_mut().unwrap())
     }
 
     #[inline(always)]
-    fn fix_chunk_id_map(&mut self, chunk_id: u64) {
-        let chunk_len = self
-            .chunks_lru
-            .get(&chunk_id)
-            .map(|c| c.len() as u64)
-            .unwrap();
-        // last chunk isn't guaranteed to be a multiple of block_size
-        // so we must ceil the division otherwise we might miss the last chunk
-        let end = chunk_id + chunk_len.div_ceil(self.block_size);
-        for i in chunk_id..end {
-            self.chunks_map.insert(i, chunk_id);
-        }
-    }
+    fn range_warmup(&mut self, range: Range<u64>) -> Result<(), io::Error> {
+        let start_chunk_id = range.start / self.block_size;
+        let end_chunk_id = (range.end.saturating_sub(1)) / self.block_size;
 
-    #[inline(always)]
-    fn load_range_if_needed(&mut self, range: Range<u64>) -> Result<(), io::Error> {
-        let range_len = range.end.saturating_sub(range.start);
-        if range_len > self.max_size {
-            self.max_size = range_len + self.block_size;
-        }
-
-        if range.is_empty() {
-            // we make sure we have a chunk initialized to empty
-            let chunk_id = range.start / self.block_size;
-
-            if !self.chunks_map.contains_key(&chunk_id) {
-                if let Some((chunk_id, data)) = self.chunks_lru.insert(chunk_id, vec![]) {
-                    self.cleanup_lru_item(chunk_id, data);
-                }
-                self.chunks_map.insert(chunk_id, chunk_id);
-            }
+        if self.loaded.is_empty() {
             return Ok(());
         }
 
-        let start_chunk_id = range.start / self.block_size;
-        let end_chunk_id = (range.end - 1) / self.block_size;
-
         for chunk_id in start_chunk_id..=end_chunk_id {
-            if self.chunks_map.contains_key(&chunk_id) {
+            if self.loaded[chunk_id as usize] {
                 continue;
             }
 
             let offset = chunk_id * self.block_size;
-            // in case we reach the last chunk
             let buf_size = min(
                 self.block_size as usize,
                 (self.pos_end.saturating_sub(offset)) as usize,
             );
             let mut buf = vec![0u8; buf_size];
-
-            // we make room in the cache if necessary
-            while self.size + buf.len() as u64 > self.max_size {
-                if let Some((chunk_id, data)) = self.chunks_lru.pop_lru() {
-                    self.cleanup_lru_item(chunk_id, data);
-                }
-            }
-
             self.source.seek(SeekFrom::Start(offset))?;
             self.source.read_exact(&mut buf)?;
 
-            self.size += buf.len() as u64;
-
-            if chunk_id > 0 {
-                if let Some(real_chunk_id) = self.chunks_map.get(&(chunk_id - 1)).copied() {
-                    // this cannot panic as implementation guarantees that any chunk_id in
-                    // chunk_map is valid in chunks_lru
-                    let chunk = self.chunks_lru.get_mut(&real_chunk_id).unwrap();
-                    chunk.extend(buf);
-
-                    // we must consolidate with next chunk
-                    if let Some(next_chunk_key) = self.chunks_map.remove(&(chunk_id + 1)) {
-                        // we remove next_chunk from lru
-                        if let Some(next_chunk) = self.chunks_lru.remove(&next_chunk_key) {
-                            // we must call get_mut again to satisfy borrow checker
-                            // we can safely unwrap as implementation guarantee it exists
-                            let chunk = self.chunks_lru.get_mut(&real_chunk_id).unwrap();
-                            // we extend previous chunk with it
-                            chunk.extend(next_chunk);
-                        }
-                    }
-
-                    // we must fix chunk_map to point to the new chunk
-
-                    self.fix_chunk_id_map(real_chunk_id);
-
-                    continue;
-                }
-            }
-
-            if let Some(real_chunk_id) = self.chunks_map.remove(&(chunk_id + 1)) {
-                if let Some(next_chunk) = self.chunks_lru.remove(&real_chunk_id) {
-                    buf.extend(next_chunk);
-                }
-                // we trigger a cleanup in case LRU insertion evicted and existing entry
-                if let Some((chunk_id, data)) = self.chunks_lru.insert(chunk_id, buf) {
-                    self.cleanup_lru_item(chunk_id, data);
-                }
-                self.fix_chunk_id_map(chunk_id);
-            } else {
-                // we trigger a cleanup in case LRU insertion evicted and existing entry
-                if let Some((chunk_id, data)) = self.chunks_lru.insert(chunk_id, buf) {
-                    self.cleanup_lru_item(chunk_id, data);
-                }
-                self.chunks_map.insert(chunk_id, chunk_id);
-            }
+            (&mut self.warm()?[offset as usize..]).write_all(&buf)?;
+            self.loaded[chunk_id as usize] = true;
         }
-
-        #[cfg(debug_assertions)]
-        self.is_valid_or_panic();
 
         Ok(())
     }
 
-    fn is_valid_or_panic(&mut self) {
-        // control size
-        let cnt_size: usize = self.chunks_lru.values().map(|v| v.len()).sum();
-        assert_eq!(cnt_size as u64, self.size);
-        assert!(self.size <= self.max_size);
-
-        // control that every chunk in map is available in lru
-        for (first_chunk_id, real_chunk_id) in self.chunks_map.iter() {
-            if !self.chunks_lru.contains_key(real_chunk_id) {
-                panic!("found inconsistency {first_chunk_id} {real_chunk_id} not in lru");
-            }
-        }
-    }
-
     #[inline(always)]
     fn get_range_u64(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
-        let range_len = range.end - range.start;
         // we fix range in case we attempt at reading beyond end of file
         let range = if range.end > self.pos_end {
             range.start..self.pos_end
@@ -241,31 +158,38 @@ where
             range
         };
 
-        if range.start < self.header.len() as u64 && range.end <= self.header.len() as u64 {
+        let range_len = range.end.saturating_sub(range.start);
+
+        if range.start > self.pos_end || range_len == 0 {
+            return Ok(EMPTY_RANGE);
+        }
+
+        if range.start < self.hot_head.len() as u64 && range.end <= self.hot_head.len() as u64 {
             self.seek(SeekFrom::Start(range.end))?;
-            return Ok(&self.header[range.start as usize..range.end as usize]);
+            return Ok(&self.hot_head[range.start as usize..range.end as usize]);
         }
 
-        self.load_range_if_needed(range.clone())?;
+        if range.start > (self.pos_end - self.hot_tail.len() as u64) {
+            let start_from_end = self.pos_end.saturating_sub(1).saturating_sub(range.start);
+            self.seek(SeekFrom::Start(range.end))?;
+            return Ok(&self.hot_tail
+                [start_from_end as usize..start_from_end.saturating_add(range_len) as usize]);
+        }
+
+        if range.end < self.warm_size.unwrap_or_default() {
+            self.range_warmup(range.clone())?;
+            self.seek(SeekFrom::Start(range.end))?;
+            return Ok(&self.warm()?[range.start as usize..range.end as usize]);
+        }
+
+        if range_len > self.cold.len() as u64 {
+            self.cold.resize(range_len as usize, 0);
+        }
+
+        self.source.seek(SeekFrom::Start(range.start))?;
+        let n = self.source.read(self.cold[..range_len as usize].as_mut())?;
         self.seek(SeekFrom::Start(range.end))?;
-
-        let start = range.start;
-
-        let chunk_id = start / self.block_size;
-        // chunk_id is guaranteed to be in chunks_map
-        let real_chunk_id = self.chunks_map.get(&chunk_id).unwrap();
-
-        // real_chunk_id is guaranteed to be in chunks_lru
-        let chunk = self.chunks_lru.get(real_chunk_id).unwrap();
-        // compute start relative to the slice
-        let slice_start = (start - (real_chunk_id * self.block_size)) as usize;
-        let slice_end = min(slice_start + range_len as usize, chunk.len());
-
-        if slice_start >= chunk.len() {
-            Ok(&chunk[0..0])
-        } else {
-            Ok(&chunk[slice_start..slice_end])
-        }
+        Ok(&self.cold[..n])
     }
 
     pub fn read_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
@@ -331,7 +255,6 @@ where
     where
         F: Fn(u8) -> bool,
     {
-        let limit = min(self.max_size, limit);
         let start = self.stream_pos;
         let mut end = 0;
 
@@ -376,7 +299,6 @@ where
         utf16_char: &[u8; 2],
         limit: u64,
     ) -> Result<&[u8], io::Error> {
-        let limit = min(self.max_size, limit.saturating_mul(2));
         let start = self.stream_pos;
         let mut end = 0;
 
@@ -433,74 +355,53 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Seek;
 
     macro_rules! lazy_cache {
-        ($content: literal, $block_size: literal, $max_size: literal) => {
-            LazyCache::from_read_seek(std::io::Cursor::new($content), $block_size, $max_size)
-                .unwrap()
+        ($content: literal) => {
+            LazyCache::from_read_seek(std::io::Cursor::new($content)).unwrap()
         };
-    }
-
-    fn verify<R: Read + Seek>(lf: &LazyCache<R>) {
-        let cnt_size: usize = lf.chunks_lru.values().map(|v| v.len()).sum();
-        assert_eq!(cnt_size as u64, lf.size);
-        assert!(lf.size <= lf.max_size);
-    }
-
-    #[test]
-    fn test_open_file() {
-        let cache = lazy_cache!(b"hello world", 4, 1024);
-        assert_eq!(cache.block_size, 4);
-        assert_eq!(cache.max_size, 1024);
-        verify(&cache);
     }
 
     #[test]
     fn test_get_single_block() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_range(0..4).unwrap();
         assert_eq!(data, b"hell");
-        verify(&cache);
     }
 
     #[test]
     fn test_get_across_blocks() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_range(2..7).unwrap();
         assert_eq!(data, b"llo w");
-        verify(&cache);
     }
 
     #[test]
     fn test_get_entire_file() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_range(0..11).unwrap();
         assert_eq!(data, b"hello world");
-        verify(&cache);
     }
 
     #[test]
     fn test_get_empty_range() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_range(0..0).unwrap();
         assert!(data.is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_get_out_of_bounds() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         // This should not panic, but return an error or empty slice depending on your design
         // Currently, your code will panic due to `unwrap()` on `None`
         // You may want to handle this case more gracefully
         assert!(cache.read_range(20..30).unwrap().is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_cache_eviction() {
-        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 8);
+        let mut cache = lazy_cache!(b"0123456789abcdef");
         // Load blocks 0 and 1
         let _ = cache.read_range(0..8).unwrap();
         // Load block 2, which should evict block 0 or 1 due to max_size=8
@@ -508,12 +409,11 @@ mod tests {
         // Check that the cache still works
         let data = cache.read_range(8..12).unwrap();
         assert_eq!(data, b"89ab");
-        verify(&cache);
     }
 
     #[test]
     fn test_chunk_consolidation() {
-        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 16);
+        let mut cache = lazy_cache!(b"0123456789abcdef");
         // Load blocks 0 and 1 separately
         let _ = cache.read_range(0..4).unwrap();
         let _ = cache.read_range(4..8).unwrap();
@@ -524,24 +424,22 @@ mod tests {
         // Check that the consolidated chunk is correct
         let data = cache.read_range(0..8).unwrap();
         assert_eq!(data, b"01234567");
-        verify(&cache);
     }
 
     #[test]
     fn test_overlapping_ranges() {
-        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 16);
+        let mut cache = lazy_cache!(b"0123456789abcdef");
         // Load overlapping ranges
         let _ = cache.read_range(2..6).unwrap();
         let _ = cache.read_range(4..10).unwrap();
         // Check that the data is correct
         let data = cache.read_range(2..10).unwrap();
         assert_eq!(data, b"23456789");
-        verify(&cache);
     }
 
     #[test]
     fn test_lru_behavior() {
-        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 8);
+        let mut cache = lazy_cache!(b"0123456789abcdef");
         // Load block 0
         let _ = cache.read_range(0..4).unwrap();
         // Load block 1
@@ -551,36 +449,32 @@ mod tests {
         // Block 0 should be evicted, so accessing it again should reload it
         let data = cache.read_range(0..4).unwrap();
         assert_eq!(data, b"0123");
-        verify(&cache);
     }
 
     #[test]
     fn test_small_block_size() {
-        let mut cache = lazy_cache!(b"abc", 1, 3);
+        let mut cache = lazy_cache!(b"abc");
         let data = cache.read_range(0..3).unwrap();
         assert_eq!(data, b"abc");
-        verify(&cache);
     }
 
     #[test]
     fn test_large_block_size() {
-        let mut cache = lazy_cache!(b"hello world", 1024, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_range(0..11).unwrap();
         assert_eq!(data, b"hello world");
-        verify(&cache);
     }
 
     #[test]
     fn test_file_smaller_than_block() {
-        let mut cache = lazy_cache!(b"abc", 1024, 1024);
+        let mut cache = lazy_cache!(b"abc");
         let data = cache.read_range(0..3).unwrap();
         assert_eq!(data, b"abc");
-        verify(&cache);
     }
 
     #[test]
     fn test_multiple_gets_same_block() {
-        let mut cache = lazy_cache!(b"0123456789abcdef", 4, 16);
+        let mut cache = lazy_cache!(b"0123456789abcdef");
         // Get the same block multiple times
         let _ = cache.read_range(0..4).unwrap();
         let _ = cache.read_range(0..4).unwrap();
@@ -588,104 +482,93 @@ mod tests {
         // The block should still be in the cache
         let data = cache.read_range(0..4).unwrap();
         assert_eq!(data, b"0123");
-        verify(&cache);
     }
 
     #[test]
     fn test_read_method() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let _ = cache.read(6).unwrap();
         let data = cache.read(5).unwrap();
         assert_eq!(data, b"world");
         // We reached the end so next read should bring an empty slice
         assert!(cache.read(1).unwrap().is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_empty() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read(0).unwrap();
         assert!(data.is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_beyond_end() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let _ = cache.read(11).unwrap();
         let data = cache.read(5).unwrap();
         assert!(data.is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_exact_range() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_exact_range(0..5).unwrap();
         assert_eq!(data, b"hello");
         assert_eq!(cache.read_exact_range(5..11).unwrap(), b" world");
         assert!(cache.read_exact_range(12..13).is_err());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_exact_range_error() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let result = cache.read_exact_range(0..20);
         assert!(result.is_err());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_exact() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_exact(5).unwrap();
         assert_eq!(data, b"hello");
         assert_eq!(cache.read_exact(6).unwrap(), b" world");
         assert!(cache.read_exact(0).is_ok());
         assert!(cache.read_exact(1).is_err());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_exact_error() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let result = cache.read_exact(20);
         assert!(result.is_err());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_until_limit() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b' ', 10).unwrap();
         assert_eq!(data, b"hello ");
         assert_eq!(cache.read_exact(5).unwrap(), b"world");
-        verify(&cache);
     }
 
     #[test]
     fn test_read_until_limit_not_found() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b'\n', 11).unwrap();
         assert_eq!(data, b"hello world");
         assert!(cache.read(1).unwrap().is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_until_limit_beyond_stream() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b'\n', 42).unwrap();
         assert_eq!(data, b"hello world");
         assert!(cache.read(1).unwrap().is_empty());
-        verify(&cache);
     }
 
     #[test]
     fn test_read_until_limit_with_limit() {
-        let mut cache = lazy_cache!(b"hello world", 4, 1024);
+        let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b' ', 42).unwrap();
         assert_eq!(data, b"hello ");
 
@@ -694,15 +577,12 @@ mod tests {
 
         let data = cache.read_until_or_limit(b' ', 42).unwrap();
         assert_eq!(data, b"rld");
-        verify(&cache);
     }
 
     #[test]
     fn test_read_until_utf16_limit() {
         let mut cache = lazy_cache!(
-            b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64\x00\x00",
-            3,
-            512
+            b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64\x00\x00"
         );
         let data = cache.read_until_utf16_or_limit(b"\x00\x00", 512).unwrap();
         assert_eq!(data, b"\x61\x00\x62\x00\x63\x00\x64\x00\x00\x00");
@@ -714,6 +594,5 @@ mod tests {
             cache.read_until_utf16_or_limit(b"\xff\xff", 64).unwrap(),
             b"\x62\x00\x63\x00\x64\x00\x00"
         );
-        verify(&cache);
     }
 }

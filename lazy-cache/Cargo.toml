@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-lru-st = "0.3.0"
+memmap2 = "0.9.8"
 
 [dev-dependencies]
 criterion = "0.7.0"
