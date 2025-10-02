@@ -3,7 +3,7 @@ use std::{borrow::Cow, fs::File, path::PathBuf, time::Instant};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
-use magic_rs::{FILE_BYTES_MAX, MagicDb, MagicFile};
+use magic_rs::{FILE_BYTES_MAX, MagicDb, MagicFile, OCTET_STREAM_MIMETYPE};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -115,8 +115,6 @@ fn main() -> Result<(), anyhow::Error> {
                 }
             }
             println!("Time parse rule files: {:?}", start.elapsed());
-
-            let wo = WalkOptions::new().files().sort(true);
 
             for item in o.files {
                 let walker = WalkOptions::new().files().sort(true).walk(item);
