@@ -7,7 +7,6 @@ use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
 use std::{
     borrow::Cow,
-    char::REPLACEMENT_CHARACTER,
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
@@ -2292,15 +2291,17 @@ pub struct MagicDb {
 
 #[inline(always)]
 fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
-    let s = String::from_utf8_lossy(stream.as_ref());
+    let Ok(s) = str::from_utf8(stream.as_ref()) else {
+        return StreamKind::Binary;
+    };
+
     let count = s.chars().count();
     let mut is_ascii = true;
+
     for c in s.chars().take(count.saturating_sub(1)) {
-        if c == REPLACEMENT_CHARACTER {
-            return StreamKind::Binary;
-        }
         is_ascii &= c.is_ascii()
     }
+
     if is_ascii {
         StreamKind::Text(TextEncoding::Ascii)
     } else {
