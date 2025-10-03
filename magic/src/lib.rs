@@ -1052,7 +1052,11 @@ impl Test {
     }
 
     #[inline(always)]
-    fn match_value<'s>(&'s self, tv: &TestValue<'s>) -> Option<MatchRes<'s>> {
+    fn match_value<'s>(
+        &'s self,
+        tv: &TestValue<'s>,
+        stream_kind: Option<StreamKind>,
+    ) -> Option<MatchRes<'s>> {
         match (self, tv) {
             (Self::Any(v), TestValue::Bytes(o, buf)) => match v {
                 Any::String | Any::PString(_) => Some(MatchRes::Bytes(*o, buf, Encoding::Utf8)),
@@ -1176,15 +1180,40 @@ impl Test {
             }
 
             (Self::Regex(r), TestValue::Bytes(o, buf)) => {
-                if let Some(re_match) = r.re.find(&buf) {
-                    Some(MatchRes::Bytes(
-                        // the offset of the string is computed from the start of the buffer
-                        o + re_match.start() as u64,
-                        re_match.as_bytes(),
-                        Encoding::Utf8,
-                    ))
-                } else {
-                    None
+                match stream_kind {
+                    Some(StreamKind::Text(_)) => {
+                        let mut offset = *o;
+                        for line in buf.split(|c| c == &b'\n') {
+                            if let Some(re_match) = r.re.find(&line) {
+                                return Some(MatchRes::Bytes(
+                                    // the offset of the string is computed from the start of the buffer
+                                    offset + re_match.start() as u64,
+                                    re_match.as_bytes(),
+                                    Encoding::Utf8,
+                                ));
+                            }
+
+                            offset += line.len() as u64;
+                            // we have to add one because lines do not contain splitting character
+                            offset += 1;
+                        }
+                        None
+                    }
+
+                    Some(StreamKind::Binary) => {
+                        if let Some(re_match) = r.re.find(&buf) {
+                            Some(MatchRes::Bytes(
+                                // the offset of the string is computed from the start of the buffer
+                                o + re_match.start() as u64,
+                                re_match.as_bytes(),
+                                Encoding::Utf8,
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+
+                    None => None,
                 }
             }
 
@@ -1258,6 +1287,7 @@ impl Test {
             Self::Any(Any::String) => true,
             Self::Name(_) => true,
             Self::Use(_, _) => true,
+            Self::Indirect(_) => true,
             Self::String(t) => !t.binary && t.mods.contains(StringMod::ForceBin),
             Self::Clear => true,
             Self::Default => true,
@@ -1741,7 +1771,8 @@ impl Match {
                         .as_mut()
                         .map(|v| v.push(format!("test={:?}", self.test)));
 
-                    let match_res = opt_test_value.and_then(|tv| self.test.match_value(&tv));
+                    let match_res =
+                        opt_test_value.and_then(|tv| self.test.match_value(&tv, stream_kind));
 
                     trace_msg.as_mut().map(|v| {
                         v.push(format!(
@@ -2438,7 +2469,11 @@ mod tests {
         };
     }
 
-    fn first_magic(rule: &str, content: &[u8]) -> Result<Option<Magic<'static>>, Error> {
+    fn first_magic(
+        rule: &str,
+        content: &[u8],
+        stream_kind: StreamKind,
+    ) -> Result<Option<Magic<'static>>, Error> {
         let mut md = MagicDb::new();
         md.load(
             FileMagicParser::parse_str(rule, None)
@@ -2447,7 +2482,7 @@ mod tests {
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
-        let v = md.magic_best_with_opt_stream_kind(&mut reader, None)?;
+        let v = md.magic_best_with_opt_stream_kind(&mut reader, Some(stream_kind))?;
         Ok(v.map(|m| m.into_owned()))
     }
 
@@ -2469,46 +2504,84 @@ mod tests {
         };
     }
 
-    macro_rules! assert_magic_match {
+    macro_rules! assert_magic_match_bin {
         ($rule: literal, $content:literal) => {{
-            first_magic($rule, $content).unwrap().unwrap();
+            first_magic($rule, $content, StreamKind::Binary)
+                .unwrap()
+                .unwrap();
         }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
-                first_magic($rule, $content).unwrap().unwrap().message(),
+                first_magic($rule, $content, StreamKind::Binary)
+                    .unwrap()
+                    .unwrap()
+                    .message(),
                 $message
             );
         }};
     }
 
-    macro_rules! assert_magic_not_match {
+    macro_rules! assert_magic_match_text {
         ($rule: literal, $content:literal) => {{
-            assert!(first_magic($rule, $content).unwrap().is_none());
+            first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
+                .unwrap()
+                .unwrap();
+        }};
+        ($rule: literal, $content:literal, $message:expr) => {{
+            assert_eq!(
+                first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
+                    .unwrap()
+                    .unwrap()
+                    .message(),
+                $message
+            );
+        }};
+    }
+
+    macro_rules! assert_magic_not_match_text {
+        ($rule: literal, $content:literal) => {{
+            assert!(
+                first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
+                    .unwrap()
+                    .is_none()
+            );
+        }};
+    }
+
+    macro_rules! assert_magic_not_match_bin {
+        ($rule: literal, $content:literal) => {{
+            assert!(
+                first_magic($rule, $content, StreamKind::Binary)
+                    .unwrap()
+                    .is_none()
+            );
         }};
     }
 
     #[test]
     fn test_regex() {
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"
-0	regex/1024 #![[:space:]]*/usr/bin/env[[:space:]]+
+0	regex/1024 \^#![[:space:]]*/usr/bin/env[[:space:]]+
 !:mime	text/x-shellscript
 >&0  regex/64 .*($|\\b) %s shell script text executable
     "#,
             br#"#!/usr/bin/env bash
-        echo hello world"#
+        echo hello world"#,
+            // the magic generated
+            "bash shell script text executable"
         );
 
         let re = Regex::new(r"(?-u)\x42\x82").unwrap();
         assert!(re.is_match(b"\x42\x82"));
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             r#"0 regex \x42\x82 binary regex match"#,
             b"\x00\x00\x00\x00\x00\x00\x42\x82"
         );
 
         // test regex continuation after match
-        assert_magic_match!(
+        assert_magic_match_bin!(
             r#"
             0 regex \x42\x82
             >&0 string \xde\xad\xbe\xef it works
@@ -2516,18 +2589,28 @@ mod tests {
             b"\x00\x00\x00\x00\x00\x00\x42\x82\xde\xad\xbe\xef"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             r#"
             0 regex/s \x42\x82
             >&0 string \x42\x82\xde\xad\xbe\xef it works
             "#,
             b"\x00\x00\x00\x00\x00\x00\x42\x82\xde\xad\xbe\xef"
         );
+
+        // ^ must match stat of line when matching text
+        assert_magic_match_text!(
+            r#"
+0	regex/1024 \^HelloWorld$ HelloWorld String"#,
+            br#"
+// this is a comment after an empty line
+HelloWorld
+            "#
+        );
     }
 
     #[test]
     fn test_string_with_mods() {
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"0	string/w	#!\ \ \ /usr/bin/env\ bash	BASH
         "#,
             b"#! /usr/bin/env bash i
@@ -2535,50 +2618,50 @@ mod tests {
         );
 
         // test uppercase insensitive
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"0	string/C	HelloWorld	it works
         "#,
             b"helloworld"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_text!(
             r#"0	string/C	HelloWorld	it works
         "#,
             b"hELLOwORLD"
         );
 
         // test lowercase insensitive
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"0	string/c	HelloWorld	it works
         "#,
             b"HELLOWORLD"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_text!(
             r#"0	string/c	HelloWorld	it works
         "#,
             b"helloworld"
         );
 
         // test full word match
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"0	string/f	#!/usr/bin/env\ bash	BASH
         "#,
             b"#!/usr/bin/env bash"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_text!(
             r#"0	string/f	#!/usr/bin/python PYTHON"#,
             b"#!/usr/bin/pythonic"
         );
 
         // testing whitespace compacting
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"0	string/W	#!/usr/bin/env\ python  PYTHON"#,
             b"#!/usr/bin/env    python"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_text!(
             r#"0	string/W	#!/usr/bin/env\ \ python  PYTHON"#,
             b"#!/usr/bin/env python"
         );
@@ -2586,13 +2669,13 @@ mod tests {
 
     #[test]
     fn test_search_with_mods() {
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"0	search/1/fwt	#!\ /usr/bin/luatex	LuaTex script text executable"#,
             b"#!          /usr/bin/luatex "
         );
 
         // test matching from the beginning
-        assert_magic_match!(
+        assert_magic_match_text!(
             r#"
             0	search/s	/usr/bin/env
             >&0 string /usr/bin/env it works
@@ -2600,7 +2683,7 @@ mod tests {
             b"#!/usr/bin/env    python"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_text!(
             r#"
             0	search	/usr/bin/env
             >&0 string /usr/bin/env it works
@@ -2611,35 +2694,39 @@ mod tests {
 
     #[test]
     fn test_pstring() {
-        assert_magic_match!(r#"0 pstring Toast it works"#, b"\x05Toast");
+        assert_magic_match_bin!(r#"0 pstring Toast it works"#, b"\x05Toast");
 
-        assert_magic_match!(r#"0 pstring Toast %s"#, b"\x05Toast", "Toast");
+        assert_magic_match_bin!(r#"0 pstring Toast %s"#, b"\x05Toast", "Toast");
 
-        assert_magic_not_match!(r#"0 pstring Toast Doesn't work"#, b"\x07Toaster");
+        assert_magic_not_match_bin!(r#"0 pstring Toast Doesn't work"#, b"\x07Toaster");
 
         // testing with modifiers
-        assert_magic_match!(r#"0 pstring/H Toast it works"#, b"\x00\x05Toast");
+        assert_magic_match_bin!(r#"0 pstring/H Toast it works"#, b"\x00\x05Toast");
 
-        assert_magic_match!(r#"0 pstring/HJ Toast it works"#, b"\x00\x07Toast");
+        assert_magic_match_bin!(r#"0 pstring/HJ Toast it works"#, b"\x00\x07Toast");
 
-        assert_magic_match!(r#"0 pstring/HJ Toast %s"#, b"\x00\x07Toast", "Toast");
+        assert_magic_match_bin!(r#"0 pstring/HJ Toast %s"#, b"\x00\x07Toast", "Toast");
 
-        assert_magic_match!(r#"0 pstring/h Toast it works"#, b"\x05\x00Toast");
+        assert_magic_match_bin!(r#"0 pstring/h Toast it works"#, b"\x05\x00Toast");
 
-        assert_magic_match!(r#"0 pstring/hJ Toast it works"#, b"\x07\x00Toast");
+        assert_magic_match_bin!(r#"0 pstring/hJ Toast it works"#, b"\x07\x00Toast");
 
-        assert_magic_match!(r#"0 pstring/L Toast it works"#, b"\x00\x00\x00\x05Toast");
+        assert_magic_match_bin!(r#"0 pstring/L Toast it works"#, b"\x00\x00\x00\x05Toast");
 
-        assert_magic_match!(r#"0 pstring/LJ Toast it works"#, b"\x00\x00\x00\x09Toast");
+        assert_magic_match_bin!(r#"0 pstring/LJ Toast it works"#, b"\x00\x00\x00\x09Toast");
 
-        assert_magic_match!(r#"0 pstring/l Toast it works"#, b"\x05\x00\x00\x00Toast");
+        assert_magic_match_bin!(r#"0 pstring/l Toast it works"#, b"\x05\x00\x00\x00Toast");
 
-        assert_magic_match!(r#"0 pstring/lJ Toast it works"#, b"\x09\x00\x00\x00Toast");
+        assert_magic_match_bin!(r#"0 pstring/lJ Toast it works"#, b"\x09\x00\x00\x00Toast");
     }
 
     #[test]
     fn test_max_recursion() {
-        let res = first_magic(r#"0	indirect x"#, b"#!          /usr/bin/luatex ");
+        let res = first_magic(
+            r#"0	indirect x"#,
+            b"#!          /usr/bin/luatex ",
+            StreamKind::Binary,
+        );
         assert!(res.is_err());
         let _ = res.inspect_err(|e| {
             assert!(matches!(
@@ -2651,29 +2738,29 @@ mod tests {
 
     #[test]
     fn test_string_ops() {
-        assert_magic_match!("0	string/b MZ MZ File", b"MZ\0");
-        assert_magic_match!("0	string >\0 Any String", b"A\0");
-        assert_magic_match!("0	string >Test Any String", b"Test 1\0");
-        assert_magic_match!("0	string <Test Any String", b"\0");
-        assert_magic_not_match!("0	string >Test Any String", b"\0");
+        assert_magic_match_text!("0	string/b MZ MZ File", b"MZ\0");
+        assert_magic_match_text!("0	string >\0 Any String", b"A\0");
+        assert_magic_match_text!("0	string >Test Any String", b"Test 1\0");
+        assert_magic_match_text!("0	string <Test Any String", b"\0");
+        assert_magic_not_match_text!("0	string >Test Any String", b"\0");
     }
 
     #[test]
     fn test_lestring16() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 lestring16 abcd Little-endian UTF-16 string",
             b"\x61\x00\x62\x00\x63\x00\x64\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 lestring16 x %s",
             b"\x61\x00\x62\x00\x63\x00\x64\x00\x00",
             "abcd"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 lestring16 abcd Little-endian UTF-16 string",
             b"\x00\x61\x00\x62\x00\x63\x00\x64"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 lestring16 abcd Little-endian UTF-16 string",
             b"\x00\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64\x00"
         );
@@ -2681,20 +2768,20 @@ mod tests {
 
     #[test]
     fn test_bestring16() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 bestring16 abcd Big-endian UTF-16 string",
             b"\x00\x61\x00\x62\x00\x63\x00\x64"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 bestring16 x %s",
             b"\x00\x61\x00\x62\x00\x63\x00\x64",
             "abcd"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 bestring16 abcd Big-endian UTF-16 string",
             b"\x61\x00\x62\x00\x63\x00\x64\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 bestring16 abcd Big-endian UTF-16 string",
             b"\x00\x00\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64"
         );
@@ -2702,13 +2789,13 @@ mod tests {
 
     #[test]
     fn test_offset_from_end() {
-        assert_magic_match!("-1 ubyte 0x42 last byte ok", b"\x00\x00\x42");
-        assert_magic_match!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
+        assert_magic_match_bin!("-1 ubyte 0x42 last byte ok", b"\x00\x00\x42");
+        assert_magic_match_bin!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
     }
 
     #[test]
     fn test_relative_offset() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "
             0 ubyte 0x42
             >&0 ubyte 0x00
@@ -2720,11 +2807,11 @@ mod tests {
 
     #[test]
     fn test_indirect_offset() {
-        assert_magic_match!("(0.l) ubyte 0x42 it works", b"\x04\x00\x00\x00\x42");
+        assert_magic_match_bin!("(0.l) ubyte 0x42 it works", b"\x04\x00\x00\x00\x42");
         // adding fixed value to offset
-        assert_magic_match!("(0.l+3) ubyte 0x42 it works", b"\x01\x00\x00\x00\x42");
+        assert_magic_match_bin!("(0.l+3) ubyte 0x42 it works", b"\x01\x00\x00\x00\x42");
         // testing offset pair
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "(0.l+(4)) ubyte 0x42 it works",
             b"\x04\x00\x00\x00\x04\x00\x00\x00\x42"
         );
@@ -2732,7 +2819,7 @@ mod tests {
 
     #[test]
     fn test_use_with_message() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             r#"
 0 string MZ
 >0 use mz first match
@@ -2747,12 +2834,12 @@ mod tests {
 
     #[test]
     fn test_scalar_transform() {
-        assert_magic_match!("0 ubyte+1 0x1 add works", b"\x00");
-        assert_magic_match!("0 ubyte-1 0xfe sub works", b"\xff");
-        assert_magic_match!("0 ubyte%2 0 mod works", b"\x0a");
-        assert_magic_match!("0 ubyte&0x0f 0x0f bitand works", b"\xff");
-        assert_magic_match!("0 ubyte|0x0f 0xff bitor works", b"\xf0");
-        assert_magic_match!("0 ubyte^0x0f 0xf0 bitxor works", b"\xff");
+        assert_magic_match_bin!("0 ubyte+1 0x1 add works", b"\x00");
+        assert_magic_match_bin!("0 ubyte-1 0xfe sub works", b"\xff");
+        assert_magic_match_bin!("0 ubyte%2 0 mod works", b"\x0a");
+        assert_magic_match_bin!("0 ubyte&0x0f 0x0f bitand works", b"\xff");
+        assert_magic_match_bin!("0 ubyte|0x0f 0xff bitor works", b"\xf0");
+        assert_magic_match_bin!("0 ubyte^0x0f 0xf0 bitxor works", b"\xff");
 
         FileMagicParser::parse_str("0 ubyte%0 mod by zero", None)
             .expect_err("expect div by zero error");
@@ -2763,37 +2850,37 @@ mod tests {
     #[test]
     fn test_belong() {
         // Test that a file with a four-byte value at offset 0 that matches the given value in big-endian byte order
-        assert_magic_match!("0 belong 0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match_bin!("0 belong 0x12345678 Big-endian long", b"\x12\x34\x56\x78");
         // Test that a file with a four-byte value at offset 0 that does not match the given value in big-endian byte order
-        assert_magic_not_match!("0 belong 0x12345678 Big-endian long", b"\x78\x56\x34\x12");
+        assert_magic_not_match_bin!("0 belong 0x12345678 Big-endian long", b"\x78\x56\x34\x12");
         // Test that a file with a four-byte value at a non-zero offset that matches the given value in big-endian byte order
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 belong 0x12345678 Big-endian long",
             b"\x00\x00\x00\x00\x12\x34\x56\x78"
         );
         // Test < operator
-        assert_magic_match!("0 belong <0x12345678 Big-endian long", b"\x12\x34\x56\x77");
-        assert_magic_not_match!("0 belong <0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match_bin!("0 belong <0x12345678 Big-endian long", b"\x12\x34\x56\x77");
+        assert_magic_not_match_bin!("0 belong <0x12345678 Big-endian long", b"\x12\x34\x56\x78");
 
         // Test > operator
-        assert_magic_match!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x79");
-        assert_magic_not_match!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match_bin!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x79");
+        assert_magic_not_match_bin!("0 belong >0x12345678 Big-endian long", b"\x12\x34\x56\x78");
 
         // Test & operator
-        assert_magic_match!("0 belong &0x5678 Big-endian long", b"\x00\x00\x56\x78");
-        assert_magic_not_match!("0 belong &0x0000FFFF Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match_bin!("0 belong &0x5678 Big-endian long", b"\x00\x00\x56\x78");
+        assert_magic_not_match_bin!("0 belong &0x0000FFFF Big-endian long", b"\x12\x34\x56\x78");
 
         // Test ^ operator (bitwise AND with complement)
-        assert_magic_match!("0 belong ^0xFFFF0000 Big-endian long", b"\x00\x00\x56\x78");
-        assert_magic_not_match!("0 belong ^0xFFFF0000 Big-endian long", b"\x00\x01\x56\x78");
+        assert_magic_match_bin!("0 belong ^0xFFFF0000 Big-endian long", b"\x00\x00\x56\x78");
+        assert_magic_not_match_bin!("0 belong ^0xFFFF0000 Big-endian long", b"\x00\x01\x56\x78");
 
         // Test ~ operator
-        assert_magic_match!("0 belong ~0x12345678 Big-endian long", b"\xed\xcb\xa9\x87");
-        assert_magic_not_match!("0 belong ~0x12345678 Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match_bin!("0 belong ~0x12345678 Big-endian long", b"\xed\xcb\xa9\x87");
+        assert_magic_not_match_bin!("0 belong ~0x12345678 Big-endian long", b"\x12\x34\x56\x78");
 
         // Test x operator
-        assert_magic_match!("0 belong x Big-endian long", b"\x12\x34\x56\x78");
-        assert_magic_match!("0 belong x Big-endian long", b"\x78\x56\x34\x12");
+        assert_magic_match_bin!("0 belong x Big-endian long", b"\x12\x34\x56\x78");
+        assert_magic_match_bin!("0 belong x Big-endian long", b"\x78\x56\x34\x12");
     }
 
     #[test]
@@ -2805,15 +2892,15 @@ mod tests {
 
     #[test]
     fn test_bedate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 bedate 946684800 Unix date (Jan 1, 2000)",
             b"\x38\x6D\x43\x80"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 bedate 946684800 Unix date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 bedate 946684800 %s",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
             "2000-01-01 00:00:00"
@@ -2821,16 +2908,16 @@ mod tests {
     }
     #[test]
     fn test_beldate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 beldate 946684800 Local date (Jan 1, 2000)",
             b"\x38\x6D\x43\x80"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 beldate 946684800 Local date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 beldate 946684800 {}",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
             unix_local_time_to_string(946684800)
@@ -2839,17 +2926,17 @@ mod tests {
 
     #[test]
     fn test_beqdate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 beqdate 946684800 Unix date (Jan 1, 2000)",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 beqdate 946684800 Unix date (Jan 1, 2000)",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 beqdate 946684800 %s",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
             "2000-01-01 00:00:00"
@@ -2858,17 +2945,17 @@ mod tests {
 
     #[test]
     fn test_medate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 medate 946684800 Unix date (Jan 1, 2000)",
             b"\x6D\x38\x80\x43"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 medate 946684800 Unix date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 medate 946684800 %s",
             b"\x00\x00\x00\x00\x6D\x38\x80\x43",
             "2000-01-01 00:00:00"
@@ -2877,16 +2964,16 @@ mod tests {
 
     #[test]
     fn test_meldate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 meldate 946684800 Local date (Jan 1, 2000)",
             b"\x6D\x38\x80\x43"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 meldate 946684800 Local date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 meldate 946684800 %s",
             b"\x00\x00\x00\x00\x6D\x38\x80\x43",
             unix_local_time_to_string(946684800)
@@ -2895,15 +2982,15 @@ mod tests {
 
     #[test]
     fn test_date() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 date 946684800 Local date (Jan 1, 2000)",
             b"\x80\x43\x6D\x38"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 date 946684800 Local date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 date 946684800 {}",
             b"\x00\x00\x00\x00\x80\x43\x6D\x38",
             "2000-01-01 00:00:00"
@@ -2912,15 +2999,15 @@ mod tests {
 
     #[test]
     fn test_leldate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 leldate 946684800 Local date (Jan 1, 2000)",
             b"\x80\x43\x6D\x38"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 leldate 946684800 Local date (Jan 1, 2000)",
             b"\x00\x00\x00\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "4 leldate 946684800 {}",
             b"\x00\x00\x00\x00\x80\x43\x6D\x38",
             unix_local_time_to_string(946684800)
@@ -2929,16 +3016,16 @@ mod tests {
 
     #[test]
     fn test_leqdate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 leqdate 1577836800 Unix date (Jan 1, 2020)",
             b"\x00\xe1\x0b\x5E\x00\x00\x00\x00"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 leqdate 1577836800 Unix date (Jan 1, 2020)",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "8 leqdate 1577836800 %s",
             b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\xE1\x0B\x5E\x00\x00\x00\x00",
             "2020-01-01 00:00:00"
@@ -2947,16 +3034,16 @@ mod tests {
 
     #[test]
     fn test_leqldate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 leqldate 1577836800 Unix date (Jan 1, 2020)",
             b"\x00\xe1\x0b\x5E\x00\x00\x00\x00"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 leqldate 1577836800 Unix date (Jan 1, 2020)",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "8 leqldate 1577836800 %s",
             b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\xE1\x0B\x5E\x00\x00\x00\x00",
             unix_local_time_to_string(1577836800)
@@ -2966,136 +3053,136 @@ mod tests {
     #[test]
     fn test_melong() {
         // Test = operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 melong =0x12345678 Middle-endian long",
             b"\x34\x12\x78\x56"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 melong =0x12345678 Middle-endian long",
             b"\x00\x00\x00\x00"
         );
 
         // Test < operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 melong <0x12345678 Middle-endian long",
             b"\x34\x12\x78\x55"
         ); // 0x12345677 in middle-endian
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 melong <0x12345678 Middle-endian long",
             b"\x34\x12\x78\x56"
         ); // 0x12345678 in middle-endian
 
         // Test > operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 melong >0x12345678 Middle-endian long",
             b"\x34\x12\x78\x57"
         ); // 0x12345679 in middle-endian
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 melong >0x12345678 Middle-endian long",
             b"\x34\x12\x78\x56"
         ); // 0x12345678 in middle-endian
 
         // Test & operator
-        assert_magic_match!("0 melong &0x5678 Middle-endian long", b"\xab\xcd\x78\x56"); // 0x00007856 in middle-endian
-        assert_magic_not_match!(
+        assert_magic_match_bin!("0 melong &0x5678 Middle-endian long", b"\xab\xcd\x78\x56"); // 0x00007856 in middle-endian
+        assert_magic_not_match_bin!(
             "0 melong &0x0000FFFF Middle-endian long",
             b"\x34\x12\x78\x56"
         ); // 0x12347856 in middle-endian
 
         // Test ^ operator (bitwise AND with complement)
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 melong ^0xFFFF0000 Middle-endian long",
             b"\x00\x00\x78\x56"
         ); // 0x00007856 in middle-endian
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 melong ^0xFFFF0000 Middle-endian long",
             b"\x00\x01\x78\x56"
         ); // 0x00017856 in middle-endian
 
         // Test ~ operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 melong ~0x12345678 Middle-endian long",
             b"\xCB\xED\x87\xA9"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 melong ~0x12345678 Middle-endian long",
             b"\x34\x12\x78\x56"
         ); // The original value
 
         // Test x operator
-        assert_magic_match!("0 melong x Middle-endian long", b"\x34\x12\x78\x56");
-        assert_magic_match!("0 melong x Middle-endian long", b"\x00\x00\x00\x00");
+        assert_magic_match_bin!("0 melong x Middle-endian long", b"\x34\x12\x78\x56");
+        assert_magic_match_bin!("0 melong x Middle-endian long", b"\x00\x00\x00\x00");
     }
 
     #[test]
     fn test_uquad() {
         // Test = operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad =0x123456789ABCDEF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 uquad =0x123456789ABCDEF0 Unsigned quad",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
 
         // Test < operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad <0x123456789ABCDEF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x11"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 uquad <0x123456789ABCDEF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
 
         // Test > operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad >0x123456789ABCDEF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x13"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 uquad >0x123456789ABCDEF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
 
         // Test & operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad &0xF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 uquad &0xFF Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         );
 
         // Test ^ operator (bitwise AND with complement)
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad ^0xFFFFFFFFFFFFFFFF Unsigned quad",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         ); // All bits clear
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 uquad ^0xFFFFFFFFFFFFFFFF Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         ); // Some bits set
 
         // Test ~ operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad ~0x123456789ABCDEF0 Unsigned quad",
             b"\x0F\x21\x43\x65\x87\xA9\xCB\xED"
         );
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 uquad ~0x123456789ABCDEF0 Unsigned quad",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12"
         ); // The original value
 
         // Test x operator
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad x {:#x}",
             b"\xF0\xDE\xBC\x9A\x78\x56\x34\x12",
             "0x123456789abcdef0"
         );
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 uquad x Unsigned quad",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
@@ -3103,17 +3190,17 @@ mod tests {
 
     #[test]
     fn test_guid() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 guid EC959539-6786-2D4E-8FDB-98814CE76C1E It works",
             b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 guid 399595EC-8667-4E2D-8FDB-98814CE76C1E It works",
             b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 guid x %s",
             b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E",
             "EC959539-6786-2D4E-8FDB-98814CE76C1E"
@@ -3122,18 +3209,18 @@ mod tests {
 
     #[test]
     fn test_ubeqdate() {
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 ubeqdate 1633046400 It works",
             b"\x00\x00\x00\x00\x61\x56\x4f\x80"
         );
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 ubeqdate x %s",
             b"\x00\x00\x00\x00\x61\x56\x4f\x80",
             "2021-10-01 00:00:00"
         );
 
-        assert_magic_not_match!(
+        assert_magic_not_match_bin!(
             "0 ubeqdate 1633046400 It should not work",
             b"\x00\x00\x00\x00\x00\x00\x00\x00"
         );
@@ -3141,11 +3228,11 @@ mod tests {
 
     #[test]
     fn test_ldate() {
-        assert_magic_match!("0 ldate 1640551520 It works", b"\x60\xd4\xC8\x61");
+        assert_magic_match_bin!("0 ldate 1640551520 It works", b"\x60\xd4\xC8\x61");
 
-        assert_magic_not_match!("0 ldate 1633046400 It should not work", b"\x00\x00\x00\x00");
+        assert_magic_not_match_bin!("0 ldate 1633046400 It should not work", b"\x00\x00\x00\x00");
 
-        assert_magic_match!(
+        assert_magic_match_bin!(
             "0 ldate x %s",
             b"\x60\xd4\xC8\x61",
             unix_local_time_to_string(1640551520)
