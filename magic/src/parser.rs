@@ -1274,11 +1274,14 @@ impl Match {
             None => None,
         };
 
+        let test_strength = test.strength();
+
         Ok(Self {
             line,
             depth,
             offset,
             test,
+            test_strength,
             message,
         })
     }

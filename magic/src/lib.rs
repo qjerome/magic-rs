@@ -1232,6 +1232,68 @@ impl Test {
     }
 
     #[inline(always)]
+    fn strength(&self) -> u64 {
+        const MULT: usize = 10;
+
+        let mut out = 2 * MULT;
+
+        // FIXME: octal is missing but it is not used in practice ...
+        match self {
+            Test::Default => return 0,
+
+            Test::Scalar(s) => match s.ty {
+                _ => {
+                    out += s.ty.type_size() * MULT;
+                }
+            },
+
+            Test::Float(t) => match t.ty {
+                _ => {
+                    out += t.ty.type_size() * MULT;
+                }
+            },
+
+            Test::String(t) => out += t.str.len().saturating_add(MULT),
+
+            Test::PString(t) => out += t.val.len().saturating_add(MULT),
+
+            Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
+
+            Test::Regex(r) => {
+                let v = r.non_magic_len;
+                out += v * max(MULT / v, 1);
+            }
+
+            Test::String16(t) => {
+                // NOTE: in libmagic the result is div by 2
+                // but I GUESS it is because the len is expressed
+                // in number bytes. In our case length is expressed
+                // in number of u16 so we shouldn't divide.
+                out += t.str16.len().saturating_mul(MULT);
+            }
+
+            Test::Der => out += MULT,
+
+            // matching any output gets penalty
+            Test::Any(_) => out = 0,
+
+            _ => {}
+        }
+
+        if let Some(op) = self.cmp_op() {
+            match op {
+                // matching almost any gets penalty
+                CmpOp::Neq => out = 0,
+                CmpOp::Eq | CmpOp::Not => out += MULT,
+                CmpOp::Lt | CmpOp::Gt => out -= 2 * MULT,
+                CmpOp::Xor | CmpOp::BitAnd => out -= MULT,
+            }
+        }
+
+        out as u64
+    }
+
+    #[inline(always)]
     fn cmp_op(&self) -> Option<CmpOp> {
         match self {
             Self::String(t) => Some(t.cmp_op),
@@ -1525,16 +1587,20 @@ pub struct Match {
     depth: u8,
     offset: Offset,
     test: Test,
+    test_strength: u64,
     message: Option<Message>,
 }
 
 impl From<Use> for Match {
     fn from(value: Use) -> Self {
+        let test = Test::Use(value.switch_endianness, value.rule_name);
+        let test_strength = test.strength();
         Self {
             line: value.line,
             depth: value.depth,
             offset: value.start_offset,
-            test: Test::Use(value.switch_endianness, value.rule_name),
+            test,
+            test_strength,
             message: value.message,
         }
     }
@@ -1542,11 +1608,14 @@ impl From<Use> for Match {
 
 impl From<Name> for Match {
     fn from(value: Name) -> Self {
+        let test = Test::Name(value.name);
+        let test_strength = test.strength();
         Self {
             line: value.line,
             depth: 0,
             offset: Offset::Direct(DirOffset::Start(0)),
-            test: Test::Name(value.name),
+            test,
+            test_strength,
             message: value.message,
         }
     }
@@ -1811,68 +1880,6 @@ impl Match {
     fn continuation_level(&self) -> ContinuationLevel {
         ContinuationLevel(self.depth)
     }
-
-    #[inline(always)]
-    fn strength(&self) -> u64 {
-        const MULT: usize = 10;
-
-        let mut out = 2 * MULT;
-
-        // FIXME: octal is missing but it is not used in practice ...
-        match &self.test {
-            Test::Default => return 0,
-
-            Test::Scalar(s) => match s.ty {
-                _ => {
-                    out += s.ty.type_size() * MULT;
-                }
-            },
-
-            Test::Float(t) => match t.ty {
-                _ => {
-                    out += t.ty.type_size() * MULT;
-                }
-            },
-
-            Test::String(t) => out += t.str.len().saturating_add(MULT),
-
-            Test::PString(t) => out += t.val.len().saturating_add(MULT),
-
-            Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
-
-            Test::Regex(r) => {
-                let v = r.non_magic_len;
-                out += v * max(MULT / v, 1);
-            }
-
-            Test::String16(t) => {
-                // NOTE: in libmagic the result is div by 2
-                // but I GUESS it is because the len is expressed
-                // in number bytes. In our case length is expressed
-                // in number of u16 so we shouldn't divide.
-                out += t.str16.len().saturating_mul(MULT);
-            }
-
-            Test::Der => out += MULT,
-
-            // matching any output gets penalty
-            Test::Any(_) => out = 0,
-
-            _ => {}
-        }
-
-        if let Some(op) = self.test.cmp_op() {
-            match op {
-                // matching almost any gets penalty
-                CmpOp::Neq => out = 0,
-                CmpOp::Eq | CmpOp::Not => out += MULT,
-                CmpOp::Lt | CmpOp::Gt => out -= 2 * MULT,
-                CmpOp::Xor | CmpOp::BitAnd => out -= MULT,
-            }
-        }
-
-        out as u64
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -2035,7 +2042,7 @@ impl EntryNode {
             // NOTE: here we try to implement a similar logic as in file_magic_strength.
             // Sticking to the exact same strength computation logic is complicated due
             // to implementation differences. Let's wait and see if that is a real issue.
-            let mut strength = self.entry.strength();
+            let mut strength = self.entry.test_strength;
 
             let continuation_level = self.entry.continuation_level().0 as u64;
             if self.entry.message.is_none() && continuation_level < 3 {
