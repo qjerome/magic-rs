@@ -17,6 +17,7 @@ thiserror = "2.0.12"
 tracing = "0.1.41"
 lazy-cache = { path = "../lazy-cache/" }
 uuid = "1.18.1"
+memchr = "2.7.6"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.19" }

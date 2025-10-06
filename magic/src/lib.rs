@@ -3,6 +3,7 @@
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
 use lazy_cache::LazyCache;
+use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
 use std::{
@@ -659,12 +660,15 @@ impl SearchTest {
     #[inline]
     fn matches<'buf>(&self, buf: &'buf [u8]) -> Option<(u64, &'buf [u8])> {
         let mut i = 0;
+
+        let Some(needle) = self.str.get(0) else {
+            return None;
+        };
+
         while i < buf.len() {
             // we cannot match if the first character isn't the same
             // so we accelerate the search by finding potential matches
-            while i < buf.len() && self.str.get(0) != buf.get(i) {
-                i += 1
-            }
+            i += memchr(*needle, &buf[i..])?;
 
             if let Some(npos) = self.n_pos {
                 if i > npos {
