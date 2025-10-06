@@ -1830,7 +1830,7 @@ impl Match {
                 if enabled!(Level::DEBUG) {
                     trace_msg = Some(vec![format!(
                         "source={source} line={line} stream_offset={:#x}",
-                        haystack.stream_position().unwrap_or_default()
+                        haystack.lazy_stream_position()
                     )])
                 }
 
