@@ -2407,8 +2407,8 @@ impl MagicDb {
         &self,
         haystack: &mut LazyCache<R>,
     ) -> Result<Option<Magic<'_>>, Error> {
-        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
-        self.magic_first_with_opt_stream_kind(haystack, Some(stream_kind))
+        let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.magic_first_with_opt_stream_kind(haystack, Some(stream_kind), extension)
     }
 
     #[inline(always)]
@@ -2446,7 +2446,7 @@ impl MagicDb {
         &self,
         haystack: &mut LazyCache<R>,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
-        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+        let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
         self.magic_all_with_opt_stream_kind(haystack, Some(stream_kind))
     }
 
@@ -2465,7 +2465,7 @@ impl MagicDb {
         &self,
         haystack: &mut LazyCache<R>,
     ) -> Result<Option<Magic<'_>>, Error> {
-        let stream_kind = guess_stream_kind(haystack.read_range(0..4096)?);
+        let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
         self.magic_best_with_opt_stream_kind(haystack, Some(stream_kind))
     }
 }
