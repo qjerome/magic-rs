@@ -2294,14 +2294,17 @@ impl<'m> Magic<'m> {
         }
     }
 
+    #[inline(always)]
     pub fn is_empty(&self) -> bool {
         self.message.is_empty() && self.mimetype.is_none() && self.strength.is_none()
     }
 
+    #[inline(always)]
     pub fn strength(&self) -> Option<u64> {
         self.strength
     }
 
+    #[inline(always)]
     pub fn source(&self) -> Option<&Cow<'m, str>> {
         self.source.as_ref()
     }
