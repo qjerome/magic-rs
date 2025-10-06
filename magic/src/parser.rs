@@ -19,6 +19,7 @@ use crate::{
     ScalarTransform, SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod,
     StringTest, Test, Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
+    utils::nonmagic,
 };
 
 pub(crate) fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
@@ -808,6 +809,7 @@ impl RegexTest {
                 _ => unimplemented!(),
             }
         }
+        let non_magic_len = nonmagic(re);
         let re = format!("(?-u){re}");
 
         Ok(Self {
@@ -817,6 +819,7 @@ impl RegexTest {
             mods,
             str_mods,
             binary,
+            non_magic_len,
         })
     }
 }

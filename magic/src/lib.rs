@@ -21,7 +21,7 @@ use tracing::{Level, debug, enabled, error, trace};
 use crate::{
     numeric::{Float, FloatDataType},
     parser::{FileMagicParser, Rule},
-    utils::{decode_id3, nonmagic},
+    utils::decode_id3,
 };
 
 mod numeric;
@@ -470,6 +470,7 @@ struct RegexTest {
     length: Option<usize>,
     mods: FlagSet<ReMod>,
     str_mods: FlagSet<StringMod>,
+    non_magic_len: usize,
     binary: bool,
 }
 
@@ -1840,7 +1841,7 @@ impl Match {
             Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
 
             Test::Regex(r) => {
-                let v = nonmagic(r.re.as_str());
+                let v = r.non_magic_len;
                 out += v * max(MULT / v, 1);
             }
 
