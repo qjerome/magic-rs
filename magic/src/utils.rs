@@ -11,6 +11,7 @@ pub(crate) const fn decode_id3(v: u32) -> u32 {
 }
 
 // test this properly
+#[inline]
 pub(crate) fn nonmagic(str: &str) -> usize {
     let mut rv = 0;
     let mut chars = str.chars().peekable();

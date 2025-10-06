@@ -629,6 +629,7 @@ impl StringTest {
         )
     }
 
+    #[inline]
     fn matches(&self, buf: &[u8]) -> Option<&[u8]> {
         if let (true, _) = string_match(&self.str, self.mods, buf) {
             Some(&self.str)
@@ -654,6 +655,7 @@ impl From<SearchTest> for Test {
 }
 
 impl SearchTest {
+    #[inline]
     fn matches<'buf>(&self, buf: &'buf [u8]) -> Option<(u64, &'buf [u8])> {
         let mut i = 0;
         while i < buf.len() {
@@ -912,6 +914,7 @@ enum Test {
 
 impl Test {
     // read the value to test from the haystack
+    #[inline]
     fn read_test_value<'haystack, R: Read + Seek>(
         &self,
         haystack: &'haystack mut LazyCache<R>,
@@ -1888,6 +1891,7 @@ struct StrengthMod {
 }
 
 impl StrengthMod {
+    #[inline(always)]
     fn apply(&self, strength: u64) -> u64 {
         let by = self.by as u64;
         debug!("applying strength modifier: {strength} {} {}", self.op, by);
@@ -1946,6 +1950,7 @@ struct EntryNode {
 }
 
 impl EntryNode {
+    #[inline]
     fn matches<'r, R: Read + Seek>(
         &'r self,
         opt_source: Option<&str>,
@@ -2163,6 +2168,7 @@ struct MatchState {
 }
 
 impl MatchState {
+    #[inline(always)]
     fn empty() -> Self {
         MatchState {
             continuation_levels: [false; 256],
