@@ -2,7 +2,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use lazy_cache::LazyCache;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use tempfile::NamedTempFile; // Replace `your_crate` with your actual crate name
+use tempfile::NamedTempFile;
 
 // Helper: Create a test file with the given size and pattern
 fn create_test_file(size: usize) -> NamedTempFile {
@@ -88,7 +88,10 @@ fn benchmark_random_access_lazy_cache(c: &mut Criterion) {
     });
 
     // Open the file with cache (1MB cache, 4KB block size)
-    let mut cache = LazyCache::open(file_path, 4096, 1024 * 1024).unwrap();
+    let mut cache = LazyCache::open(file_path)
+        .unwrap()
+        .with_hot_cache(1 << 20)
+        .unwrap();
 
     // Benchmark cached access
     c.bench_function("1mb_cache_random_access", |b| {
@@ -98,7 +101,11 @@ fn benchmark_random_access_lazy_cache(c: &mut Criterion) {
     });
 
     // Open the file with cache (5MB cache, 4KB block size)
-    let mut cache = LazyCache::open(file_path, 4096, 1024 * 1024 * 5).unwrap();
+    let mut cache = LazyCache::open(file_path)
+        .unwrap()
+        .with_hot_cache(5 << 20)
+        .unwrap()
+        .with_warm_cache(10 << 20);
 
     // Benchmark cached access
     c.bench_function("5mb_cache_random_access", |b| {
