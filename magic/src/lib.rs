@@ -450,8 +450,8 @@ enum Any {
     String,
     String16(String16Encoding),
     PString(PStringTest),
-    Scalar(ScalarDataType),
-    Float(FloatDataType),
+    Scalar(ScalarDataType, Option<ScalarTransform>),
+    Float(FloatDataType, Option<FloatTransform>),
 }
 
 flags! {
@@ -896,6 +896,9 @@ impl PStringTest {
     }
 }
 
+// FIXME: tests should embed the Any test type
+// for example by defining an enum with Some/Any
+// to carry the value to test against
 #[derive(Debug, Clone)]
 enum Test {
     /// This corresponds to a DATATYPE x test
@@ -1042,10 +1045,10 @@ impl Test {
 
                     Ok(Some(TestValue::Bytes(test_value_offset, &read[..end])))
                 }
-                Any::Scalar(d) => d
+                Any::Scalar(d, _) => d
                     .read(haystack, switch_endianness)
                     .map(|s| Some(TestValue::Scalar(test_value_offset, s))),
-                Any::Float(ty) => ty
+                Any::Float(ty, _) => ty
                     .read(haystack, switch_endianness)
                     .map(|f| Some(TestValue::Float(test_value_offset, f))),
             },
@@ -1074,7 +1077,21 @@ impl Test {
                 _ => None,
             },
 
-            (Self::Any(Any::Scalar(_)), TestValue::Scalar(o, s)) => Some(MatchRes::Scalar(*o, *s)),
+            (Self::Any(Any::Scalar(_, t)), TestValue::Scalar(o, s)) => {
+                if let Some(transform) = t {
+                    Some(MatchRes::Scalar(*o, transform.apply(*s)?))
+                } else {
+                    Some(MatchRes::Scalar(*o, *s))
+                }
+            }
+
+            (Self::Any(Any::Float(_, t)), TestValue::Float(o, f)) => {
+                if let Some(transform) = t {
+                    Some(MatchRes::Float(*o, transform.apply(*f)))
+                } else {
+                    Some(MatchRes::Float(*o, *f))
+                }
+            }
 
             (Self::Scalar(t), TestValue::Scalar(o, ts)) => {
                 let read_value: Scalar = match t.transform.as_ref() {
@@ -1324,8 +1341,8 @@ impl Test {
                 Any::PString(_) => true,
                 Any::String => true,
                 Any::String16(_) => true,
-                Any::Scalar(_) => true,
-                Any::Float(_) => true,
+                Any::Scalar(_, _) => true,
+                Any::Float(_, _) => true,
             },
             Self::Name(_) => true,
             Self::Use(_, _) => true,
@@ -3258,6 +3275,20 @@ HelloWorld
             b"\x60\xd4\xC8\x61",
             unix_local_time_to_string(1640551520)
         );
+    }
+
+    #[test]
+    fn test_scalar_with_transform() {
+        assert_magic_match_bin!("0 ubyte/10 2 {}", b"\x14", "2");
+        assert_magic_match_bin!("0 ubyte/10 x {}", b"\x14", "2");
+        assert_magic_match_bin!("0 ubyte%10 x {}", b"\x14", "0");
+    }
+
+    #[test]
+    fn test_float_with_transform() {
+        assert_magic_match_bin!("0 lefloat/10 2 {}", b"\x00\x00\xa0\x41", "2");
+        assert_magic_match_bin!("0 lefloat/10 x {}", b"\x00\x00\xa0\x41", "2");
+        assert_magic_match_bin!("0 lefloat%10 x {}", b"\x00\x00\xa0\x41", "0");
     }
 
     #[test]

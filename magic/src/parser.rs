@@ -892,7 +892,9 @@ impl Test {
                                     .scalar_from_number(parse_number_pair(number_pair)),
                             );
                         }
-                        Rule::any_value => return Ok(Self::Any(Any::Scalar(ty.unwrap()))),
+                        Rule::any_value => {
+                            return Ok(Self::Any(Any::Scalar(ty.unwrap(), transform)));
+                        }
                         _ => {}
                     }
                 }
@@ -1032,7 +1034,7 @@ impl Test {
                 for p in pair.into_inner() {
                     match p.as_rule() {
                         Rule::any_value => {
-                            return Ok(Self::Any(Any::Scalar(ScalarDataType::guid)));
+                            return Ok(Self::Any(Any::Scalar(ScalarDataType::guid, None)));
                         }
                         Rule::guid => {
                             guid = Some(
@@ -1062,7 +1064,10 @@ impl Test {
                     let span = p.as_span();
                     match p.as_rule() {
                         Rule::any_value => {
-                            return Ok(Self::Any(Any::Float(ty.expect("type must be known"))));
+                            return Ok(Self::Any(Any::Float(
+                                ty.expect("type must be known"),
+                                transform,
+                            )));
                         }
                         Rule::float_type_transform => {
                             for p in p.into_inner() {
