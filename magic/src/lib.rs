@@ -14,6 +14,7 @@ use std::{
     io::{self, Read, Seek, SeekFrom},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
+    rc::Rc,
     str::Utf8Error,
 };
 use thiserror::Error;
@@ -1800,7 +1801,7 @@ impl Match {
                     magic.push_message(msg.to_string_lossy());
                 }
 
-                for r in db.binary_rules.iter().chain(db.text_rules.iter()) {
+                for (_, r) in db.rules.iter() {
                     let messages_cnt = magic.message.len();
 
                     r.magic(
@@ -2111,6 +2112,7 @@ pub struct MagicRule {
 }
 
 impl MagicRule {
+    #[inline]
     fn magic<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
@@ -2238,6 +2240,7 @@ pub struct Magic<'m> {
 }
 
 impl<'m> Magic<'m> {
+    #[inline(always)]
     fn with_source(source: Option<&'m str>) -> Self {
         Self {
             source: source.map(|s| Cow::Borrowed(s)),
@@ -2245,6 +2248,22 @@ impl<'m> Magic<'m> {
         }
     }
 
+    #[inline(always)]
+    fn set_source(&mut self, source: Option<&'m str>) {
+        self.source = source.map(|s| Cow::Borrowed(s));
+    }
+
+    #[inline(always)]
+    fn reset(&mut self) {
+        self.source = None;
+        self.message.clear();
+        self.mimetype = None;
+        self.apple = None;
+        self.strength = None;
+        self.exts.clear();
+    }
+
+    #[inline]
     pub fn into_owned<'owned>(self) -> Magic<'owned> {
         Magic {
             source: self.source.map(|s| Cow::Owned(s.into_owned())),
@@ -2353,8 +2372,9 @@ impl MagicFile {
 
 #[derive(Debug, Default, Clone)]
 pub struct MagicDb {
-    binary_rules: Vec<MagicRule>,
-    text_rules: Vec<MagicRule>,
+    rule_id: usize,
+    rules: Vec<(usize, Rc<MagicRule>)>,
+    by_ext: HashMap<String, Vec<(usize, Rc<MagicRule>)>>,
     dependencies: HashMap<String, DependencyRule>,
 }
 
@@ -2383,50 +2403,105 @@ impl MagicDb {
         Self::default()
     }
 
+    #[inline(always)]
+    fn next_rule_id(&mut self) -> usize {
+        let t = self.rule_id;
+        self.rule_id += 1;
+        t
+    }
+
+    #[inline(always)]
+    fn update_by_ext(&mut self, ext: &str, rule_id: usize, rule: &Rc<MagicRule>) {
+        self.by_ext
+            .entry(ext.to_lowercase())
+            .and_modify(|v| {
+                v.push((rule_id, Rc::clone(rule)));
+                v.sort_by_key(|(id, r)| (r.is_text(), *id));
+            })
+            .or_insert_with(|| vec![(rule_id, Rc::clone(rule))]);
+    }
+
     pub fn load(&mut self, mf: MagicFile) -> Result<&mut Self, Error> {
         // it seems rules are evaluated in their reverse definition order
         for rule in mf.rules.into_iter() {
-            if rule.is_binary() {
-                self.binary_rules.push(rule);
+            let (id, rule) = (self.next_rule_id(), Rc::new(rule));
+            if rule.entries.exts.is_empty() {
+                self.update_by_ext("", id, &rule);
             } else {
-                self.text_rules.push(rule)
+                for ext in &rule.entries.exts {
+                    // acceptable to clone here
+                    self.update_by_ext(ext.as_str(), id, &rule);
+                }
             }
+            self.rules.push((id, rule));
         }
+
+        // put text rules at the end
+        self.rules.sort_by_key(|(id, r)| (r.is_text(), *id));
         self.dependencies.extend(mf.dependencies);
         Ok(self)
     }
 
     #[inline]
-    fn magic_first_with_opt_stream_kind<R: Read + Seek>(
+    fn magic_first_with_opt_stream_kind<'m, R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: Option<StreamKind>,
+        extension: Option<&str>,
     ) -> Result<Option<Magic<'_>>, Error> {
-        for rule in self.binary_rules.iter().chain(self.text_rules.iter()) {
-            let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
+        // re-using magic makes this function faster
+        let mut magic = Magic::default();
+        let mut marked = vec![false; self.rules.len()];
 
-            rule.magic(
-                &mut magic,
-                stream_kind,
-                None,
-                None,
-                haystack,
-                &self,
-                false,
-                0,
-            )?;
+        macro_rules! do_magic {
+            ($rule: expr) => {{
+                $rule.magic(
+                    &mut magic,
+                    stream_kind,
+                    None,
+                    None,
+                    haystack,
+                    &self,
+                    false,
+                    0,
+                )?;
 
-            if !magic.mimetype.is_none() {
-                return Ok(Some(magic));
+                if !magic.mimetype.is_none() {
+                    magic.set_source($rule.source.as_deref());
+                    return Ok(Some(magic));
+                }
+
+                magic.reset();
+            }};
+        }
+
+        if let Some(by_extensions) = extension.and_then(|ext| self.by_ext.get(&ext.to_lowercase()))
+        {
+            for (id, rule) in by_extensions.iter() {
+                do_magic!(rule);
+                if let Some(f) = marked.get_mut(*id) {
+                    *f = true
+                }
             }
+        }
+
+        for (_, rule) in self
+            .rules
+            .iter()
+            // we don't run again rules run by extension
+            .filter(|(id, _)| !*marked.get(*id).unwrap_or(&false))
+        {
+            do_magic!(rule)
         }
 
         Ok(None)
     }
 
+    /// an empty extension must be `Some("")`, if extension acceleration is not desired specify `None`
     pub fn magic_first<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
+        extension: Option<&str>,
     ) -> Result<Option<Magic<'_>>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
         self.magic_first_with_opt_stream_kind(haystack, Some(stream_kind), extension)
@@ -2440,7 +2515,7 @@ impl MagicDb {
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let mut out = Vec::new();
 
-        for rule in self.binary_rules.iter().chain(self.text_rules.iter()) {
+        for (_, rule) in self.rules.iter() {
             let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
 
             rule.magic(

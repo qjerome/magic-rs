@@ -31,6 +31,10 @@ struct TestOpt {
     silent: bool,
     #[arg(long)]
     all: bool,
+    /// Enable file extension acceleration. Matches first the
+    /// rules where file extension is defined.
+    #[arg(long)]
+    no_accel: bool,
     #[arg(short, long)]
     rules: Vec<PathBuf>,
     files: Vec<PathBuf>,
@@ -146,7 +150,15 @@ fn main() -> Result<(), anyhow::Error> {
                             )
                         }
                     } else {
-                        let Ok(opt_magic) = db.magic_first(&mut haystack).inspect_err(|e| {
+                        let ext: Option<&str> = if o.no_accel {
+                            None
+                        } else {
+                            // files without extension must set have an empty string extension to benefit from
+                            // file extension acceleration
+                            Some(f.extension().and_then(|e| e.to_str()).unwrap_or_default())
+                        };
+
+                        let Ok(opt_magic) = db.magic_first(&mut haystack, ext).inspect_err(|e| {
                             error!("failed to get magic file={}: {e}", f.to_string_lossy())
                         }) else {
                             continue;
