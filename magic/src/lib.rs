@@ -1434,12 +1434,12 @@ impl IndOffset {
     fn read_offset<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        opt_start: Option<u64>,
+        rule_base_offset: Option<u64>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
         let offset_address = match self.off_addr {
             DirOffset::Start(s) => {
-                let Some(o) = s.checked_add(opt_start.unwrap_or_default()) else {
+                let Some(o) = s.checked_add(rule_base_offset.unwrap_or_default()) else {
                     return Ok(None);
                 };
 
@@ -1649,7 +1649,7 @@ impl Match {
     fn offset_from_start<'a, R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        opt_start: Option<u64>,
+        rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
         match self.offset {
@@ -1667,7 +1667,8 @@ impl Match {
                 DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
             Offset::Indirect(ind_offset) => {
-                let Some(o) = ind_offset.read_offset(haystack, opt_start, last_level_offset)?
+                let Some(o) =
+                    ind_offset.read_offset(haystack, rule_base_offset, last_level_offset)?
                 else {
                     return Ok(None);
                 };
@@ -1677,12 +1678,18 @@ impl Match {
         }
     }
 
-    // this method shoud bubble up only critical errors
-    // all the other errors should make the match result
-    // false and be logged via debug!
-    //
-    // the function returns an error if the maximum recursion
-    // has been reached or if a dependency rule is missing.
+    /// this method emulates the buffer based matching
+    /// logic implemented in libmagic. It needs some awefull
+    /// and sometimes weird offset convertions to compute
+    /// buffer relative offsets (libmagic is based on) into
+    /// absolute offset in the file.
+    ///
+    /// this method shoud bubble up only critical errors
+    /// all the other errors should make the match result
+    /// false and be logged via debug!
+    ///
+    /// the function returns an error if the maximum recursion
+    /// has been reached or if a dependency rule is missing.
     #[inline]
     fn matches<'a: 'h, 'h, R: Read + Seek>(
         &'a self,
@@ -1690,8 +1697,8 @@ impl Match {
         magic: &mut Magic<'a>,
         stream_kind: Option<StreamKind>,
         state: &mut MatchState,
-        base_offset: Option<u64>,
-        start_offset: Option<u64>,
+        buf_base_offset: Option<u64>,
+        rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
         haystack: &'h mut LazyCache<R>,
         switch_endianness: bool,
@@ -1722,7 +1729,7 @@ impl Match {
         }
 
         let Ok(Some(mut offset)) = self
-            .offset_from_start(haystack, start_offset, last_level_offset)
+            .offset_from_start(haystack, rule_base_offset, last_level_offset)
             .inspect_err(|e| debug!("source={source} line={line} failed at computing offset: {e}"))
         else {
             return Ok((false, None));
@@ -1730,12 +1737,15 @@ impl Match {
 
         offset = match self.offset {
             Offset::Indirect(_) => {
-                // offset has been read from stream so we don't want
-                // to alter it, unless we decided to re-base
-                // the stream after a relative indirect test
-                offset.saturating_add(base_offset.unwrap_or_default())
+                // the result we get for an indirect offset
+                // is relative to the start of the libmagic
+                // buffer so we need to add base to make it
+                // absolute.
+                buf_base_offset.unwrap_or_default().saturating_add(offset)
             }
-            _ => offset.saturating_add(start_offset.unwrap_or_default()),
+            // any other offset is reative to offset at
+            // which the rule started to match.
+            _ => rule_base_offset.unwrap_or_default().saturating_add(offset),
         };
 
         match &self.test {
@@ -1772,7 +1782,7 @@ impl Match {
                 dr.rule.magic(
                     magic,
                     stream_kind,
-                    base_offset,
+                    buf_base_offset,
                     Some(offset),
                     haystack,
                     db,
@@ -1987,26 +1997,21 @@ impl EntryNode {
         magic: &mut Magic<'r>,
         state: &mut MatchState,
         stream_kind: Option<StreamKind>,
-        base_offset: Option<u64>,
-        opt_start_offset: Option<u64>,
+        buf_base_offset: Option<u64>,
+        rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
         haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
     ) -> Result<(), Error> {
-        let os = match self.entry.offset {
-            Offset::Direct(DirOffset::End(o)) => Some(haystack.offset_from_start(SeekFrom::End(o))),
-            _ => opt_start_offset,
-        };
-
         let (ok, opt_match_res) = self.entry.matches(
             opt_source,
             magic,
             stream_kind,
             state,
-            base_offset,
-            opt_start_offset,
+            buf_base_offset,
+            rule_base_offset,
             last_level_offset,
             haystack,
             switch_endianness,
@@ -2089,14 +2094,28 @@ impl EntryNode {
 
             let end_upper_level = haystack.lazy_stream_position();
 
+            // we have to fix rule_base_offset if
+            // the rule_base_starts from end otherwise it
+            // breaks some offset computation in match
+            // see test_offset_bug_1 and test_offset_bug_2
+            // they implement the same thing yet indirect
+            // offsets have to be different so that it works
+            // in libmagic/file
+            let rule_base_offset = match self.entry.offset {
+                Offset::Direct(DirOffset::End(o)) => {
+                    Some(haystack.offset_from_start(SeekFrom::End(o)))
+                }
+                _ => rule_base_offset,
+            };
+
             for e in self.children.iter() {
                 e.matches(
                     opt_source,
                     magic,
                     state,
                     stream_kind,
-                    base_offset,
-                    os,
+                    buf_base_offset,
+                    rule_base_offset,
                     Some(end_upper_level),
                     haystack,
                     db,
@@ -2147,8 +2166,8 @@ impl MagicRule {
         &'r self,
         magic: &mut Magic<'r>,
         stream_kind: Option<StreamKind>,
-        base_offset: Option<u64>,
-        opt_start_offset: Option<u64>,
+        buf_base_offset: Option<u64>,
+        rule_base_offset: Option<u64>,
         haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
@@ -2159,8 +2178,8 @@ impl MagicRule {
             magic,
             &mut MatchState::empty(),
             stream_kind,
-            base_offset,
-            opt_start_offset,
+            buf_base_offset,
+            rule_base_offset,
             None,
             haystack,
             db,
@@ -3429,17 +3448,22 @@ HelloWorld
 >(5.b)	use toasted
 
 0 name toasted
->0	string Twice Toasted
+>0	string twice Toasted
 >>0  use toasted_twice 
 
 0 name toasted_twice
 >(6.b) string x %s
         ",
-            b"\x00TEST\x06Twice\x00\x06",
-            "Bread is Toasted Twice"
+            b"\x00TEST\x06twice\x00\x06",
+            "Bread is Toasted twice"
         );
     }
 
+    // this test implement the exact same logic as
+    // test_offset_bug_1 except that the rule starts
+    // matching from end. Surprisingly we need to
+    // adjust indirect offsets so that it works in
+    // libmagic/file
     #[test]
     fn test_offset_bug_2() {
         // this tests the exact behaviour
@@ -3454,9 +3478,9 @@ HelloWorld
 >>0  use toasted_twice
 
 0 name toasted_twice
->(6.b-2) string x %
+>(6.b) string x %
         ",
-            b"\x00TEST\x06twice\x00\x08",
+            b"\x00TEST\x06twice\x00\x06",
             "Bread is Toasted twice"
         )
     }
