@@ -1315,13 +1315,14 @@ impl DependencyRule {
 
 impl EntryNode {
     fn from_entries(entries: Vec<Entry>) -> Result<Self, Error> {
-        Self::from_peekable(&mut entries.into_iter().peekable())
+        Self::from_peekable(&mut entries.into_iter().peekable(), true)
     }
 
     fn from_peekable<'span>(
         entries: &mut Peekable<impl Iterator<Item = Entry<'span>>>,
+        root: bool,
     ) -> Result<Self, Error> {
-        let root = match entries
+        let parent = match entries
             .next()
             .ok_or(Error::msg("rule must have at least one entry"))?
         {
@@ -1338,11 +1339,11 @@ impl EntryNode {
         while let Some(e) = entries.peek() {
             match e {
                 Entry::Match(s, m) => {
-                    if m.depth <= root.depth {
+                    if m.depth <= parent.depth {
                         break;
-                    } else if m.depth == root.depth + 1 {
+                    } else if m.depth == parent.depth + 1 {
                         // we cannot panic since we guarantee first item is a Match
-                        children.push(EntryNode::from_peekable(entries)?)
+                        children.push(EntryNode::from_peekable(entries, false)?)
                     } else {
                         return Err(Error::parser(
                             format!("unexpected continuation level={}", m.depth),
@@ -1366,7 +1367,8 @@ impl EntryNode {
         }
 
         Ok(Self {
-            entry: root,
+            root,
+            entry: parent,
             children,
             mimetype,
             apple,

@@ -1981,6 +1981,7 @@ enum Entry<'span> {
 
 #[derive(Debug, Clone)]
 struct EntryNode {
+    root: bool,
     entry: Match,
     children: Vec<EntryNode>,
     mimetype: Option<String>,
@@ -2098,14 +2099,18 @@ impl EntryNode {
             // the rule_base_starts from end otherwise it
             // breaks some offset computation in match
             // see test_offset_bug_1 and test_offset_bug_2
-            // they implement the same thing yet indirect
+            // they implement the same test logic yet indirect
             // offsets have to be different so that it works
             // in libmagic/file
-            let rule_base_offset = match self.entry.offset {
-                Offset::Direct(DirOffset::End(o)) => {
-                    Some(haystack.offset_from_start(SeekFrom::End(o)))
+            let rule_base_offset = if self.root {
+                match self.entry.offset {
+                    Offset::Direct(DirOffset::End(o)) => {
+                        Some(haystack.offset_from_start(SeekFrom::End(o)))
+                    }
+                    _ => rule_base_offset,
                 }
-                _ => rule_base_offset,
+            } else {
+                rule_base_offset
             };
 
             for e in self.children.iter() {
