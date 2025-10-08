@@ -3404,4 +3404,85 @@ HelloWorld
             Some(268435455)
         );
     }
+
+    #[test]
+    fn test_offset_bug_1() {
+        assert_magic_match_bin!(
+            r"
+1	string		TEST Bread is
+# offset computation is relative to
+# rule start
+>(5.b)	use toasted
+
+0 name toasted
+>0	string Twice Toasted
+>>0  use toasted_twice 
+
+0 name toasted_twice
+>(6.b) string x %s
+        ",
+            b"\x00TEST\x06Twice\x00\x06",
+            "Bread is Toasted Twice"
+        );
+    }
+
+    #[test]
+    fn test_offset_bug_2() {
+        assert_magic_match_bin!(
+            r"
+-12	string		TEST Bread is
+>(4.b)	use toasted
+
+0 name toasted
+>0	string twice Toasted
+>>0  use toasted_twice
+
+0 name toasted_twice
+>(6.b-2) string x %
+        ",
+            b"\x00TEST\x06twice\x00\x08",
+            "Bread is Toasted twice"
+        )
+    }
+
+    #[test]
+    fn test_offset_bug_3() {
+        assert_magic_match_bin!(
+            r"
+1	string		TEST Bread is
+>(5.b) indirect/r x
+
+0	string twice Toasted
+>0  use toasted_twice
+
+0 name toasted_twice
+>0 string x %s
+        ",
+            b"\x00TEST\x06twice\x00\x08",
+            "Bread is Toasted twice"
+        )
+    }
+
+    #[test]
+    fn test_offset_bug_4() {
+        assert_magic_match_bin!(
+            r"
+1	string		Bread %s
+>(6.b) indirect/r x
+
+# this one uses a based offset
+# computed at indirection
+1	string is\ Toasted %s
+>(11.b)  use toasted_twice
+
+# this one is using a new base
+# offset being previous base 
+# offset + offset of use
+0 name toasted_twice
+>0 string x %s
+            ",
+            b"\x00Bread\x06is Toasted\x0ctwice\x00",
+            "Bread is Toasted twice"
+        )
+    }
 }
