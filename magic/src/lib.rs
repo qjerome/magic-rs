@@ -1995,6 +1995,11 @@ impl EntryNode {
         switch_endianness: bool,
         depth: usize,
     ) -> Result<(), Error> {
+        let os = match self.entry.offset {
+            Offset::Direct(DirOffset::End(o)) => Some(haystack.offset_from_start(SeekFrom::End(o))),
+            _ => opt_start_offset,
+        };
+
         let (ok, opt_match_res) = self.entry.matches(
             opt_source,
             magic,
@@ -2091,7 +2096,7 @@ impl EntryNode {
                     state,
                     stream_kind,
                     base_offset,
-                    opt_start_offset,
+                    os,
                     Some(end_upper_level),
                     haystack,
                     db,
@@ -3414,6 +3419,8 @@ HelloWorld
 
     #[test]
     fn test_offset_bug_1() {
+        // this tests the exact behaviour
+        // expected by libmagic/file
         assert_magic_match_bin!(
             r"
 1	string		TEST Bread is
@@ -3435,6 +3442,8 @@ HelloWorld
 
     #[test]
     fn test_offset_bug_2() {
+        // this tests the exact behaviour
+        // expected by libmagic/file
         assert_magic_match_bin!(
             r"
 -12	string		TEST Bread is
@@ -3454,6 +3463,8 @@ HelloWorld
 
     #[test]
     fn test_offset_bug_3() {
+        // this tests the exact behaviour
+        // expected by libmagic/file
         assert_magic_match_bin!(
             r"
 1	string		TEST Bread is
@@ -3472,6 +3483,8 @@ HelloWorld
 
     #[test]
     fn test_offset_bug_4() {
+        // this tests the exact behaviour
+        // expected by libmagic/file
         assert_magic_match_bin!(
             r"
 1	string		Bread %s
