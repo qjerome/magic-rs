@@ -1800,7 +1800,7 @@ impl Match {
                     m
                 );
 
-                let base_offset = if m.contains(IndirectMod::Relative) {
+                let new_buf_base_off = if m.contains(IndirectMod::Relative) {
                     Some(offset)
                 } else {
                     None
@@ -1817,7 +1817,7 @@ impl Match {
                     r.magic(
                         magic,
                         stream_kind,
-                        base_offset,
+                        new_buf_base_off,
                         Some(offset),
                         haystack,
                         db,
