@@ -200,7 +200,7 @@ where
     /// Read at current reader position and return byte slice
     pub fn read(&mut self, count: u64) -> Result<&[u8], io::Error> {
         let pos = self.stream_pos;
-        let range = pos..(pos + count);
+        let range = pos..(pos.saturating_add(count));
         self.get_range_u64(range)
     }
 
