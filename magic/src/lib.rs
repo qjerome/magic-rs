@@ -1680,7 +1680,7 @@ impl Match {
 
     /// this method emulates the buffer based matching
     /// logic implemented in libmagic. It needs some awefull
-    /// and sometimes weird offset convertions to compute
+    /// and sometimes weird offset convertions to convert
     /// buffer relative offsets (libmagic is based on) into
     /// absolute offset in the file.
     ///
