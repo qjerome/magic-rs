@@ -2113,6 +2113,31 @@ pub struct MagicRule {
 
 impl MagicRule {
     #[inline]
+    fn magic_entrypoint<'r, R: Read + Seek>(
+        &'r self,
+        magic: &mut Magic<'r>,
+        stream_kind: Option<StreamKind>,
+        haystack: &mut LazyCache<R>,
+        db: &'r MagicDb,
+        switch_endianness: bool,
+        depth: usize,
+    ) -> Result<(), Error> {
+        self.entries.matches(
+            self.source.as_ref().map(|s| s.as_str()),
+            magic,
+            &mut MatchState::empty(),
+            stream_kind,
+            None,
+            None,
+            None,
+            haystack,
+            db,
+            switch_endianness,
+            depth,
+        )
+    }
+
+    #[inline]
     fn magic<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
@@ -2455,16 +2480,7 @@ impl MagicDb {
 
         macro_rules! do_magic {
             ($rule: expr) => {{
-                $rule.magic(
-                    &mut magic,
-                    stream_kind,
-                    None,
-                    None,
-                    haystack,
-                    &self,
-                    false,
-                    0,
-                )?;
+                $rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
 
                 if !magic.mimetype.is_none() {
                     magic.set_source($rule.source.as_deref());
@@ -2518,16 +2534,7 @@ impl MagicDb {
         for (_, rule) in self.rules.iter() {
             let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
 
-            rule.magic(
-                &mut magic,
-                stream_kind,
-                None,
-                None,
-                haystack,
-                &self,
-                false,
-                0,
-            )?;
+            rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
