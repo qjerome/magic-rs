@@ -2536,6 +2536,8 @@ impl MagicDb {
             return Ok(false);
         };
 
+        // we already parsed first line
+        let mut n = 1;
         for i in records.take(9) {
             if let Ok(rec) = i {
                 if first.len() != rec.len() {
@@ -2544,6 +2546,12 @@ impl MagicDb {
             } else {
                 return Ok(false);
             }
+            n += 1;
+        }
+
+        // we need at least 10 lines
+        if n != 10 {
+            return Ok(false);
         }
 
         magic.insert_mimetype(Cow::Borrowed("text/csv"));
