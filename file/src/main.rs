@@ -3,7 +3,7 @@ use std::{borrow::Cow, fs::File, path::PathBuf, time::Instant};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
-use magic_rs::{FILE_BYTES_MAX, MagicDb, MagicFile, OCTET_STREAM_MIMETYPE};
+use magic_rs::{FILE_BYTES_MAX, MagicDb, MagicFile};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -158,7 +158,7 @@ fn main() -> Result<(), anyhow::Error> {
                             Some(f.extension().and_then(|e| e.to_str()).unwrap_or_default())
                         };
 
-                        let Ok(opt_magic) = db.magic_first(&mut haystack, ext).inspect_err(|e| {
+                        let Ok(magic) = db.magic_first(&mut haystack, ext).inspect_err(|e| {
                             error!("failed to get magic file={}: {e}", f.to_string_lossy())
                         }) else {
                             continue;
@@ -170,22 +170,10 @@ fn main() -> Result<(), anyhow::Error> {
                             elapsed.as_nanos(),
                             elapsed,
                             f.to_string_lossy(),
-                            opt_magic
-                                .as_ref()
-                                .map(|m| m.source().unwrap_or(&Cow::Borrowed("unknown")))
-                                .unwrap_or(&Cow::Borrowed("none")),
-                            opt_magic
-                                .as_ref()
-                                .map(|m| m.strength().unwrap_or_default())
-                                .unwrap_or_default(),
-                            opt_magic
-                                .as_ref()
-                                .map(|m| m.mimetype())
-                                .unwrap_or(OCTET_STREAM_MIMETYPE),
-                            opt_magic
-                                .as_ref()
-                                .map(|m| m.message())
-                                .unwrap_or("data".into()),
+                            magic.source().unwrap_or(&Cow::Borrowed("none")),
+                            magic.strength().unwrap_or_default(),
+                            magic.mimetype(),
+                            magic.message()
                         )
                     }
                 }

@@ -1,4 +1,4 @@
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
@@ -2607,6 +2607,38 @@ impl MagicDb {
     }
 
     #[inline(always)]
+    fn magic_fallback<'m, R: Read + Seek>(
+        haystack: &mut LazyCache<R>,
+        stream_kind: StreamKind,
+        mut magic: Magic<'m>,
+    ) -> Result<Magic<'m>, Error> {
+        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
+
+        if buf.len() == 0 {
+            magic.push_message(Cow::Borrowed("empty"));
+            magic.insert_mimetype(Cow::Borrowed("inode/x-empty"));
+            magic.set_source(Some(HARDCODED_SOURCE));
+            return Ok(magic);
+        }
+
+        match stream_kind {
+            StreamKind::Binary => {
+                magic.push_message(Cow::Borrowed("data"));
+                magic.insert_mimetype(Cow::Borrowed(OCTET_STREAM_MIMETYPE));
+                magic.set_source(Some(HARDCODED_SOURCE));
+            }
+            StreamKind::Text(e) => {
+                magic.push_message(Cow::Borrowed(e.as_magic_str()));
+                magic.push_message(Cow::Borrowed("text"));
+                magic.insert_mimetype(Cow::Borrowed("text/plain"));
+                magic.set_source(Some(HARDCODED_SOURCE));
+            }
+        }
+
+        Ok(magic)
+    }
+
+    #[inline(always)]
     fn update_by_ext(&mut self, ext: &str, rule_id: usize, rule: &Rc<MagicRule>) {
         self.by_ext
             .entry(ext.to_lowercase())
@@ -2644,12 +2676,12 @@ impl MagicDb {
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
         extension: Option<&str>,
-    ) -> Result<Option<Magic<'_>>, Error> {
+    ) -> Result<Magic<'_>, Error> {
         // re-using magic makes this function faster
         let mut magic = Magic::default();
 
         if Self::try_hard_magic(haystack, stream_kind, &mut magic)? {
-            return Ok(Some(magic));
+            return Ok(magic);
         }
 
         let mut marked = vec![false; self.rules.len()];
@@ -2660,7 +2692,7 @@ impl MagicDb {
 
                 if !magic.mimetype.is_none() {
                     magic.set_source($rule.source.as_deref());
-                    return Ok(Some(magic));
+                    return Ok(magic);
                 }
 
                 magic.reset();
@@ -2686,7 +2718,7 @@ impl MagicDb {
             do_magic!(rule)
         }
 
-        Ok(None)
+        Self::magic_fallback(haystack, stream_kind, magic)
     }
 
     /// an empty extension must be `Some("")`, if extension acceleration is not desired specify `None`
@@ -2694,7 +2726,7 @@ impl MagicDb {
         &self,
         haystack: &mut LazyCache<R>,
         extension: Option<&str>,
-    ) -> Result<Option<Magic<'_>>, Error> {
+    ) -> Result<Magic<'_>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
         self.magic_first_with_opt_stream_kind(haystack, stream_kind, extension)
     }
