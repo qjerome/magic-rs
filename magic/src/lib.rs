@@ -2232,6 +2232,15 @@ enum TextEncoding {
     Utf8,
 }
 
+impl TextEncoding {
+    const fn as_magic_str(&self) -> &'static str {
+        match self {
+            TextEncoding::Ascii => "ASCII",
+            TextEncoding::Utf8 => "UTF-8",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum StreamKind {
     Binary,
@@ -2505,6 +2514,58 @@ impl MagicDb {
     }
 
     #[inline(always)]
+    fn try_csv<R: Read + Seek>(
+        haystack: &mut LazyCache<R>,
+        stream_kind: StreamKind,
+        magic: &mut Magic,
+    ) -> Result<bool, Error> {
+        // cannot be csv if content is binary
+        let StreamKind::Text(enc) = stream_kind else {
+            return Ok(false);
+        };
+
+        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
+        let mut reader = csv::Reader::from_reader(io::Cursor::new(buf));
+        let mut records = reader.records();
+
+        let Some(Ok(first)) = records.next() else {
+            return Ok(false);
+        };
+
+        for i in records.take(9) {
+            if let Ok(rec) = i {
+                if first.len() != rec.len() {
+                    return Ok(false);
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+
+        magic.insert_mimetype(Cow::Borrowed("text/csv"));
+        magic.push_message(Cow::Borrowed("CSV"));
+        magic.push_message(Cow::Borrowed(enc.as_magic_str()));
+        magic.push_message(Cow::Borrowed("text"));
+        magic.set_source(Some("hardcoded"));
+        Ok(true)
+    }
+
+    #[inline(always)]
+    fn try_hard_magic<R: Read + Seek>(
+        haystack: &mut LazyCache<R>,
+        stream_kind: StreamKind,
+        magic: &mut Magic,
+    ) -> Result<bool, Error> {
+        if Self::try_json(haystack, stream_kind, magic)? {
+            return Ok(true);
+        } else if Self::try_csv(haystack, stream_kind, magic)? {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    #[inline(always)]
     fn update_by_ext(&mut self, ext: &str, rule_id: usize, rule: &Rc<MagicRule>) {
         self.by_ext
             .entry(ext.to_lowercase())
@@ -2546,7 +2607,7 @@ impl MagicDb {
         // re-using magic makes this function faster
         let mut magic = Magic::default();
 
-        if Self::try_json(haystack, stream_kind, &mut magic)? {
+        if Self::try_hard_magic(haystack, stream_kind, &mut magic)? {
             return Ok(Some(magic));
         }
 
