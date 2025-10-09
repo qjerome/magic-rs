@@ -34,6 +34,7 @@ mod utils;
 
 use numeric::{Scalar, ScalarDataType};
 
+const HARDCODED_MAGIC_STRENGTH: u64 = 2048;
 const HARDCODED_SOURCE: &str = "hardcoded";
 // corresponds to FILE_INDIR_MAX constant defined in libmagic
 const MAX_RECURSION: usize = 50;
@@ -2509,6 +2510,7 @@ impl MagicDb {
             }
             magic.push_message(Cow::Borrowed("JSON text data"));
             magic.set_source(Some(HARDCODED_SOURCE));
+            magic.update_strength(HARDCODED_MAGIC_STRENGTH);
             return Ok(ok);
         }
 
@@ -2549,6 +2551,7 @@ impl MagicDb {
         magic.push_message(Cow::Borrowed(enc.as_magic_str()));
         magic.push_message(Cow::Borrowed("text"));
         magic.set_source(Some(HARDCODED_SOURCE));
+        magic.update_strength(HARDCODED_MAGIC_STRENGTH);
         Ok(true)
     }
 
@@ -2586,6 +2589,7 @@ impl MagicDb {
 
         magic.insert_mimetype(Cow::Borrowed("application/x-tar"));
         magic.set_source(Some(HARDCODED_SOURCE));
+        magic.update_strength(HARDCODED_MAGIC_STRENGTH);
         Ok(true)
     }
 
@@ -2607,35 +2611,34 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn magic_fallback<'m, R: Read + Seek>(
+    fn magic_default<'m, R: Read + Seek>(
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
-        mut magic: Magic<'m>,
-    ) -> Result<Magic<'m>, Error> {
+        magic: &mut Magic<'m>,
+    ) -> Result<(), Error> {
         let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
+
+        magic.set_source(Some(HARDCODED_SOURCE));
 
         if buf.len() == 0 {
             magic.push_message(Cow::Borrowed("empty"));
             magic.insert_mimetype(Cow::Borrowed("inode/x-empty"));
-            magic.set_source(Some(HARDCODED_SOURCE));
-            return Ok(magic);
+            return Ok(());
         }
 
         match stream_kind {
             StreamKind::Binary => {
                 magic.push_message(Cow::Borrowed("data"));
                 magic.insert_mimetype(Cow::Borrowed(OCTET_STREAM_MIMETYPE));
-                magic.set_source(Some(HARDCODED_SOURCE));
             }
             StreamKind::Text(e) => {
                 magic.push_message(Cow::Borrowed(e.as_magic_str()));
                 magic.push_message(Cow::Borrowed("text"));
                 magic.insert_mimetype(Cow::Borrowed("text/plain"));
-                magic.set_source(Some(HARDCODED_SOURCE));
             }
         }
 
-        Ok(magic)
+        Ok(())
     }
 
     #[inline(always)]
@@ -2671,7 +2674,7 @@ impl MagicDb {
     }
 
     #[inline]
-    fn magic_first_with_opt_stream_kind<'m, R: Read + Seek>(
+    fn magic_first_with_stream_kind<'m, R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
@@ -2718,7 +2721,9 @@ impl MagicDb {
             do_magic!(rule)
         }
 
-        Self::magic_fallback(haystack, stream_kind, magic)
+        Self::magic_default(haystack, stream_kind, &mut magic)?;
+
+        Ok(magic)
     }
 
     /// an empty extension must be `Some("")`, if extension acceleration is not desired specify `None`
@@ -2728,27 +2733,39 @@ impl MagicDb {
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_first_with_opt_stream_kind(haystack, stream_kind, extension)
+        self.magic_first_with_stream_kind(haystack, stream_kind, extension)
     }
 
     #[inline(always)]
-    fn magic_all_with_opt_stream_kind<R: Read + Seek>(
+    fn magic_all_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let mut out = Vec::new();
 
-        for (_, rule) in self.rules.iter() {
-            let mut magic = Magic::with_source(rule.source.as_ref().map(|s| s.as_str()));
+        let mut magic = Magic::default();
 
+        if Self::try_hard_magic(haystack, stream_kind, &mut magic)? {
+            out.push((magic.strength.unwrap_or_default(), magic));
+            return Ok(out);
+        }
+
+        for (_, rule) in self.rules.iter() {
             rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
+                magic.set_source(rule.source.as_deref());
                 out.push((magic.strength.unwrap_or_default(), magic));
+                magic = Magic::default();
             }
+
+            magic.reset();
         }
+
+        Self::magic_default(haystack, stream_kind, &mut magic)?;
+        out.push((magic.strength.unwrap_or_default(), magic));
 
         Ok(out)
     }
@@ -2758,16 +2775,16 @@ impl MagicDb {
         haystack: &mut LazyCache<R>,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_all_with_opt_stream_kind(haystack, stream_kind)
+        self.magic_all_with_stream_kind(haystack, stream_kind)
     }
 
     #[inline(always)]
-    fn magic_best_with_opt_stream_kind<R: Read + Seek>(
+    fn magic_best_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
     ) -> Result<Option<Magic<'_>>, Error> {
-        let mut magics = self.magic_all_with_opt_stream_kind(haystack, stream_kind)?;
+        let mut magics = self.magic_all_with_stream_kind(haystack, stream_kind)?;
         magics.sort_by(|a, b| b.0.cmp(&a.0));
         return Ok(magics.into_iter().map(|(_, m)| m).next());
     }
@@ -2777,7 +2794,7 @@ impl MagicDb {
         haystack: &mut LazyCache<R>,
     ) -> Result<Option<Magic<'_>>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_best_with_opt_stream_kind(haystack, stream_kind)
+        self.magic_best_with_stream_kind(haystack, stream_kind)
     }
 }
 
@@ -2810,7 +2827,7 @@ mod tests {
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
-        let v = md.magic_best_with_opt_stream_kind(&mut reader, stream_kind)?;
+        let v = md.magic_best_with_stream_kind(&mut reader, stream_kind)?;
         Ok(v.map(|m| m.into_owned()))
     }
 
