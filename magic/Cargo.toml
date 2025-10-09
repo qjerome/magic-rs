@@ -20,6 +20,7 @@ uuid = "1.18.1"
 memchr = "2.7.6"
 serde_json = "1.0.145"
 csv = "1.3.1"
+tar = "0.4.44"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.19" }

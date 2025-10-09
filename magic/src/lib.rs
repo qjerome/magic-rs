@@ -18,6 +18,7 @@ use std::{
     rc::Rc,
     str::Utf8Error,
 };
+use tar::Archive;
 use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
 
@@ -33,6 +34,7 @@ mod utils;
 
 use numeric::{Scalar, ScalarDataType};
 
+const HARDCODED_SOURCE: &str = "hardcoded";
 // corresponds to FILE_INDIR_MAX constant defined in libmagic
 const MAX_RECURSION: usize = 50;
 // constant found in libmagic. It is used to limit for search tests
@@ -2506,7 +2508,7 @@ impl MagicDb {
                 magic.insert_mimetype(Cow::Borrowed("application/json"));
             }
             magic.push_message(Cow::Borrowed("JSON text data"));
-            magic.set_source(Some("hardcoded"));
+            magic.set_source(Some(HARDCODED_SOURCE));
             return Ok(ok);
         }
 
@@ -2546,7 +2548,44 @@ impl MagicDb {
         magic.push_message(Cow::Borrowed("CSV"));
         magic.push_message(Cow::Borrowed(enc.as_magic_str()));
         magic.push_message(Cow::Borrowed("text"));
-        magic.set_source(Some("hardcoded"));
+        magic.set_source(Some(HARDCODED_SOURCE));
+        Ok(true)
+    }
+
+    #[inline(always)]
+    fn try_tar<R: Read + Seek>(
+        haystack: &mut LazyCache<R>,
+        stream_kind: StreamKind,
+        magic: &mut Magic,
+    ) -> Result<bool, Error> {
+        // cannot be json if content is not binary
+        if !matches!(stream_kind, StreamKind::Binary) {
+            return Ok(false);
+        }
+
+        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
+        let mut ar = Archive::new(io::Cursor::new(buf));
+
+        let Ok(mut entries) = ar.entries() else {
+            return Ok(false);
+        };
+
+        let Some(Ok(first)) = entries.next() else {
+            return Ok(false);
+        };
+
+        let header = first.header();
+
+        if header.as_ustar().is_some() {
+            magic.push_message(Cow::Borrowed("POSIX tar archive"));
+        } else if header.as_gnu().is_some() {
+            magic.push_message(Cow::Borrowed("POSIX tar archive (GNU)"));
+        } else {
+            magic.push_message(Cow::Borrowed("tar archive"));
+        }
+
+        magic.insert_mimetype(Cow::Borrowed("application/x-tar"));
+        magic.set_source(Some(HARDCODED_SOURCE));
         Ok(true)
     }
 
@@ -2559,6 +2598,8 @@ impl MagicDb {
         if Self::try_json(haystack, stream_kind, magic)? {
             return Ok(true);
         } else if Self::try_csv(haystack, stream_kind, magic)? {
+            return Ok(true);
+        } else if Self::try_tar(haystack, stream_kind, magic)? {
             return Ok(true);
         }
 
