@@ -6,6 +6,7 @@ use lazy_cache::LazyCache;
 use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
+use serde_json;
 use std::{
     borrow::Cow,
     cmp::max,
@@ -2461,6 +2462,49 @@ impl MagicDb {
     }
 
     #[inline(always)]
+    fn try_json<R: Read + Seek>(
+        haystack: &mut LazyCache<R>,
+        stream_kind: StreamKind,
+        magic: &mut Magic,
+    ) -> Result<bool, Error> {
+        // cannot be json if content is binary
+        if matches!(stream_kind, StreamKind::Binary) {
+            return Ok(false);
+        }
+
+        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
+        let first = buf.first();
+
+        // maybe this is a json document
+        if first == Some(&b'[') || first == Some(&b'{') {
+            trace!("try decoding json");
+            let ok = serde_json::from_slice::<serde_json::Value>(buf).is_ok();
+
+            if !ok {
+                return Ok(false);
+            }
+
+            let has_nl = if let Some(i) = memchr(b'\n', buf) {
+                i != buf.len().saturating_sub(1)
+            } else {
+                false
+            };
+
+            if has_nl {
+                magic.push_message(Cow::Borrowed("New Line Delimited"));
+                magic.insert_mimetype(Cow::Borrowed("application/x-ndjson"));
+            } else {
+                magic.insert_mimetype(Cow::Borrowed("application/json"));
+            }
+            magic.push_message(Cow::Borrowed("JSON text data"));
+            magic.set_source(Some("hardcoded"));
+            return Ok(ok);
+        }
+
+        Ok(false)
+    }
+
+    #[inline(always)]
     fn update_by_ext(&mut self, ext: &str, rule_id: usize, rule: &Rc<MagicRule>) {
         self.by_ext
             .entry(ext.to_lowercase())
@@ -2501,6 +2545,11 @@ impl MagicDb {
     ) -> Result<Option<Magic<'_>>, Error> {
         // re-using magic makes this function faster
         let mut magic = Magic::default();
+
+        if Self::try_json(haystack, stream_kind, &mut magic)? {
+            return Ok(Some(magic));
+        }
+
         let mut marked = vec![false; self.rules.len()];
 
         macro_rules! do_magic {
