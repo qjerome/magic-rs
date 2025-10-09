@@ -2300,6 +2300,7 @@ pub struct Magic<'m> {
     apple: Option<Cow<'m, str>>,
     strength: Option<u64>,
     exts: HashSet<Cow<'m, str>>,
+    is_default: bool,
 }
 
 impl<'m> Magic<'m> {
@@ -2324,6 +2325,7 @@ impl<'m> Magic<'m> {
         self.apple = None;
         self.strength = None;
         self.exts.clear();
+        self.is_default = false;
     }
 
     #[inline]
@@ -2344,6 +2346,7 @@ impl<'m> Magic<'m> {
                 .into_iter()
                 .map(|e| Cow::Owned(e.into_owned()))
                 .collect(),
+            is_default: self.is_default,
         }
     }
 
@@ -2412,8 +2415,8 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.message.is_empty() && self.mimetype.is_none() && self.strength.is_none()
+    pub fn is_default(&self) -> bool {
+        self.is_default
     }
 
     #[inline(always)]
@@ -2627,6 +2630,7 @@ impl MagicDb {
         let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
 
         magic.set_source(Some(HARDCODED_SOURCE));
+        magic.is_default = true;
 
         if buf.len() == 0 {
             magic.push_message(Cow::Borrowed("empty"));
@@ -2896,7 +2900,8 @@ mod tests {
             assert!(
                 first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
                     .unwrap()
-                    .is_none()
+                    .unwrap()
+                    .is_default()
             );
         }};
     }
@@ -2906,7 +2911,8 @@ mod tests {
             assert!(
                 first_magic($rule, $content, StreamKind::Binary)
                     .unwrap()
-                    .is_none()
+                    .unwrap()
+                    .is_default()
             );
         }};
     }
