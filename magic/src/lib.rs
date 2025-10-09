@@ -1067,7 +1067,7 @@ impl Test {
     fn match_value<'s>(
         &'s self,
         tv: &TestValue<'s>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
     ) -> Option<MatchRes<'s>> {
         match (self, tv) {
             (Self::Any(v), TestValue::Bytes(o, buf)) => match v {
@@ -1207,7 +1207,7 @@ impl Test {
 
             (Self::Regex(r), TestValue::Bytes(o, buf)) => {
                 match stream_kind {
-                    Some(StreamKind::Text(_)) => {
+                    StreamKind::Text(_) => {
                         let mut offset = *o;
                         for line in buf.split(|c| c == &b'\n') {
                             if let Some(re_match) = r.re.find(&line) {
@@ -1226,7 +1226,7 @@ impl Test {
                         None
                     }
 
-                    Some(StreamKind::Binary) => {
+                    StreamKind::Binary => {
                         if let Some(re_match) = r.re.find(&buf) {
                             Some(MatchRes::Bytes(
                                 // the offset of the string is computed from the start of the buffer
@@ -1238,8 +1238,6 @@ impl Test {
                             None
                         }
                     }
-
-                    None => None,
                 }
             }
 
@@ -1695,7 +1693,7 @@ impl Match {
         &'a self,
         source: Option<&str>,
         magic: &mut Magic<'a>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
         state: &mut MatchState,
         buf_base_offset: Option<u64>,
         rule_base_offset: Option<u64>,
@@ -1716,16 +1714,14 @@ impl Match {
             ));
         }
 
-        if let Some(stream_kind) = stream_kind {
-            if self.test.is_only_binary() && stream_kind.is_text() {
-                trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}",);
-                return Ok((false, None));
-            }
+        if self.test.is_only_binary() && stream_kind.is_text() {
+            trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}",);
+            return Ok((false, None));
+        }
 
-            if self.test.is_only_text() && !stream_kind.is_text() {
-                trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}",);
-                return Ok((false, None));
-            }
+        if self.test.is_only_text() && !stream_kind.is_text() {
+            trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}",);
+            return Ok((false, None));
         }
 
         let Ok(Some(mut offset)) = self
@@ -1997,7 +1993,7 @@ impl EntryNode {
         opt_source: Option<&str>,
         magic: &mut Magic<'r>,
         state: &mut MatchState,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
         buf_base_offset: Option<u64>,
         rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
@@ -2145,7 +2141,7 @@ impl MagicRule {
     fn magic_entrypoint<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
         haystack: &mut LazyCache<R>,
         db: &'r MagicDb,
         switch_endianness: bool,
@@ -2170,7 +2166,7 @@ impl MagicRule {
     fn magic<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
         buf_base_offset: Option<u64>,
         rule_base_offset: Option<u64>,
         haystack: &mut LazyCache<R>,
@@ -2500,7 +2496,7 @@ impl MagicDb {
     fn magic_first_with_opt_stream_kind<'m, R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
         extension: Option<&str>,
     ) -> Result<Option<Magic<'_>>, Error> {
         // re-using magic makes this function faster
@@ -2549,14 +2545,14 @@ impl MagicDb {
         extension: Option<&str>,
     ) -> Result<Option<Magic<'_>>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_first_with_opt_stream_kind(haystack, Some(stream_kind), extension)
+        self.magic_first_with_opt_stream_kind(haystack, stream_kind, extension)
     }
 
     #[inline(always)]
     fn magic_all_with_opt_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let mut out = Vec::new();
 
@@ -2579,14 +2575,14 @@ impl MagicDb {
         haystack: &mut LazyCache<R>,
     ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_all_with_opt_stream_kind(haystack, Some(stream_kind))
+        self.magic_all_with_opt_stream_kind(haystack, stream_kind)
     }
 
     #[inline(always)]
     fn magic_best_with_opt_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
-        stream_kind: Option<StreamKind>,
+        stream_kind: StreamKind,
     ) -> Result<Option<Magic<'_>>, Error> {
         let mut magics = self.magic_all_with_opt_stream_kind(haystack, stream_kind)?;
         magics.sort_by(|a, b| b.0.cmp(&a.0));
@@ -2598,7 +2594,7 @@ impl MagicDb {
         haystack: &mut LazyCache<R>,
     ) -> Result<Option<Magic<'_>>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_best_with_opt_stream_kind(haystack, Some(stream_kind))
+        self.magic_best_with_opt_stream_kind(haystack, stream_kind)
     }
 }
 
@@ -2631,7 +2627,7 @@ mod tests {
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
-        let v = md.magic_best_with_opt_stream_kind(&mut reader, Some(stream_kind))?;
+        let v = md.magic_best_with_opt_stream_kind(&mut reader, stream_kind)?;
         Ok(v.map(|m| m.into_owned()))
     }
 
