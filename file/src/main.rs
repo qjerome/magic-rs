@@ -1,5 +1,6 @@
-use std::{borrow::Cow, fs::File, path::PathBuf, time::Instant};
+use std::{borrow::Cow, fs::File, io::Write, path::PathBuf, time::Instant};
 
+use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
@@ -17,6 +18,7 @@ struct Cli {
 enum Command {
     Test(TestOpt),
     Parse(ParseOpt),
+    Compile(CompileOpt),
 }
 
 #[derive(Debug, Parser)]
@@ -29,15 +31,36 @@ struct TestOpt {
     /// Hide log messages
     #[arg(short, long)]
     silent: bool,
+    /// Show all magic rules matching
+    /// not only the first one
     #[arg(long)]
     all: bool,
     /// Enable file extension acceleration. Matches first the
     /// rules where file extension is defined.
     #[arg(long)]
     no_accel: bool,
+    /// Path to magic rule file or directory
+    /// containing rule files to compile
     #[arg(short, long)]
     rules: Vec<PathBuf>,
+    /// Walk directories recursively while scanning
+    #[arg(short = 'R', long)]
+    recursive: bool,
+    /// Path to compiled rules database
+    #[arg(short, long)]
+    db: Option<PathBuf>,
+    /// Files or directory to scan
     files: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+struct CompileOpt {
+    /// Path to magic rule file or directory
+    /// containing rule files to compile
+    #[arg(short, long)]
+    rules: Vec<PathBuf>,
+    /// Path to compiled rules database
+    output: PathBuf,
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -89,40 +112,58 @@ fn main() -> Result<(), anyhow::Error> {
                 }*/
             }
         }
-        Some(Command::Test(o)) => {
-            let mut db = MagicDb::new();
 
-            let start = Instant::now();
-            for rule in o.rules {
-                if rule.is_dir() {
-                    let walker = WalkOptions::new()
-                        .files()
-                        .max_depth(1)
-                        .sort(true)
-                        .walk(rule);
-                    for p in walker.flatten() {
-                        info!("loading magic rule: {}", p.to_string_lossy());
-                        let magic = MagicFile::open(&p).inspect_err(|e| {
-                            if !o.silent {
-                                error!("{} {e}", p.to_string_lossy())
+        Some(Command::Test(o)) => {
+            let db = if let Some(db) = o.db {
+                let start = Instant::now();
+                let db = MagicDb::deserialize_reader(&mut File::open(&db).map_err(|e| {
+                    anyhow!("failed to open database file {}: {e}", db.to_string_lossy())
+                })?)
+                .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
+                println!("Time to deserialize database: {:?}", start.elapsed());
+                db
+            } else {
+                let mut db = MagicDb::new();
+
+                let start = Instant::now();
+                for rule in o.rules {
+                    if rule.is_dir() {
+                        let walker = WalkOptions::new()
+                            .files()
+                            .max_depth(1)
+                            .sort(true)
+                            .walk(rule);
+                        for p in walker.flatten() {
+                            info!("loading magic rule: {}", p.to_string_lossy());
+                            let magic = MagicFile::open(&p).inspect_err(|e| {
+                                if !o.silent {
+                                    error!("{} {e}", p.to_string_lossy())
+                                }
+                            });
+                            // FIXME: we ignore error for the moment
+                            if magic.is_err() {
+                                continue;
                             }
-                        });
-                        // FIXME: we ignore error for the moment
-                        if magic.is_err() {
-                            continue;
+                            let _ = db.load(magic?)?;
                         }
-                        let _ = db.load(magic?)?;
+                    } else {
+                        info!("loading magic rule: {}", rule.to_string_lossy());
+                        db.load(MagicFile::open(rule)?)?;
                     }
-                } else {
-                    info!("loading magic rule: {}", rule.to_string_lossy());
-                    db.load(MagicFile::open(rule)?)?;
                 }
-            }
-            println!("Time parse rule files: {:?}", start.elapsed());
+                println!("Time to parse rule files: {:?}", start.elapsed());
+                db
+            };
 
             for item in o.files {
-                let walker = WalkOptions::new().files().sort(true).walk(item);
-                for f in walker.flatten() {
+                let mut wo = WalkOptions::new();
+                wo.files().sort(true);
+
+                if !o.recursive {
+                    wo.max_depth(1);
+                }
+
+                for f in wo.walk(item).flatten() {
                     info!("scanning file: {}", f.to_string_lossy());
                     let start = Instant::now();
                     let Ok(mut haystack) = LazyCache::<File>::open(&f)
@@ -178,6 +219,49 @@ fn main() -> Result<(), anyhow::Error> {
                     }
                 }
             }
+        }
+
+        Some(Command::Compile(o)) => {
+            let mut db = MagicDb::new();
+
+            let mut start = Instant::now();
+            for rule in o.rules {
+                if rule.is_dir() {
+                    let walker = WalkOptions::new()
+                        .files()
+                        .max_depth(1)
+                        .sort(true)
+                        .walk(rule);
+                    for p in walker.flatten() {
+                        info!("loading magic rule: {}", p.to_string_lossy());
+                        let magic = MagicFile::open(&p)
+                            .inspect_err(|e| error!("{} {e}", p.to_string_lossy()));
+                        // FIXME: we ignore error for the moment
+                        if magic.is_err() {
+                            continue;
+                        }
+                        let _ = db.load(magic?)?;
+                    }
+                } else {
+                    info!("loading magic rule: {}", rule.to_string_lossy());
+                    db.load(MagicFile::open(rule)?)?;
+                }
+            }
+
+            println!("Time to parse rule files: {:?}", start.elapsed());
+            start = Instant::now();
+
+            let mut o = File::create(&o.output)
+                .map_err(|e| anyhow!("failed at creating {}: {e}", o.output.to_string_lossy()))?;
+
+            let bytes = db
+                .serialize()
+                .map_err(|e| anyhow!("failed to serialize database: {e}"))?;
+
+            o.write_all(&bytes)
+                .map_err(|e| anyhow!("failed to save database: {e}"))?;
+
+            println!("Time to serialize and save database: {:?}", start.elapsed());
         }
         None => {}
     }
