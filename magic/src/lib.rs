@@ -25,7 +25,7 @@ use thiserror::Error;
 use tracing::{Level, debug, enabled, error, trace};
 
 use crate::{
-    numeric::{Float, FloatDataType},
+    numeric::{Float, FloatDataType, Scalar, ScalarDataType},
     parser::{FileMagicParser, Rule},
     utils::decode_id3,
 };
@@ -33,8 +33,6 @@ use crate::{
 mod numeric;
 mod parser;
 mod utils;
-
-use numeric::{Scalar, ScalarDataType};
 
 const HARDCODED_MAGIC_STRENGTH: u64 = 2048;
 const HARDCODED_SOURCE: &str = "hardcoded";
