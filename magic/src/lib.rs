@@ -2344,14 +2344,6 @@ pub struct Magic<'m> {
 
 impl<'m> Magic<'m> {
     #[inline(always)]
-    fn with_source(source: Option<&'m str>) -> Self {
-        Self {
-            source: source.map(|s| Cow::Borrowed(s)),
-            ..Default::default()
-        }
-    }
-
-    #[inline(always)]
     fn set_source(&mut self, source: Option<&'m str>) {
         self.source = source.map(|s| Cow::Borrowed(s));
     }
