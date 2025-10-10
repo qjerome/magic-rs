@@ -2633,6 +2633,13 @@ impl MagicDb {
             return Ok(false);
         };
 
+        // very not likely a CSV otherwise all programming
+        // languages having ; line terminator would be
+        // considered as CSV
+        if first.len() <= 1 {
+            return Ok(false);
+        }
+
         // we already parsed first line
         let mut n = 1;
         for i in records.take(9) {
