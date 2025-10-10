@@ -2,6 +2,7 @@
 
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use lazy_cache::LazyCache;
 use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
@@ -2923,20 +2924,25 @@ impl MagicDb {
 
     pub fn serialize(self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         let sdb = SerializedDb::from(self);
-        bincode::serde::encode_to_vec(&sdb, bincode::config::standard())
+        let mut encoder = GzEncoder::new(vec![], Compression::best());
+
+        bincode::serde::encode_into_std_write(&sdb, &mut encoder, bincode::config::standard())?;
+        Ok(encoder.finish().unwrap())
     }
+
     pub fn deserialize_slice<S: AsRef<[u8]>>(r: S) -> Result<Self, bincode::error::DecodeError> {
-        let (sdb, _): (SerializedDb, usize) =
-            bincode::serde::decode_from_slice(r.as_ref(), bincode::config::standard())?;
-        Ok(sdb.into())
+        Self::deserialize_reader(&mut r.as_ref())
     }
 
     pub fn deserialize_reader<R: Read>(r: &mut R) -> Result<Self, bincode::error::DecodeError> {
         let mut buf = vec![];
-        r.read_to_end(&mut buf).map_err(|e| {
+        let mut gz = GzDecoder::new(r);
+        gz.read_to_end(&mut buf).map_err(|e| {
             bincode::error::DecodeError::OtherString(format!("failed to read: {e}"))
         })?;
-        Self::deserialize_slice(&buf)
+        let (sdb, _): (SerializedDb, usize) =
+            bincode::serde::decode_from_slice(&buf, bincode::config::standard())?;
+        Ok(sdb.into())
     }
 }
 
