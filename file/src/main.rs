@@ -13,7 +13,7 @@ use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
 use magic_rs::{FILE_BYTES_MAX, Magic, MagicDb, MagicFile};
 use serde_derive::Serialize;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -178,7 +178,7 @@ fn main() -> Result<(), anyhow::Error> {
                 }
 
                 for f in wo.walk(item).flatten() {
-                    info!("scanning file: {}", f.to_string_lossy());
+                    debug!("scanning file: {}", f.to_string_lossy());
                     let start = Instant::now();
                     let Ok(mut haystack) = LazyCache::<File>::open(&f)
                         .inspect_err(|e| error!("cannot open file={}: {e}", f.to_string_lossy()))
