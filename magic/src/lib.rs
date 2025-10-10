@@ -2007,19 +2007,20 @@ struct EntryNode {
     mimetype: Option<String>,
     apple: Option<String>,
     strength_mod: Option<StrengthMod>,
-    // if root exts contains all children extensions
     exts: HashSet<String>,
+    // if root exts contains all children extensions
+    children_exts: HashSet<String>,
 }
 
 impl EntryNode {
-    fn collect_exts_recursive(&self, exts: &mut HashSet<String>) {
+    fn children_exts_recursive(&self, exts: &mut HashSet<String>) {
         for c in self.children.iter() {
             for ext in c.exts.iter() {
                 if !exts.contains(ext) {
                     exts.insert(ext.clone());
                 }
             }
-            c.collect_exts_recursive(exts);
+            c.children_exts_recursive(exts);
         }
     }
 
@@ -2466,6 +2467,16 @@ impl<'m> Magic<'m> {
     pub fn source(&self) -> Option<&Cow<'m, str>> {
         self.source.as_ref()
     }
+
+    #[inline(always)]
+    pub fn apple(&self) -> Option<&Cow<'m, str>> {
+        self.apple.as_ref()
+    }
+
+    #[inline(always)]
+    pub fn exts(&self) -> &HashSet<Cow<'m, str>> {
+        &self.exts
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -2739,6 +2750,7 @@ impl MagicDb {
     #[inline(always)]
     fn update_by_ext(&mut self, ext: &str, rule_id: usize, rule: &Rc<MagicRule>) {
         self.by_ext
+            // we normalize extension to lowercase
             .entry(ext.to_lowercase())
             .and_modify(|v| {
                 v.push((rule_id, Rc::clone(rule)));
@@ -2751,12 +2763,20 @@ impl MagicDb {
         // it seems rules are evaluated in their reverse definition order
         for rule in mf.rules.into_iter() {
             let (id, rule) = (self.next_rule_id(), Rc::new(rule));
-            if rule.entries.exts.is_empty() {
+
+            let all_exts: HashSet<Cow<'_, str>> = rule
+                .entries
+                .exts
+                .union(&rule.entries.children_exts)
+                .map(|s| Cow::Borrowed(s.as_str()))
+                .collect();
+
+            if all_exts.is_empty() {
                 self.update_by_ext("", id, &rule);
             } else {
-                for ext in &rule.entries.exts {
+                for ext in all_exts {
                     // acceptable to clone here
-                    self.update_by_ext(ext.as_str(), id, &rule);
+                    self.update_by_ext(&ext, id, &rule);
                 }
             }
             self.rules.push((id, rule));

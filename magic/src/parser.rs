@@ -1383,12 +1383,13 @@ impl EntryNode {
             apple,
             strength_mod,
             exts,
+            children_exts: HashSet::new(),
         };
 
         if root {
-            let mut exts = HashSet::new();
-            e.collect_exts_recursive(&mut exts);
-            e.exts.extend(exts);
+            let mut ch_exts = HashSet::new();
+            e.children_exts_recursive(&mut ch_exts);
+            e.children_exts.extend(ch_exts);
         }
 
         Ok(e)

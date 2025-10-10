@@ -1,10 +1,18 @@
-use std::{borrow::Cow, fs::File, io::Write, path::PathBuf, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    fs::File,
+    io::Write,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
 use lazy_cache::LazyCache;
-use magic_rs::{FILE_BYTES_MAX, MagicDb, MagicFile};
+use magic_rs::{FILE_BYTES_MAX, Magic, MagicDb, MagicFile};
+use serde_derive::Serialize;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -39,6 +47,9 @@ struct TestOpt {
     /// rules where file extension is defined.
     #[arg(long)]
     no_accel: bool,
+    /// Output the result as JSON instead of text
+    #[arg(short, long)]
+    json: bool,
     /// Path to magic rule file or directory
     /// containing rule files to compile
     #[arg(short, long)]
@@ -61,6 +72,31 @@ struct CompileOpt {
     rules: Vec<PathBuf>,
     /// Path to compiled rules database
     output: PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+struct SerMagicResult<'m> {
+    path: PathBuf,
+    source: Option<Cow<'m, str>>,
+    message: String,
+    mimetype: &'m str,
+    apple: Option<Cow<'m, str>>,
+    strength: Option<u64>,
+    exts: &'m HashSet<Cow<'m, str>>,
+}
+
+impl<'m> SerMagicResult<'m> {
+    fn from_magic<P: AsRef<Path>>(p: P, m: &'m Magic<'_>) -> Self {
+        Self {
+            path: p.as_ref().to_path_buf(),
+            source: m.source().cloned(),
+            message: m.message(),
+            mimetype: m.mimetype(),
+            apple: m.apple().cloned(),
+            strength: m.strength(),
+            exts: m.exts(),
+        }
+    }
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -120,7 +156,7 @@ fn main() -> Result<(), anyhow::Error> {
                     anyhow!("failed to open database file {}: {e}", db.to_string_lossy())
                 })?)
                 .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
-                println!("Time to deserialize database: {:?}", start.elapsed());
+                info!("Time to deserialize database: {:?}", start.elapsed());
                 db
             } else {
                 let mut db = MagicDb::new();
@@ -151,7 +187,7 @@ fn main() -> Result<(), anyhow::Error> {
                         db.load(MagicFile::open(rule)?)?;
                     }
                 }
-                println!("Time to parse rule files: {:?}", start.elapsed());
+                info!("Time to parse rule files: {:?}", start.elapsed());
                 db
             };
 
@@ -195,7 +231,7 @@ fn main() -> Result<(), anyhow::Error> {
                             None
                         } else {
                             // files without extension must set have an empty string extension to benefit from
-                            // file extension acceleration
+                            // extension acceleration
                             Some(f.extension().and_then(|e| e.to_str()).unwrap_or_default())
                         };
 
@@ -206,16 +242,28 @@ fn main() -> Result<(), anyhow::Error> {
                         };
 
                         let elapsed = start.elapsed();
-                        println!(
-                            "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",
-                            elapsed.as_nanos(),
-                            elapsed,
-                            f.to_string_lossy(),
-                            magic.source().unwrap_or(&Cow::Borrowed("none")),
-                            magic.strength().unwrap_or_default(),
-                            magic.mimetype(),
-                            magic.message()
-                        )
+
+                        if !o.json {
+                            println!(
+                                "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",
+                                elapsed.as_nanos(),
+                                elapsed,
+                                f.to_string_lossy(),
+                                magic.source().unwrap_or(&Cow::Borrowed("none")),
+                                magic.strength().unwrap_or_default(),
+                                magic.mimetype(),
+                                magic.message()
+                            )
+                        } else {
+                            let mr = SerMagicResult::from_magic(f, &magic);
+                            let Ok(json) = serde_json::to_string(&mr)
+                                .inspect_err(|e| error!("failed to serialize magic: {e}"))
+                            else {
+                                continue;
+                            };
+
+                            println!("{json}");
+                        }
                     }
                 }
             }
@@ -248,7 +296,7 @@ fn main() -> Result<(), anyhow::Error> {
                 }
             }
 
-            println!("Time to parse rule files: {:?}", start.elapsed());
+            info!("Time to parse rule files: {:?}", start.elapsed());
             start = Instant::now();
 
             let mut o = File::create(&o.output)
@@ -261,7 +309,7 @@ fn main() -> Result<(), anyhow::Error> {
             o.write_all(&bytes)
                 .map_err(|e| anyhow!("failed to save database: {e}"))?;
 
-            println!("Time to serialize and save database: {:?}", start.elapsed());
+            info!("Time to serialize and save database: {:?}", start.elapsed());
         }
         None => {}
     }

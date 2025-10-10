@@ -11,3 +11,6 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing = "0.1.41"
 lazy-cache = { path = "../lazy-cache/" }
 fs-walk = "0.2.0"
+serde_json = "1.0.145"
+serde_derive = "1.0.228"
+serde = "1.0.228"
