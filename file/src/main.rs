@@ -24,18 +24,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    Test(TestOpt),
-    Parse(ParseOpt),
+    Scan(ScanOpt),
     Compile(CompileOpt),
 }
 
 #[derive(Debug, Parser)]
-struct ParseOpt {
-    rules: Vec<PathBuf>,
-}
-
-#[derive(Debug, Parser)]
-struct TestOpt {
+struct ScanOpt {
     /// Hide log messages
     #[arg(short, long)]
     silent: bool,
@@ -133,30 +127,7 @@ fn main() -> Result<(), anyhow::Error> {
         .init();
 
     match cli.command {
-        Some(Command::Parse(o)) => {
-            for f in o.rules {
-                let _ = MagicFile::open(f)?;
-
-                /*for r in m.rules() {
-                    println!("# new rule");
-                    for e in r.entries() {
-                        println!("{:?}", e)
-                    }
-                    println!()
-
-                }
-
-                for d in m.dep_rules() {
-                    println!("# dependency rule name: {}", d.name());
-                    for e in d.rule().entries() {
-                        println!("{:?}", e)
-                    }
-                    println!()
-                }*/
-            }
-        }
-
-        Some(Command::Test(o)) => {
+        Some(Command::Scan(o)) => {
             let db = if let Some(db) = o.db {
                 let start = Instant::now();
                 let db = MagicDb::deserialize_reader(&mut File::open(&db).map_err(|e| {
