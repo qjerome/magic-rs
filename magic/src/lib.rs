@@ -6,6 +6,7 @@ use lazy_cache::LazyCache;
 use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
+use serde::{Deserialize, Serialize};
 use serde_json;
 use std::{
     borrow::Cow,
@@ -155,7 +156,7 @@ impl From<pest::error::Error<Rule>> for ParserError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum Message {
     String(String),
     Format {
@@ -363,7 +364,7 @@ impl FloatDataType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Op {
     Mul,
     Add,
@@ -390,7 +391,7 @@ impl Display for Op {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum CmpOp {
     Eq,
     Lt,
@@ -401,7 +402,7 @@ enum CmpOp {
     Not, // ~ operator
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScalarTransform {
     op: Op,
     num: Scalar,
@@ -422,7 +423,7 @@ impl ScalarTransform {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FloatTransform {
     op: Op,
     num: Float,
@@ -448,7 +449,7 @@ impl FloatTransform {
 }
 
 // Any Magic Data type
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum Any {
     // NOTE: We don't need to carry StringTest because it is
     // not used in any existing rules
@@ -470,8 +471,27 @@ flags! {
     }
 }
 
-#[derive(Debug, Clone)]
+fn serialize_regex<S>(re: &bytes::Regex, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    re.as_str().serialize(serializer)
+}
+
+fn deserialize_regex<'de, D>(deserializer: D) -> Result<bytes::Regex, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let wrapper = String::deserialize(deserializer)?;
+    Ok(bytes::Regex::new(&wrapper).map_err(|e| serde::de::Error::custom(e))?)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RegexTest {
+    #[serde(
+        serialize_with = "serialize_regex",
+        deserialize_with = "deserialize_regex"
+    )]
     re: bytes::Regex,
     length: Option<usize>,
     mods: FlagSet<ReMod>,
@@ -499,7 +519,7 @@ flags! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StringTest {
     str: Vec<u8>,
     cmp_op: CmpOp,
@@ -646,7 +666,7 @@ impl StringTest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SearchTest {
     str: Vec<u8>,
     n_pos: Option<usize>,
@@ -695,7 +715,7 @@ impl SearchTest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScalarTest {
     ty: ScalarDataType,
     transform: Option<ScalarTransform>,
@@ -703,7 +723,7 @@ struct ScalarTest {
     value: Scalar,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct FloatTest {
     ty: FloatDataType,
     transform: Option<FloatTransform>,
@@ -805,13 +825,13 @@ impl MatchRes<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum String16Encoding {
     Le,
     Be,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct String16Test {
     orig: String,
     str16: Vec<u16>,
@@ -845,7 +865,7 @@ flags! {
 
 type IndirectMods = FlagSet<IndirectMod>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum PStringLen {
     Byte,    // B
     ShortBe, // H
@@ -867,7 +887,7 @@ impl PStringLen {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PStringTest {
     val: Vec<u8>,
     len: PStringLen,
@@ -904,7 +924,7 @@ impl PStringTest {
 // FIXME: tests should embed the Any test type
 // for example by defining an enum with Some/Any
 // to carry the value to test against
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum Test {
     /// This corresponds to a DATATYPE x test
     Any(Any),
@@ -1396,7 +1416,7 @@ impl Test {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum OffsetType {
     Byte,
     DoubleLe,
@@ -1413,13 +1433,13 @@ enum OffsetType {
     QuadLe,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Shift {
     Direct(u64),
     Indirect(i64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct IndOffset {
     // where to find the offset
     off_addr: DirOffset,
@@ -1563,7 +1583,7 @@ impl IndOffset {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum DirOffset {
     Start(u64),
     // relative to the last up-level field
@@ -1571,7 +1591,7 @@ enum DirOffset {
     End(i64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum Offset {
     Direct(DirOffset),
     Indirect(IndOffset),
@@ -1605,7 +1625,7 @@ impl Default for DirOffset {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Match {
     line: usize,
     depth: u8,
@@ -1924,7 +1944,7 @@ pub struct Use {
     message: Option<Message>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StrengthMod {
     op: Op,
     by: u8,
@@ -1979,7 +1999,7 @@ enum Entry<'span> {
     Flag(Span<'span>, Flag),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct EntryNode {
     root: bool,
     entry: Match,
@@ -1987,10 +2007,22 @@ struct EntryNode {
     mimetype: Option<String>,
     apple: Option<String>,
     strength_mod: Option<StrengthMod>,
+    // if root exts contains all children extensions
     exts: HashSet<String>,
 }
 
 impl EntryNode {
+    fn collect_exts_recursive(&self, exts: &mut HashSet<String>) {
+        for c in self.children.iter() {
+            for ext in c.exts.iter() {
+                if !exts.contains(ext) {
+                    exts.insert(ext.clone());
+                }
+            }
+            c.collect_exts_recursive(exts);
+        }
+    }
+
     #[inline]
     fn matches<'r, R: Read + Seek>(
         &'r self,
@@ -2134,7 +2166,7 @@ impl EntryNode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicRule {
     source: Option<String>,
     entries: EntryNode,
@@ -2203,7 +2235,7 @@ impl MagicRule {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyRule {
     name: String,
     rule: MagicRule,
@@ -2219,10 +2251,16 @@ impl DependencyRule {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicFile {
     rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
+}
+
+impl MagicFile {
+    pub fn open<P: AsRef<Path>>(p: P) -> Result<Self, Error> {
+        FileMagicParser::parse_file(p)
+    }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
@@ -2430,9 +2468,54 @@ impl<'m> Magic<'m> {
     }
 }
 
-impl MagicFile {
-    pub fn open<P: AsRef<Path>>(p: P) -> Result<Self, Error> {
-        FileMagicParser::parse_file(p)
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SerializedDb {
+    rules: Vec<(usize, MagicRule)>,
+    dependencies: HashMap<String, DependencyRule>,
+}
+
+impl From<MagicDb> for SerializedDb {
+    #[inline]
+    fn from(mut value: MagicDb) -> Self {
+        // we decrease the Rc so that we don't panic on try_unwrap
+        value.by_ext.clear();
+
+        Self {
+            rules: value
+                .rules
+                .into_iter()
+                .map(|(i, r)| (i, Rc::try_unwrap(r).unwrap()))
+                .collect(),
+            dependencies: value.dependencies,
+        }
+    }
+}
+
+impl From<SerializedDb> for MagicDb {
+    #[inline]
+    fn from(value: SerializedDb) -> Self {
+        let rules: Vec<(usize, Rc<MagicRule>)> = value
+            .rules
+            .into_iter()
+            .map(|(i, r)| (i, Rc::new(r)))
+            .collect();
+
+        let mut by_ext = HashMap::new();
+        for (i, r) in rules.iter() {
+            for ext in r.entries.exts.iter() {
+                by_ext
+                    .entry(ext.to_lowercase())
+                    .and_modify(|v: &mut Vec<(usize, Rc<MagicRule>)>| v.push((*i, Rc::clone(r))))
+                    .or_insert_with(|| vec![(*i, Rc::clone(r))]);
+            }
+        }
+
+        Self {
+            rules,
+            dependencies: value.dependencies,
+            by_ext,
+            ..Default::default()
+        }
     }
 }
 
@@ -2807,6 +2890,24 @@ impl MagicDb {
     ) -> Result<Option<Magic<'_>>, Error> {
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
         self.magic_best_with_stream_kind(haystack, stream_kind)
+    }
+
+    pub fn serialize(self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        let sdb = SerializedDb::from(self);
+        bincode::serde::encode_to_vec(&sdb, bincode::config::standard())
+    }
+    pub fn deserialize_slice<S: AsRef<[u8]>>(r: S) -> Result<Self, bincode::error::DecodeError> {
+        let (sdb, _): (SerializedDb, usize) =
+            bincode::serde::decode_from_slice(r.as_ref(), bincode::config::standard())?;
+        Ok(sdb.into())
+    }
+
+    pub fn deserialize_reader<R: Read>(r: &mut R) -> Result<Self, bincode::error::DecodeError> {
+        let mut buf = vec![];
+        r.read_to_end(&mut buf).map_err(|e| {
+            bincode::error::DecodeError::OtherString(format!("failed to read: {e}"))
+        })?;
+        Self::deserialize_slice(&buf)
     }
 }
 

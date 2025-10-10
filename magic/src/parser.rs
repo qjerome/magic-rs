@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    fs::File,
+    io::{self, Read},
     iter::Peekable,
     path::Path,
 };
@@ -402,10 +403,19 @@ impl FileMagicParser {
         })
     }
 
+    #[inline(always)]
+    pub(crate) fn parse_reader<R: Read>(
+        r: &mut R,
+        source: Option<String>,
+    ) -> Result<MagicFile, Error> {
+        let s = io::read_to_string(r)?;
+        Self::parse_str(s, source)
+    }
+
     pub(crate) fn parse_file<P: AsRef<Path>>(p: P) -> Result<MagicFile, Error> {
-        let s = fs::read_to_string(&p)?;
-        Self::parse_str(
-            s,
+        let mut s = File::open(&p)?;
+        Self::parse_reader(
+            &mut s,
             p.as_ref()
                 .file_name()
                 .map(|os| os.to_string_lossy().to_string()),
@@ -1365,8 +1375,7 @@ impl EntryNode {
                 }
             }
         }
-
-        Ok(Self {
+        let mut e = Self {
             root,
             entry: parent,
             children,
@@ -1374,7 +1383,15 @@ impl EntryNode {
             apple,
             strength_mod,
             exts,
-        })
+        };
+
+        if root {
+            let mut exts = HashSet::new();
+            e.collect_exts_recursive(&mut exts);
+            e.exts.extend(exts);
+        }
+
+        Ok(e)
     }
 }
 

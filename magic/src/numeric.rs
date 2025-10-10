@@ -1,6 +1,7 @@
 use std::fmt;
 
 use dyf::DynDisplay;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::utils::{
@@ -11,7 +12,7 @@ use crate::utils::{
 macro_rules! impl_numeric_types {
     ($($name: tt($ty: ty)),* $(,)?) => {
         #[allow(non_camel_case_types)]
-        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
 
         pub(crate) enum Scalar {
             $($name($ty),)*
@@ -129,7 +130,7 @@ macro_rules! impl_numeric_types {
 
 
 
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
         #[allow(non_camel_case_types)]
         pub(crate) enum ScalarDataType {
             $($name,)*
@@ -308,8 +309,7 @@ impl DynDisplay for Scalar {
 macro_rules! impl_float_type {
     ($($name: tt($ty: ty)),* $(,)?) => {
         #[allow(non_camel_case_types)]
-        #[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
-
+        #[derive(Debug, PartialEq, PartialOrd, Clone, Copy, Serialize, Deserialize)]
         pub(crate) enum Float {
             $($name($ty),)*
         }
@@ -387,7 +387,7 @@ macro_rules! impl_float_type {
             }
         }
 
-        #[derive(Debug, Clone, Copy)]
+        #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
         #[allow(non_camel_case_types)]
         pub(crate) enum FloatDataType {
             $($name,)*
