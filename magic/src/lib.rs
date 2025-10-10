@@ -1168,24 +1168,34 @@ impl Test {
             }
 
             (Self::String(st), TestValue::Bytes(o, buf)) => {
+                macro_rules! trim_buf {
+                    ($buf: expr) => {{
+                        if st.mods.contains(StringMod::Trim) {
+                            $buf.trim_ascii()
+                        } else {
+                            $buf
+                        }
+                    }};
+                }
+
                 match st.cmp_op {
                     CmpOp::Eq => {
                         if let Some(b) = st.matches(buf) {
-                            Some(MatchRes::Bytes(*o, b, Encoding::Utf8))
+                            Some(MatchRes::Bytes(*o, trim_buf!(b), Encoding::Utf8))
                         } else {
                             None
                         }
                     }
                     CmpOp::Gt => {
                         if buf.len() > st.str.len() {
-                            Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
+                            Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
                         } else {
                             None
                         }
                     }
                     CmpOp::Lt => {
                         if buf.len() < st.str.len() {
-                            Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
+                            Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
                         } else {
                             None
                         }
