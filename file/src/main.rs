@@ -41,7 +41,7 @@ struct TestOpt {
     silent: bool,
     /// Show all magic rules matching
     /// not only the first one
-    #[arg(long)]
+    #[arg(short, long)]
     all: bool,
     /// Enable file extension acceleration. Matches first the
     /// rules where file extension is defined.
@@ -76,7 +76,8 @@ struct CompileOpt {
 
 #[derive(Debug, Serialize)]
 struct SerMagicResult<'m> {
-    path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<PathBuf>,
     source: Option<Cow<'m, str>>,
     message: String,
     mimetype: &'m str,
@@ -85,10 +86,16 @@ struct SerMagicResult<'m> {
     exts: &'m HashSet<Cow<'m, str>>,
 }
 
+#[derive(Debug, Serialize)]
+struct SerAllMagicResult<'m> {
+    path: PathBuf,
+    magics: Vec<SerMagicResult<'m>>,
+}
+
 impl<'m> SerMagicResult<'m> {
-    fn from_magic<P: AsRef<Path>>(p: P, m: &'m Magic<'_>) -> Self {
+    fn from_path_and_magic<P: AsRef<Path>>(p: Option<P>, m: &'m Magic<'_>) -> Self {
         Self {
-            path: p.as_ref().to_path_buf(),
+            path: p.map(|p| p.as_ref().to_path_buf()),
             source: m.source().cloned(),
             message: m.message(),
             mimetype: m.mimetype(),
@@ -215,16 +222,41 @@ fn main() -> Result<(), anyhow::Error> {
                         }) else {
                             continue;
                         };
+
                         // we sort only if needed
                         magics.sort_by(|a, b| b.0.cmp(&a.0));
-                        for (strength, magic) in magics {
-                            println!(
-                                "file:{} source:{} strength:{strength} mime:{} magic:{}",
-                                f.to_string_lossy(),
-                                magic.source().unwrap_or(&Cow::Borrowed("unknown")),
-                                magic.mimetype(),
-                                magic.message()
-                            )
+
+                        if o.json {
+                            let amr = SerAllMagicResult {
+                                path: f,
+                                magics: magics
+                                    .iter()
+                                    .map(|(_, m)| {
+                                        SerMagicResult::from_path_and_magic(
+                                            Option::<PathBuf>::None,
+                                            m,
+                                        )
+                                    })
+                                    .collect(),
+                            };
+
+                            let Ok(json) = serde_json::to_string(&amr)
+                                .inspect_err(|e| error!("failed to serialize magic: {e}"))
+                            else {
+                                continue;
+                            };
+
+                            println!("{json}")
+                        } else {
+                            for (strength, magic) in magics {
+                                println!(
+                                    "file:{} source:{} strength:{strength} mime:{} magic:{}",
+                                    f.to_string_lossy(),
+                                    magic.source().unwrap_or(&Cow::Borrowed("unknown")),
+                                    magic.mimetype(),
+                                    magic.message()
+                                )
+                            }
                         }
                     } else {
                         let ext: Option<&str> = if o.no_accel {
@@ -255,7 +287,7 @@ fn main() -> Result<(), anyhow::Error> {
                                 magic.message()
                             )
                         } else {
-                            let mr = SerMagicResult::from_magic(f, &magic);
+                            let mr = SerMagicResult::from_path_and_magic(Some(f), &magic);
                             let Ok(json) = serde_json::to_string(&mr)
                                 .inspect_err(|e| error!("failed to serialize magic: {e}"))
                             else {
