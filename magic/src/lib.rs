@@ -1800,9 +1800,11 @@ impl Match {
                 // absolute.
                 buf_base_offset.unwrap_or_default().saturating_add(offset)
             }
-            // any other offset is reative to offset at
-            // which the rule started to match.
-            _ => rule_base_offset.unwrap_or_default().saturating_add(offset),
+            // offset from start are computed from rule base
+            Offset::Direct(DirOffset::Start(_)) => {
+                rule_base_offset.unwrap_or_default().saturating_add(offset)
+            }
+            _ => offset,
         };
 
         match &self.test {
@@ -1926,7 +1928,7 @@ impl Match {
                     .test
                     .read_test_value(haystack, switch_endianness)
                     .inspect_err(|e| {
-                        debug!("source={source} line={line} error while reading test value: {e}",)
+                        debug!("source={source} line={line} error while reading test value @{offset}: {e}",)
                     })
                 {
                     trace_msg
@@ -3903,6 +3905,25 @@ HelloWorld
 >0 string x %s
             ",
             b"\x00Bread\x06is Toasted\x0ctwice\x00",
+            "Bread is Toasted twice"
+        )
+    }
+
+    #[test]
+    fn test_offset_bug_5() {
+        assert_magic_match_bin!(
+            r"
+1	string		TEST Bread is
+>(5.b) indirect/r x
+
+0	string twice Toasted
+>0  use toasted_twice
+
+0 name toasted_twice
+>0 string twice
+>>&1 byte 0x08 twice
+            ",
+            b"\x00TEST\x06twice\x00\x08",
             "Bread is Toasted twice"
         )
     }
