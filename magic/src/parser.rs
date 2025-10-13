@@ -14,11 +14,11 @@ use regex::bytes;
 use uuid::Uuid;
 
 use crate::{
-    Any, CmpOp, DependencyRule, DirOffset, Entry, EntryNode, Error, Flag, FloatTest,
-    FloatTransform, IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message,
-    Name, Offset, OffsetType, Op, PStringLen, PStringTest, ReMod, RegexTest, ScalarTest,
-    ScalarTransform, SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod,
-    StringTest, Test, Use,
+    CmpOp, DependencyRule, DirOffset, Entry, EntryNode, Error, Flag, FloatTest, FloatTransform,
+    IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message, Name, Offset,
+    OffsetType, Op, PStringLen, PStringTest, ReMod, RegexTest, ScalarTest, ScalarTransform,
+    SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod, StringTest, Test,
+    TestValue, Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
     utils::nonmagic,
 };
@@ -696,9 +696,9 @@ impl StringMod {
 }
 
 impl StringTest {
-    fn from_pair_with_slice(
+    fn from_pair_with_value(
         pair: Pair<'_, Rule>,
-        str: &[u8],
+        str: TestValue<Vec<u8>>,
         binary: bool,
         cmp_op: CmpOp,
     ) -> Result<Self, Error> {
@@ -712,8 +712,9 @@ impl StringTest {
                 _ => unimplemented!(),
             }
         }
+
         Ok(Self {
-            str: str.to_vec(),
+            test_val: str,
             cmp_op,
             length,
             mods,
@@ -723,7 +724,7 @@ impl StringTest {
 }
 
 impl PStringTest {
-    fn from_pair_with_value(pair: Pair<'_, Rule>, value: Vec<u8>) -> Self {
+    fn from_pair_with_value(pair: Pair<'_, Rule>, value: TestValue<Vec<u8>>) -> Self {
         debug_assert_eq!(pair.as_rule(), Rule::pstring);
 
         let mut len = PStringLen::Byte;
@@ -747,7 +748,7 @@ impl PStringTest {
         }
 
         PStringTest {
-            val: value,
+            test_val: value,
             len,
             include_len,
         }
@@ -897,14 +898,12 @@ impl Test {
                             let number_pair =
                                 pair.into_inner().next().expect("number pair expected");
 
-                            scalar = Some(
+                            scalar = Some(TestValue::Value(
                                 ty.unwrap()
                                     .scalar_from_number(parse_number_pair(number_pair)),
-                            );
+                            ));
                         }
-                        Rule::any_value => {
-                            return Ok(Self::Any(Any::Scalar(ty.unwrap(), transform)));
-                        }
+                        Rule::any_value => scalar = Some(TestValue::Any),
                         _ => {}
                     }
                 }
@@ -913,7 +912,9 @@ impl Test {
 
                 // we handle Not (~) operator only once
                 if matches!(cmp_op, CmpOp::Not) {
-                    scalar = !scalar;
+                    if let TestValue::Value(s) = scalar {
+                        scalar = TestValue::Value(!s)
+                    };
                     cmp_op = CmpOp::Eq;
                 }
 
@@ -923,7 +924,7 @@ impl Test {
                     transform,
                     cmp_op,
                     // no panic guarantee by parser
-                    value: scalar,
+                    test_val: scalar,
                 })
             }
             Rule::search_test => {
@@ -972,37 +973,45 @@ impl Test {
                     pair
                 };
 
-                match test_value.as_rule() {
-                    Rule::string_value => match test_type.as_rule() {
-                        Rule::string => {
-                            let (bin, s) = unescape_string_to_vec(test_value.as_str());
-                            StringTest::from_pair_with_slice(
+                match test_type.as_rule() {
+                    Rule::string => {
+                        let mut bin = false;
+                        let v = match test_value.as_rule() {
+                            Rule::string_value => {
+                                let s;
+                                (bin, s) = unescape_string_to_vec(test_value.as_str());
+                                TestValue::Value(s)
+                            }
+                            Rule::any_value => TestValue::Any,
+                            _ => unimplemented!(),
+                        };
+
+                        StringTest::from_pair_with_value(
+                            test_type,
+                            v,
+                            bin,
+                            cmp_op.unwrap_or(CmpOp::Eq),
+                        )?
+                        .into()
+                    }
+
+                    Rule::pstring => {
+                        let val = unescape_string_to_vec(test_value.as_str()).1;
+
+                        match test_value.as_rule() {
+                            Rule::string_value => Self::PString(PStringTest::from_pair_with_value(
                                 test_type,
-                                &s,
-                                bin,
-                                cmp_op.unwrap_or(CmpOp::Eq),
-                            )?
-                            .into()
+                                TestValue::Value(val),
+                            )),
+                            Rule::any_value => Self::PString(PStringTest::from_pair_with_value(
+                                test_type,
+                                TestValue::Any,
+                            )),
+
+                            // parser should guarantee this branch is never reached
+                            _ => unimplemented!(),
                         }
-
-                        Rule::pstring => {
-                            let val = unescape_string_to_vec(test_value.as_str()).1;
-
-                            Self::PString(PStringTest::from_pair_with_value(test_type, val))
-                        }
-
-                        // parser should guarantee this branch is never reached
-                        _ => unimplemented!(),
-                    },
-
-                    Rule::any_value => match test_type.as_rule() {
-                        Rule::string => Self::Any(Any::String),
-                        Rule::pstring => Self::Any(Any::PString(
-                            PStringTest::from_pair_with_value(test_type, vec![]),
-                        )),
-                        // parser should guarantee this branch is never reached
-                        _ => unimplemented!(),
-                    },
+                    }
                     // parser should guarantee this branch is never reached
                     _ => unimplemented!(),
                 }
@@ -1010,32 +1019,29 @@ impl Test {
             Rule::string16_test => {
                 let mut encoding = None;
                 let mut orig = None;
-                let mut str = None;
+                let mut str16 = None;
                 for p in pair.into_inner() {
                     match p.as_rule() {
                         Rule::lestring16 => encoding = Some(String16Encoding::Le),
                         Rule::bestring16 => encoding = Some(String16Encoding::Be),
                         Rule::string_value => {
                             orig = Some(unescape_string_to_string(p.as_str()));
-                            str = Some(
+                            str16 = Some(TestValue::Value(
                                 unescape_string_to_vec(p.as_str())
                                     .1
                                     .iter()
                                     .map(|b| *b as u16)
                                     .collect(),
-                            )
+                            ))
                         }
-                        Rule::any_value => {
-                            return Ok(Self::Any(Any::String16(
-                                encoding.expect("encoding must be known"),
-                            )));
-                        }
+                        Rule::any_value => str16 = Some(TestValue::Any),
                         _ => {}
                     }
                 }
                 Self::String16(String16Test {
-                    orig: orig.expect("test value must be known"),
-                    str16: str.expect("test value must be known"),
+                    // orig will be empty string for any_value
+                    orig: orig.unwrap_or_default(),
+                    test_val: str16.expect("test value must be known"),
                     encoding: encoding.expect("encoding must be known"),
                 })
             }
@@ -1043,14 +1049,13 @@ impl Test {
                 let mut guid = None;
                 for p in pair.into_inner() {
                     match p.as_rule() {
-                        Rule::any_value => {
-                            return Ok(Self::Any(Any::Scalar(ScalarDataType::guid, None)));
-                        }
+                        Rule::any_value => guid = Some(TestValue::Any),
                         Rule::guid => {
-                            guid = Some(
+                            guid = Some(TestValue::Value(Scalar::guid(
                                 Uuid::parse_str(p.as_str())
-                                    .expect("valid uuid is guaranteed by grammar"),
-                            )
+                                    .expect("valid uuid is guaranteed by grammar")
+                                    .as_u128(),
+                            )))
                         }
                         _ => {}
                     }
@@ -1061,7 +1066,7 @@ impl Test {
                     transform: None,
                     cmp_op: CmpOp::Eq,
                     // guid is guaranteed to be some by parser
-                    value: Scalar::guid(guid.unwrap().as_u128()),
+                    test_val: guid.expect("guid value must be known"),
                 })
             }
 
@@ -1073,12 +1078,7 @@ impl Test {
                 for p in pair.into_inner() {
                     let span = p.as_span();
                     match p.as_rule() {
-                        Rule::any_value => {
-                            return Ok(Self::Any(Any::Float(
-                                ty.expect("type must be known"),
-                                transform,
-                            )));
-                        }
+                        Rule::any_value => float = Some(TestValue::Any),
                         Rule::float_type_transform => {
                             for p in p.into_inner() {
                                 match p.as_rule() {
@@ -1112,7 +1112,7 @@ impl Test {
                                 .map_err(|_| Error::parser("cannot parse str to float", span))?;
 
                             let ty = ty.expect("type must be known");
-                            float = Some(ty.float_from_f64(f));
+                            float = Some(TestValue::Value(ty.float_from_f64(f)));
                         }
                         Rule::float_condition => {
                             cmp_op = CmpOp::from_pair(p.into_inner().next().unwrap())?
@@ -1122,7 +1122,7 @@ impl Test {
                 }
 
                 Self::Float(FloatTest {
-                    value: float.expect("float value must be known"),
+                    test_val: float.expect("float value must be known"),
                     ty: ty.expect("type must be known"),
                     cmp_op,
                     transform,

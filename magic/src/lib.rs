@@ -447,16 +447,20 @@ impl FloatTransform {
     }
 }
 
-// Any Magic Data type
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum Any {
-    // NOTE: We don't need to carry StringTest because it is
-    // not used in any existing rules
-    String,
-    String16(String16Encoding),
-    PString(PStringTest),
-    Scalar(ScalarDataType, Option<ScalarTransform>),
-    Float(FloatDataType, Option<FloatTransform>),
+enum TestValue<T> {
+    Value(T),
+    Any,
+}
+
+impl<T> TestValue<T> {
+    #[inline(always)]
+    fn as_ref(&self) -> TestValue<&T> {
+        match self {
+            Self::Value(v) => TestValue::Value(v),
+            Self::Any => TestValue::Any,
+        }
+    }
 }
 
 flags! {
@@ -520,7 +524,7 @@ flags! {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StringTest {
-    str: Vec<u8>,
+    test_val: TestValue<Vec<u8>>,
     cmp_op: CmpOp,
     length: Option<usize>,
     mods: FlagSet<StringMod>,
@@ -655,12 +659,11 @@ impl StringTest {
         )
     }
 
-    #[inline]
-    fn matches(&self, buf: &[u8]) -> Option<&[u8]> {
-        if let (true, _) = string_match(&self.str, self.mods, buf) {
-            Some(&self.str)
-        } else {
-            None
+    #[inline(always)]
+    fn test_value_len(&self) -> usize {
+        match self.test_val.as_ref() {
+            TestValue::Value(s) => s.len(),
+            TestValue::Any => 0,
         }
     }
 }
@@ -719,7 +722,7 @@ struct ScalarTest {
     ty: ScalarDataType,
     transform: Option<ScalarTransform>,
     cmp_op: CmpOp,
-    value: Scalar,
+    test_val: TestValue<Scalar>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -727,20 +730,19 @@ struct FloatTest {
     ty: FloatDataType,
     transform: Option<FloatTransform>,
     cmp_op: CmpOp,
-    value: Float,
+    test_val: TestValue<Float>,
 }
 
-// the value read from the haystack we want to
-// match against
+// the value read from the haystack we want to match against
 // 'buf is the lifetime of the buffer we are scanning
 #[derive(Debug, PartialEq)]
-enum TestValue<'buf> {
+enum ReadValue<'buf> {
     Float(u64, Float),
     Scalar(u64, Scalar),
     Bytes(u64, &'buf [u8]),
 }
 
-impl DynDisplay for TestValue<'_> {
+impl DynDisplay for ReadValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         match self {
             Self::Float(_, s) => DynDisplay::dyn_fmt(s, f),
@@ -750,14 +752,14 @@ impl DynDisplay for TestValue<'_> {
     }
 }
 
-impl DynDisplay for &TestValue<'_> {
+impl DynDisplay for &ReadValue<'_> {
     fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
         // Dereference self to get the TestValue and call its fmt method
         DynDisplay::dyn_fmt(*self, f)
     }
 }
 
-impl Display for TestValue<'_> {
+impl Display for ReadValue<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Float(_, v) => write!(f, "{v}"),
@@ -824,19 +826,6 @@ impl MatchRes<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum String16Encoding {
-    Le,
-    Be,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct String16Test {
-    orig: String,
-    str16: Vec<u16>,
-    encoding: String16Encoding,
-}
-
 fn slice_to_utf16_iter(read: &[u8], encoding: String16Encoding) -> impl Iterator<Item = u16> {
     let even = read
         .iter()
@@ -854,6 +843,32 @@ fn slice_to_utf16_iter(read: &[u8], encoding: String16Encoding) -> impl Iterator
         String16Encoding::Le => u16::from_le_bytes([*e, *o]),
         String16Encoding::Be => u16::from_be_bytes([*e, *o]),
     })
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum String16Encoding {
+    Le,
+    Be,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct String16Test {
+    orig: String,
+    test_val: TestValue<Vec<u16>>,
+    encoding: String16Encoding,
+}
+
+impl String16Test {
+    /// if the test value is a specific value this method returns
+    /// the number of utf16 characters. To obtain the length in
+    /// bytes the return value needs to be multiplied by two.
+    #[inline(always)]
+    fn test_value_len(&self) -> usize {
+        match self.test_val.as_ref() {
+            TestValue::Value(str16) => str16.len(),
+            TestValue::Any => 0,
+        }
+    }
 }
 
 flags! {
@@ -888,12 +903,13 @@ impl PStringLen {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PStringTest {
-    val: Vec<u8>,
     len: PStringLen,
+    test_val: TestValue<Vec<u8>>,
     include_len: bool,
 }
 
 impl PStringTest {
+    #[inline]
     fn read<'cache, R: Read + Seek>(
         &self,
         haystack: &'cache mut LazyCache<R>,
@@ -910,7 +926,7 @@ impl PStringTest {
             len = len.saturating_sub(self.len.size_of_len())
         }
 
-        if len != self.val.len() {
+        if len != self.test_value_len() {
             return Ok(None);
         }
 
@@ -918,15 +934,18 @@ impl PStringTest {
 
         Ok(Some(read))
     }
+
+    #[inline(always)]
+    fn test_value_len(&self) -> usize {
+        match self.test_val.as_ref() {
+            TestValue::Value(s) => s.len(),
+            TestValue::Any => 0,
+        }
+    }
 }
 
-// FIXME: tests should embed the Any test type
-// for example by defining an enum with Some/Any
-// to carry the value to test against
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Test {
-    /// This corresponds to a DATATYPE x test
-    Any(Any),
     Name(String),
     Use(bool, String),
     Scalar(ScalarTest),
@@ -951,71 +970,106 @@ impl Test {
         &self,
         haystack: &'haystack mut LazyCache<R>,
         switch_endianness: bool,
-    ) -> Result<Option<TestValue<'haystack>>, Error> {
+    ) -> Result<Option<ReadValue<'haystack>>, Error> {
         let test_value_offset = haystack.lazy_stream_position();
 
         match self {
             Self::Scalar(t) => {
                 t.ty.read(haystack, switch_endianness)
-                    .map(|s| Some(TestValue::Scalar(test_value_offset, s)))
+                    .map(|s| Some(ReadValue::Scalar(test_value_offset, s)))
             }
+
             Self::Float(t) => {
                 t.ty.read(haystack, switch_endianness)
-                    .map(|f| Some(TestValue::Float(test_value_offset, f)))
+                    .map(|f| Some(ReadValue::Float(test_value_offset, f)))
             }
             Self::String(t) => {
-                let buf = if let Some(length) = t.length {
-                    // if there is a length specified
-                    let read = haystack.read_exact(length as u64)?;
-                    read
-                } else {
-                    // no length specified we read until end of string
-                    let read = match t.cmp_op {
-                        CmpOp::Eq => {
-                            if !t.has_length_mod() {
-                                haystack.read_exact(t.str.len() as u64)?
-                            } else {
-                                haystack.read(FILE_BYTES_MAX as u64)?
-                            }
-                        }
-                        CmpOp::Lt | CmpOp::Gt => {
-                            let read = haystack.read_until_any_delim_or_limit(b"\n\0", 8092)?;
+                match t.test_val.as_ref() {
+                    TestValue::Value(str) => {
+                        let buf = if let Some(length) = t.length {
+                            // if there is a length specified
+                            let read = haystack.read_exact(length as u64)?;
+                            read
+                        } else {
+                            // no length specified we read until end of string
+                            let read = match t.cmp_op {
+                                CmpOp::Eq => {
+                                    if !t.has_length_mod() {
+                                        haystack.read_exact(str.len() as u64)?
+                                    } else {
+                                        haystack.read(FILE_BYTES_MAX as u64)?
+                                    }
+                                }
+                                CmpOp::Lt | CmpOp::Gt => {
+                                    let read =
+                                        haystack.read_until_any_delim_or_limit(b"\n\0", 8092)?;
 
-                            if read.ends_with(b"\0") || read.ends_with(b"\n") {
-                                &read[..read.len() - 1]
-                            } else {
-                                read
-                            }
-                        }
-                        _ => {
-                            return Err(Error::Msg(format!(
-                                "string test does not support {:?} operator",
-                                t.cmp_op
-                            )));
-                        }
-                    };
-                    read
-                };
+                                    if read.ends_with(b"\0") || read.ends_with(b"\n") {
+                                        &read[..read.len() - 1]
+                                    } else {
+                                        read
+                                    }
+                                }
+                                _ => {
+                                    return Err(Error::Msg(format!(
+                                        "string test does not support {:?} operator",
+                                        t.cmp_op
+                                    )));
+                                }
+                            };
+                            read
+                        };
 
-                Ok(Some(TestValue::Bytes(test_value_offset, buf)))
+                        Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
+                    }
+                    TestValue::Any => {
+                        let read = haystack.read_until_any_delim_or_limit(b"\0\n", 8192)?;
+                        // we don't take last byte if it matches end of string
+                        let bytes = if read.ends_with(b"\0") || read.ends_with(b"\n") {
+                            &read[..read.len() - 1]
+                        } else {
+                            read
+                        };
+
+                        Ok(Some(ReadValue::Bytes(test_value_offset, bytes)))
+                    }
+                }
             }
 
             Self::String16(t) => {
-                let read = haystack.read_exact((t.str16.len() * 2) as u64)?;
+                match t.test_val.as_ref() {
+                    TestValue::Value(str16) => {
+                        let read = haystack.read_exact((str16.len() * 2) as u64)?;
 
-                Ok(Some(TestValue::Bytes(test_value_offset, read)))
+                        Ok(Some(ReadValue::Bytes(test_value_offset, read)))
+                    }
+                    TestValue::Any => {
+                        let read = haystack.read_until_utf16_or_limit(b"\x00\x00", 8192)?;
+
+                        // we make sure we have an even number of elements
+                        let end = if read.len() % 2 == 0 {
+                            read.len()
+                        } else {
+                            // we decide to read anyway even though
+                            // length isn't even
+                            read.len().saturating_sub(1)
+                        };
+
+                        Ok(Some(ReadValue::Bytes(test_value_offset, &read[..end])))
+                    }
+                }
             }
 
             Self::PString(t) => {
                 let Some(read) = t.read(haystack)? else {
                     return Ok(None);
                 };
-                Ok(Some(TestValue::Bytes(test_value_offset, read)))
+                Ok(Some(ReadValue::Bytes(test_value_offset, read)))
             }
 
             Self::Search(_) => {
                 let buf = haystack.read(FILE_BYTES_MAX as u64)?;
-                Ok(Some(TestValue::Bytes(test_value_offset, buf)))
+                Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
             }
 
             Self::Regex(r) => {
@@ -1034,48 +1088,8 @@ impl Test {
                 };
 
                 let read = haystack.read(length as u64)?;
-                Ok(Some(TestValue::Bytes(test_value_offset, read)))
+                Ok(Some(ReadValue::Bytes(test_value_offset, read)))
             }
-
-            Self::Any(t) => match t {
-                Any::String => {
-                    let read = haystack.read_until_any_delim_or_limit(b"\0\n", 8192)?;
-                    // we don't take last byte if it matches end of string
-                    let bytes = if read.ends_with(b"\0") || read.ends_with(b"\n") {
-                        &read[..read.len() - 1]
-                    } else {
-                        read
-                    };
-
-                    Ok(Some(TestValue::Bytes(test_value_offset, bytes)))
-                }
-                Any::PString(t) => {
-                    let Some(read) = t.read(haystack)? else {
-                        return Ok(None);
-                    };
-                    Ok(Some(TestValue::Bytes(test_value_offset, read)))
-                }
-                Any::String16(_) => {
-                    let read = haystack.read_until_utf16_or_limit(b"\x00\x00", 8192)?;
-
-                    // we make sure we have an even number of elements
-                    let end = if read.len() % 2 == 0 {
-                        read.len()
-                    } else {
-                        // we decide to read anyway even though
-                        // length isn't even
-                        read.len().saturating_sub(1)
-                    };
-
-                    Ok(Some(TestValue::Bytes(test_value_offset, &read[..end])))
-                }
-                Any::Scalar(d, _) => d
-                    .read(haystack, switch_endianness)
-                    .map(|s| Some(TestValue::Scalar(test_value_offset, s))),
-                Any::Float(ty, _) => ty
-                    .read(haystack, switch_endianness)
-                    .map(|f| Some(TestValue::Float(test_value_offset, f))),
-            },
 
             Self::Name(_)
             | Self::Use(_, _)
@@ -1089,84 +1103,71 @@ impl Test {
     #[inline(always)]
     fn match_value<'s>(
         &'s self,
-        tv: &TestValue<'s>,
+        tv: &ReadValue<'s>,
         stream_kind: StreamKind,
     ) -> Option<MatchRes<'s>> {
         match (self, tv) {
-            (Self::Any(v), TestValue::Bytes(o, buf)) => match v {
-                Any::String | Any::PString(_) => Some(MatchRes::Bytes(*o, buf, Encoding::Utf8)),
-
-                Any::String16(enc) => Some(MatchRes::Bytes(*o, buf, Encoding::Utf16(*enc))),
-
-                _ => None,
-            },
-
-            (Self::Any(Any::Scalar(_, t)), TestValue::Scalar(o, s)) => {
-                if let Some(transform) = t {
-                    Some(MatchRes::Scalar(*o, transform.apply(*s)?))
-                } else {
-                    Some(MatchRes::Scalar(*o, *s))
-                }
-            }
-
-            (Self::Any(Any::Float(_, t)), TestValue::Float(o, f)) => {
-                if let Some(transform) = t {
-                    Some(MatchRes::Float(*o, transform.apply(*f)))
-                } else {
-                    Some(MatchRes::Float(*o, *f))
-                }
-            }
-
-            (Self::Scalar(t), TestValue::Scalar(o, ts)) => {
+            (Self::Scalar(t), ReadValue::Scalar(o, ts)) => {
                 let read_value: Scalar = match t.transform.as_ref() {
                     Some(t) => t.apply(*ts)?,
                     None => *ts,
                 };
 
-                let ok = match t.cmp_op {
-                    // NOTE: this should not happen in practice because
-                    // we convert it into Eq equivalent at parsing time
-                    CmpOp::Not => read_value == !t.value,
-                    CmpOp::Eq => read_value == t.value,
-                    CmpOp::Lt => read_value < t.value,
-                    CmpOp::Gt => read_value > t.value,
-                    CmpOp::Neq => read_value != t.value,
-                    CmpOp::BitAnd => read_value & t.value == t.value,
-                    CmpOp::Xor => (read_value & t.value).is_zero(),
-                };
+                match t.test_val {
+                    TestValue::Value(test_value) => {
+                        let ok = match t.cmp_op {
+                            // NOTE: this should not happen in practice because
+                            // we convert it into Eq equivalent at parsing time
+                            CmpOp::Not => read_value == !test_value,
+                            CmpOp::Eq => read_value == test_value,
+                            CmpOp::Lt => read_value < test_value,
+                            CmpOp::Gt => read_value > test_value,
+                            CmpOp::Neq => read_value != test_value,
+                            CmpOp::BitAnd => read_value & test_value == test_value,
+                            CmpOp::Xor => (read_value & test_value).is_zero(),
+                        };
 
-                if ok {
-                    Some(MatchRes::Scalar(*o, read_value))
-                } else {
-                    None
+                        if ok {
+                            Some(MatchRes::Scalar(*o, read_value))
+                        } else {
+                            None
+                        }
+                    }
+
+                    TestValue::Any => Some(MatchRes::Scalar(*o, read_value)),
                 }
             }
 
-            (Self::Float(t), TestValue::Float(o, f)) => {
+            (Self::Float(t), ReadValue::Float(o, f)) => {
                 let read_value: Float = t.transform.as_ref().map(|t| t.apply(*f)).unwrap_or(*f);
 
-                let ok = match t.cmp_op {
-                    CmpOp::Eq => read_value == t.value,
-                    CmpOp::Lt => read_value < t.value,
-                    CmpOp::Gt => read_value > t.value,
-                    CmpOp::Neq => read_value != t.value,
-                    _ => {
-                        // this should never be reached as we validate
-                        // operator in parser
-                        debug_panic!("unsupported float comparison");
-                        debug!("unsupported float comparison");
-                        false
-                    }
-                };
+                match t.test_val {
+                    TestValue::Value(tf) => {
+                        let ok = match t.cmp_op {
+                            CmpOp::Eq => read_value == tf,
+                            CmpOp::Lt => read_value < tf,
+                            CmpOp::Gt => read_value > tf,
+                            CmpOp::Neq => read_value != tf,
+                            _ => {
+                                // this should never be reached as we validate
+                                // operator in parser
+                                debug_panic!("unsupported float comparison");
+                                debug!("unsupported float comparison");
+                                false
+                            }
+                        };
 
-                if ok {
-                    Some(MatchRes::Float(*o, read_value))
-                } else {
-                    None
+                        if ok {
+                            Some(MatchRes::Float(*o, read_value))
+                        } else {
+                            None
+                        }
+                    }
+                    TestValue::Any => Some(MatchRes::Float(*o, read_value)),
                 }
             }
 
-            (Self::String(st), TestValue::Bytes(o, buf)) => {
+            (Self::String(st), ReadValue::Bytes(o, buf)) => {
                 macro_rules! trim_buf {
                     ($buf: expr) => {{
                         if st.mods.contains(StringMod::Trim) {
@@ -1177,68 +1178,83 @@ impl Test {
                     }};
                 }
 
-                match st.cmp_op {
-                    CmpOp::Eq => {
-                        if let Some(b) = st.matches(buf) {
-                            Some(MatchRes::Bytes(*o, trim_buf!(b), Encoding::Utf8))
-                        } else {
-                            None
+                match st.test_val.as_ref() {
+                    TestValue::Value(str) => {
+                        match st.cmp_op {
+                            CmpOp::Eq => {
+                                if let (true, _) = string_match(str, st.mods, buf) {
+                                    Some(MatchRes::Bytes(*o, trim_buf!(str), Encoding::Utf8))
+                                } else {
+                                    None
+                                }
+                            }
+                            CmpOp::Gt => {
+                                if buf.len() > str.len() {
+                                    Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
+                                } else {
+                                    None
+                                }
+                            }
+                            CmpOp::Lt => {
+                                if buf.len() < str.len() {
+                                    Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
+                                } else {
+                                    None
+                                }
+                            }
+
+                            // unsupported for strings
+                            _ => {
+                                // this should never be reached as we validate
+                                // operator in parser
+                                debug_panic!("unsupported string comparison");
+                                debug!("unsupported string comparison");
+                                None
+                            }
                         }
                     }
-                    CmpOp::Gt => {
-                        if buf.len() > st.str.len() {
-                            Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
-                        } else {
-                            None
-                        }
-                    }
-                    CmpOp::Lt => {
-                        if buf.len() < st.str.len() {
-                            Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
-                        } else {
-                            None
-                        }
-                    }
-                    // unsupported for strings
-                    _ => {
-                        // this should never be reached as we validate
-                        // operator in parser
-                        debug_panic!("unsupported string comparison");
-                        debug!("unsupported string comparison");
+                    TestValue::Any => Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8)),
+                }
+            }
+
+            (Self::PString(m), ReadValue::Bytes(o, buf)) => match m.test_val.as_ref() {
+                TestValue::Value(psv) => {
+                    if buf == psv {
+                        Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
+                    } else {
                         None
                     }
                 }
-            }
+                TestValue::Any => Some(MatchRes::Bytes(*o, buf, Encoding::Utf8)),
+            },
 
-            (Self::PString(m), TestValue::Bytes(o, buf)) => {
-                if buf == &m.val {
-                    Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
-                } else {
-                    None
-                }
-            }
+            (Self::String16(t), ReadValue::Bytes(o, buf)) => {
+                match t.test_val.as_ref() {
+                    TestValue::Value(str16) => {
+                        // strings cannot be equal
+                        if str16.len() * 2 != buf.len() {
+                            return None;
+                        }
 
-            (Self::String16(t), TestValue::Bytes(o, buf)) => {
-                // strings cannot be equal
-                if t.str16.len() * 2 != buf.len() {
-                    return None;
-                }
+                        // we check string equality
+                        for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
+                            if str16[i] != utf16_char {
+                                return None;
+                            }
+                        }
 
-                // we check string equality
-                for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
-                    if t.str16[i] != utf16_char {
-                        return None;
+                        Some(MatchRes::Bytes(
+                            *o,
+                            &t.orig.as_bytes(),
+                            Encoding::Utf16(t.encoding),
+                        ))
                     }
-                }
 
-                Some(MatchRes::Bytes(
-                    *o,
-                    &t.orig.as_bytes(),
-                    Encoding::Utf16(t.encoding),
-                ))
+                    TestValue::Any => Some(MatchRes::Bytes(*o, buf, Encoding::Utf16(t.encoding))),
+                }
             }
 
-            (Self::Regex(r), TestValue::Bytes(o, buf)) => {
+            (Self::Regex(r), ReadValue::Bytes(o, buf)) => {
                 match stream_kind {
                     StreamKind::Text(_) => {
                         let mut offset = *o;
@@ -1274,7 +1290,7 @@ impl Test {
                 }
             }
 
-            (Self::Search(t), TestValue::Bytes(o, buf)) => {
+            (Self::Search(t), ReadValue::Bytes(o, buf)) => {
                 // the offset of the string is computed from the start of the buffer
                 t.matches(&buf)
                     .map(|(p, m)| MatchRes::Bytes(o + p, m, Encoding::Utf8))
@@ -1306,9 +1322,9 @@ impl Test {
                 }
             },
 
-            Test::String(t) => out += t.str.len().saturating_add(MULT),
+            Test::String(t) => out += t.test_value_len().saturating_add(MULT),
 
-            Test::PString(t) => out += t.val.len().saturating_add(MULT),
+            Test::PString(t) => out += t.test_value_len().saturating_add(MULT),
 
             Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
 
@@ -1322,15 +1338,17 @@ impl Test {
                 // but I GUESS it is because the len is expressed
                 // in number bytes. In our case length is expressed
                 // in number of u16 so we shouldn't divide.
-                out += t.str16.len().saturating_mul(MULT);
+                out += t.test_value_len().saturating_mul(MULT);
             }
 
             Test::Der => out += MULT,
 
-            // matching any output gets penalty
-            Test::Any(_) => out = 0,
-
             _ => {}
+        }
+
+        // matching any output gets penalty
+        if self.is_match_any() {
+            out = 0
         }
 
         if let Some(op) = self.cmp_op() {
@@ -1352,8 +1370,7 @@ impl Test {
             Self::String(t) => Some(t.cmp_op),
             Self::Scalar(s) => Some(s.cmp_op),
             Self::Float(t) => Some(t.cmp_op),
-            Self::Any(_)
-            | Self::Name(_)
+            Self::Name(_)
             | Self::Use(_, _)
             | Self::Search(_)
             | Self::PString(_)
@@ -1367,15 +1384,27 @@ impl Test {
     }
 
     #[inline(always)]
+    fn is_match_any(&self) -> bool {
+        match self {
+            Test::Name(_) => false,
+            Test::Use(_, _) => false,
+            Test::Scalar(scalar_test) => matches!(scalar_test.test_val, TestValue::Any),
+            Test::Float(float_test) => matches!(float_test.test_val, TestValue::Any),
+            Test::String(string_test) => matches!(string_test.test_val, TestValue::Any),
+            Test::Search(_) => false,
+            Test::PString(pstring_test) => matches!(pstring_test.test_val, TestValue::Any),
+            Test::Regex(_) => false,
+            Test::Indirect(_) => false,
+            Test::String16(string16_test) => matches!(string16_test.test_val, TestValue::Any),
+            Test::Der => false,
+            Test::Clear => false,
+            Test::Default => false,
+        }
+    }
+
+    #[inline(always)]
     fn is_binary(&self) -> bool {
         match self {
-            Self::Any(any) => match any {
-                Any::PString(_) => true,
-                Any::String => true,
-                Any::String16(_) => true,
-                Any::Scalar(_, _) => true,
-                Any::Float(_, _) => true,
-            },
             Self::Name(_) => true,
             Self::Use(_, _) => true,
             Self::Scalar(_) => true,
@@ -1403,7 +1432,6 @@ impl Test {
     #[inline(always)]
     fn is_text(&self) -> bool {
         match self {
-            Self::Any(Any::String) => true,
             Self::Name(_) => true,
             Self::Use(_, _) => true,
             Self::Indirect(_) => true,
