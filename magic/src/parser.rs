@@ -23,15 +23,11 @@ use crate::{
     utils::nonmagic,
 };
 
-pub(crate) fn prepare_bytes_re(s: &[u8], escape: bool) -> String {
+pub(crate) fn prepare_bytes_re(s: &[u8]) -> String {
     let mut out = String::new();
     for b in s {
         if b.is_ascii() {
-            if escape {
-                out.push_str(&regex::escape(&format!("{}", *b as char)));
-            } else {
-                out.push(*b as char);
-            }
+            out.push(*b as char);
         } else {
             out.push_str(&format!("\\x{b:02x}"));
         }
@@ -943,8 +939,7 @@ impl Test {
 
                     Rule::regex => {
                         let (bin, s) = unescape_string_to_vec(test_value.as_str());
-                        RegexTest::from_pair_with_re(test_type, &prepare_bytes_re(&s, false), bin)?
-                            .into()
+                        RegexTest::from_pair_with_re(test_type, &prepare_bytes_re(&s), bin)?.into()
                     }
                     // parser should guarantee this branch is never reached
                     _ => unimplemented!(),
