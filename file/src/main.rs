@@ -69,13 +69,14 @@ struct CompileOpt {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
 struct SerMagicResult<'m> {
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<PathBuf>,
     source: Option<Cow<'m, str>>,
-    message: String,
-    mimetype: &'m str,
-    apple: Option<Cow<'m, str>>,
+    magic: String,
+    mime_type: &'m str,
+    creator_type: Option<Cow<'m, str>>,
     strength: Option<u64>,
     exts: &'m HashSet<Cow<'m, str>>,
 }
@@ -91,9 +92,9 @@ impl<'m> SerMagicResult<'m> {
         Self {
             path: p.map(|p| p.as_ref().to_path_buf()),
             source: m.source().cloned(),
-            message: m.message(),
-            mimetype: m.mimetype(),
-            apple: m.apple().cloned(),
+            magic: m.message(),
+            mime_type: m.mimetype(),
+            creator_type: m.apple().cloned(),
             strength: m.strength(),
             exts: m.exts(),
         }
