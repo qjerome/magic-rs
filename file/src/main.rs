@@ -145,7 +145,7 @@ fn main() -> Result<(), anyhow::Error> {
                     if rule.is_dir() {
                         let walker = WalkOptions::new()
                             .files()
-                            .max_depth(1)
+                            .max_depth(0)
                             .sort(true)
                             .walk(rule);
                         for p in walker.flatten() {
@@ -175,7 +175,7 @@ fn main() -> Result<(), anyhow::Error> {
                 wo.files().sort(true);
 
                 if !o.recursive {
-                    wo.max_depth(1);
+                    wo.max_depth(0);
                 }
 
                 for f in wo.walk(item).flatten() {
