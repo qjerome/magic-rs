@@ -2147,7 +2147,7 @@ impl EntryNode {
             }
 
             if !self.exts.is_empty() {
-                magic.insert_extensions(&self.exts);
+                magic.insert_extensions(self.exts.iter().map(|s| s.as_str()));
             }
 
             // NOTE: here we try to implement a similar logic as in file_magic_strength.
@@ -2482,11 +2482,9 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
-    fn insert_extensions<'a: 'm>(&mut self, exts: &'a HashSet<String>) {
+    fn insert_extensions<'a: 'm, I: Iterator<Item = &'a str>>(&mut self, exts: I) {
         if self.exts.is_empty() {
-            debug!("insert extensions: {exts:?}");
-            self.exts
-                .extend(exts.iter().map(|e| Cow::Borrowed(e.as_str())))
+            self.exts.extend(exts.map(|e| Cow::Borrowed(e)))
         }
     }
 
@@ -2639,8 +2637,10 @@ impl MagicDb {
             if has_nl {
                 magic.push_message(Cow::Borrowed("New Line Delimited"));
                 magic.insert_mimetype(Cow::Borrowed("application/x-ndjson"));
+                magic.insert_extensions(["ndjson", "jsonl"].into_iter());
             } else {
                 magic.insert_mimetype(Cow::Borrowed("application/json"));
+                magic.insert_extensions(["json"].into_iter());
             }
             magic.push_message(Cow::Borrowed("JSON text data"));
             magic.set_source(Some(HARDCODED_SOURCE));
@@ -2699,6 +2699,7 @@ impl MagicDb {
         magic.push_message(Cow::Borrowed("CSV"));
         magic.push_message(Cow::Borrowed(enc.as_magic_str()));
         magic.push_message(Cow::Borrowed("text"));
+        magic.insert_extensions(["csv"].into_iter());
         magic.set_source(Some(HARDCODED_SOURCE));
         magic.update_strength(HARDCODED_MAGIC_STRENGTH);
         Ok(true)
@@ -2739,6 +2740,7 @@ impl MagicDb {
         magic.insert_mimetype(Cow::Borrowed("application/x-tar"));
         magic.set_source(Some(HARDCODED_SOURCE));
         magic.update_strength(HARDCODED_MAGIC_STRENGTH);
+        magic.insert_extensions(["tar"].into_iter());
         Ok(true)
     }
 
