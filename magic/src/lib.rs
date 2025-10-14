@@ -116,6 +116,10 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
     #[error("formatting: {0}")]
     Format(#[from] dyf::Error),
+    #[error("{0}")]
+    Serialize(#[from] bincode::error::EncodeError),
+    #[error("{0}")]
+    Deserialize(#[from] bincode::error::DecodeError),
 }
 
 impl Error {
@@ -2966,11 +2970,11 @@ impl MagicDb {
         Ok(encoder.finish().unwrap())
     }
 
-    pub fn deserialize_slice<S: AsRef<[u8]>>(r: S) -> Result<Self, bincode::error::DecodeError> {
+    pub fn deserialize_slice<S: AsRef<[u8]>>(r: S) -> Result<Self, Error> {
         Self::deserialize_reader(&mut r.as_ref())
     }
 
-    pub fn deserialize_reader<R: Read>(r: &mut R) -> Result<Self, bincode::error::DecodeError> {
+    pub fn deserialize_reader<R: Read>(r: &mut R) -> Result<Self, Error> {
         let mut buf = vec![];
         let mut gz = GzDecoder::new(r);
         gz.read_to_end(&mut buf).map_err(|e| {
