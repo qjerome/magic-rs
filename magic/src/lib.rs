@@ -1022,7 +1022,7 @@ impl Test {
                         } else {
                             // no length specified we read until end of string
                             let read = match t.cmp_op {
-                                CmpOp::Eq => {
+                                CmpOp::Eq | CmpOp::Neq => {
                                     if !t.has_length_mod() {
                                         haystack.read_exact(str.len() as u64)?
                                     } else {
@@ -3336,6 +3336,7 @@ HelloWorld
     #[test]
     fn test_string_ops() {
         assert_magic_match_text!("0	string/b MZ MZ File", b"MZ\0");
+        assert_magic_match_text!("0	string !MZ Not MZ File", b"AZ\0");
         assert_magic_match_text!("0	string >\0 Any String", b"A\0");
         assert_magic_match_text!("0	string >Test Any String", b"Test 1\0");
         assert_magic_match_text!("0	string <Test Any String", b"\0");

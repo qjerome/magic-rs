@@ -960,6 +960,7 @@ impl Test {
 
                 let cmp_op = match pair.as_rule() {
                     Rule::op_eq => Some(CmpOp::Eq),
+                    Rule::op_neq => Some(CmpOp::Neq),
                     Rule::op_lt => Some(CmpOp::Lt),
                     Rule::op_gt => Some(CmpOp::Gt),
                     _ => None,

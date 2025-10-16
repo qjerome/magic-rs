@@ -175,7 +175,7 @@ search_test = ${ (regex | search) ~ WHITESPACE+ ~ "="? ~ string_value }
 
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
-string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | ((op_eq | op_lt | op_gt)? ~ string_value)) }
+string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | ((op_eq | op_neq | op_lt | op_gt)? ~ string_value)) }
 
 // string16 test
 string16_test = ${ (lestring16 | bestring16) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | string_value) }
