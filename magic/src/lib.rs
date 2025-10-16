@@ -1389,11 +1389,21 @@ impl Test {
 
             Test::PString(t) => out += t.test_value_len().saturating_add(MULT),
 
-            Test::Search(s) => out += s.str.len() * max(MULT / s.str.len(), 1),
+            Test::Search(s) => {
+                // NOTE: this is how it is implemented in libmagic
+                // but it seems odd to have strength decreasing as
+                // search str len increase, as smaller search tend
+                // to be less reliable.
+                out += s.str.len() * max(MULT.checked_div(s.str.len()).unwrap_or_default(), 1)
+            }
 
             Test::Regex(r) => {
                 let v = r.non_magic_len;
-                out += v * max(MULT / v, 1);
+                // NOTE: this is how it is implemented in libmagic
+                // but it seems odd to have strength decreasing as
+                // regex str len increase, as smaller regex tend
+                // to be less reliable.
+                out += v * max(MULT.checked_div(v).unwrap_or_default(), 1);
             }
 
             Test::String16(t) => {
