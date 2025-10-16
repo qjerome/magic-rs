@@ -10,11 +10,14 @@ use std::{
 use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
-use lazy_cache::LazyCache;
-use magic_rs::{FILE_BYTES_MAX, Magic, MagicDb, MagicFile};
+use magic_embed::magic_embed;
+use magic_rs::{Magic, MagicDb, MagicFile};
 use serde_derive::Serialize;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
+
+#[magic_embed(include=["./magdir"], exclude=["./magdir/der"])]
+struct EmbeddedMagicDb;
 
 #[derive(Parser)]
 struct Cli {
@@ -137,7 +140,7 @@ fn main() -> Result<(), anyhow::Error> {
                 .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
                 info!("Time to deserialize database: {:?}", start.elapsed());
                 db
-            } else {
+            } else if !o.rules.is_empty() {
                 let mut db = MagicDb::new();
 
                 let start = Instant::now();
@@ -168,6 +171,8 @@ fn main() -> Result<(), anyhow::Error> {
                 }
                 info!("Time to parse rule files: {:?}", start.elapsed());
                 db
+            } else {
+                EmbeddedMagicDb::open().unwrap()
             };
 
             for item in o.files {
