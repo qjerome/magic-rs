@@ -19,6 +19,7 @@ use std::{
     path::Path,
     rc::Rc,
     str::Utf8Error,
+    usize,
 };
 use tar::Archive;
 use thiserror::Error;
@@ -2656,6 +2657,12 @@ fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
 }
 
 impl MagicDb {
+    fn open_reader<R: Read + Seek>(f: R) -> Result<LazyCache<R>, Error> {
+        Ok(LazyCache::<R>::from_read_seek(f)
+            .and_then(|lc| lc.with_hot_cache(2 * FILE_BYTES_MAX))?)
+        .map(|lc| lc.with_warm_cache(100 << 20))
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -2952,11 +2959,12 @@ impl MagicDb {
     /// an empty extension must be `Some("")`, if extension acceleration is not desired specify `None`
     pub fn magic_first<R: Read + Seek>(
         &self,
-        haystack: &mut LazyCache<R>,
+        r: &mut R,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
+        let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_first_with_stream_kind(haystack, stream_kind, extension)
+        self.magic_first_with_stream_kind(&mut haystack, stream_kind, extension)
     }
 
     #[inline(always)]
@@ -2993,12 +3001,10 @@ impl MagicDb {
         Ok(out)
     }
 
-    pub fn magic_all<R: Read + Seek>(
-        &self,
-        haystack: &mut LazyCache<R>,
-    ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+    pub fn magic_all<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+        let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_all_with_stream_kind(haystack, stream_kind)
+        self.magic_all_with_stream_kind(&mut haystack, stream_kind)
     }
 
     #[inline(always)]
@@ -3012,12 +3018,10 @@ impl MagicDb {
         return Ok(magics.into_iter().map(|(_, m)| m).next());
     }
 
-    pub fn magic_best<R: Read + Seek>(
-        &self,
-        haystack: &mut LazyCache<R>,
-    ) -> Result<Option<Magic<'_>>, Error> {
+    pub fn magic_best<R: Read + Seek>(&self, r: &mut R) -> Result<Option<Magic<'_>>, Error> {
+        let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_best_with_stream_kind(haystack, stream_kind)
+        self.magic_best_with_stream_kind(&mut haystack, stream_kind)
     }
 
     pub fn serialize(self) -> Result<Vec<u8>, bincode::error::EncodeError> {

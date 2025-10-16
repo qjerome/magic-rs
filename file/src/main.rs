@@ -181,15 +181,14 @@ fn main() -> Result<(), anyhow::Error> {
                 for f in wo.walk(item).flatten() {
                     debug!("scanning file: {}", f.to_string_lossy());
                     let start = Instant::now();
-                    let Ok(mut haystack) = LazyCache::<File>::open(&f)
-                        .inspect_err(|e| error!("cannot open file={}: {e}", f.to_string_lossy()))
-                        .map(|lc| lc.with_hot_cache(2 * FILE_BYTES_MAX).unwrap())
-                    else {
+                    let Ok(mut file) = File::open(&f).inspect_err(|e| {
+                        error!("failed to open file={}: {e}", f.to_string_lossy())
+                    }) else {
                         continue;
                     };
 
                     if o.all {
-                        let Ok(mut magics) = db.magic_all(&mut haystack).inspect_err(|e| {
+                        let Ok(mut magics) = db.magic_all(&mut file).inspect_err(|e| {
                             error!("failed to get magic file={}: {e}", f.to_string_lossy())
                         }) else {
                             continue;
@@ -239,7 +238,7 @@ fn main() -> Result<(), anyhow::Error> {
                             Some(f.extension().and_then(|e| e.to_str()).unwrap_or_default())
                         };
 
-                        let Ok(magic) = db.magic_first(&mut haystack, ext).inspect_err(|e| {
+                        let Ok(magic) = db.magic_first(&mut file, ext).inspect_err(|e| {
                             error!("failed to get magic file={}: {e}", f.to_string_lossy())
                         }) else {
                             continue;
