@@ -955,8 +955,10 @@ impl PStringTest {
             len = len.saturating_sub(self.len.size_of_len())
         }
 
-        if len != self.test_value_len() {
-            return Ok(None);
+        if let TestValue::Value(s) = self.test_val.as_ref() {
+            if len != s.len() {
+                return Ok(None);
+            }
         }
 
         let read = haystack.read_exact(len as u64)?;
