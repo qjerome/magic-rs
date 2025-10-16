@@ -1484,18 +1484,10 @@ impl Test {
             Self::Use(_, _) => true,
             Self::Scalar(_) => true,
             Self::Float(_) => true,
-            Self::String(t) => t.binary || t.mods.contains(StringMod::ForceBin),
-            Self::Search(search_test) => {
-                search_test.str_mods.contains(StringMod::ForceBin)
-                    || search_test.re_mods.contains(ReMod::ForceBinary)
-                    || search_test.binary
-            }
+            Self::String(_) => true,
+            Self::Search(_) => true,
             Self::PString(_) => true,
-            Self::Regex(regex_test) => {
-                regex_test.str_mods.contains(StringMod::ForceBin)
-                    || regex_test.mods.contains(ReMod::ForceBinary)
-                    || regex_test.binary
-            }
+            Self::Regex(_) => true,
             Self::Clear => true,
             Self::Default => true,
             Self::Indirect(_) => true,
@@ -1510,7 +1502,9 @@ impl Test {
             Self::Name(_) => true,
             Self::Use(_, _) => true,
             Self::Indirect(_) => true,
-            Self::String(t) => !t.binary && t.mods.contains(StringMod::ForceBin),
+            Self::String(_) => true,
+            Self::Search(_) => true,
+            Self::Regex(_) => true,
             Self::Clear => true,
             Self::Default => true,
             _ => !self.is_binary(),
