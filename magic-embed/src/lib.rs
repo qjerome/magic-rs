@@ -219,7 +219,13 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
         macro_rules! load_file {
             ($span: expr, $path: expr) => {
                 let f = MagicFile::open($path).map_err(|e| {
-                    syn::Error::new($span.clone(), format!("failed to parse magic file: {e}"))
+                    syn::Error::new(
+                        $span.clone(),
+                        format!(
+                            "failed to parse magic file={}: {e}",
+                            $path.to_string_lossy()
+                        ),
+                    )
                 })?;
                 db.load(f).map_err(|e| {
                     syn::Error::new(
