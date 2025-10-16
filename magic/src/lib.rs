@@ -195,7 +195,7 @@ impl Message {
             } => {
                 if let Some(mr) = mr {
                     match mr {
-                        MatchRes::Float(_, _) | MatchRes::Bytes(_, _, _) => {
+                        MatchRes::Float(_, _) | MatchRes::Bytes(_, _, _, _) => {
                             Ok(Cow::Owned(dformat!(fs, mr)?))
                         }
                         MatchRes::Scalar(_, scalar) => {
@@ -798,7 +798,11 @@ enum Encoding {
 // Carry the offset of the start of the data in the stream
 // and the data itself
 enum MatchRes<'buf> {
-    Bytes(u64, &'buf [u8], Encoding),
+    // Bytes.0: offset of the match
+    // Bytes.1: optional end of match (to address the need of EOL adjustment in string regex)
+    // Bytes.2: the bytes matching
+    // Bytes.3: encoding of the buffer
+    Bytes(u64, Option<u64>, &'buf [u8], Encoding),
     Scalar(u64, Scalar),
     Float(u64, Float),
 }
@@ -814,7 +818,7 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
-            Self::Bytes(_, v, enc) => match enc {
+            Self::Bytes(_, _, v, enc) => match enc {
                 Encoding::Utf8 => Ok(String::from_utf8_lossy(v).to_string()),
                 Encoding::Utf16(enc) => {
                     let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
@@ -830,7 +834,7 @@ impl MatchRes<'_> {
     #[inline]
     fn start_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(o, _, _) => *o,
+            MatchRes::Bytes(o, _, _, _) => *o,
             MatchRes::Scalar(o, _) => *o,
             MatchRes::Float(o, _) => *o,
         }
@@ -840,7 +844,10 @@ impl MatchRes<'_> {
     #[inline]
     fn end_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(o, buf, _) => o.add(buf.len() as u64),
+            MatchRes::Bytes(start, end, buf, _) => match end {
+                Some(end) => *end,
+                None => start.saturating_add(buf.len() as u64),
+            },
             MatchRes::Scalar(o, sc) => o.add(sc.size_of() as u64),
             MatchRes::Float(o, f) => o.add(f.size_of() as u64),
         }
@@ -1204,21 +1211,28 @@ impl Test {
                         match st.cmp_op {
                             CmpOp::Eq => {
                                 if let (true, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(*o, trim_buf!(str), Encoding::Utf8))
+                                    Some(MatchRes::Bytes(*o, None, trim_buf!(str), Encoding::Utf8))
+                                } else {
+                                    None
+                                }
+                            }
+                            CmpOp::Neq => {
+                                if let (false, _) = string_match(str, st.mods, buf) {
+                                    Some(MatchRes::Bytes(*o, None, trim_buf!(str), Encoding::Utf8))
                                 } else {
                                     None
                                 }
                             }
                             CmpOp::Gt => {
                                 if buf.len() > str.len() {
-                                    Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
+                                    Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
                                 } else {
                                     None
                                 }
                             }
                             CmpOp::Lt => {
                                 if buf.len() < str.len() {
-                                    Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8))
+                                    Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
                                 } else {
                                     None
                                 }
@@ -1234,19 +1248,21 @@ impl Test {
                             }
                         }
                     }
-                    TestValue::Any => Some(MatchRes::Bytes(*o, trim_buf!(buf), Encoding::Utf8)),
+                    TestValue::Any => {
+                        Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
+                    }
                 }
             }
 
             (Self::PString(m), ReadValue::Bytes(o, buf)) => match m.test_val.as_ref() {
                 TestValue::Value(psv) => {
                     if buf == psv {
-                        Some(MatchRes::Bytes(*o, buf, Encoding::Utf8))
+                        Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf8))
                     } else {
                         None
                     }
                 }
-                TestValue::Any => Some(MatchRes::Bytes(*o, buf, Encoding::Utf8)),
+                TestValue::Any => Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf8)),
             },
 
             (Self::String16(t), ReadValue::Bytes(o, buf)) => {
@@ -1266,12 +1282,15 @@ impl Test {
 
                         Some(MatchRes::Bytes(
                             *o,
+                            None,
                             &t.orig.as_bytes(),
                             Encoding::Utf16(t.encoding),
                         ))
                     }
 
-                    TestValue::Any => Some(MatchRes::Bytes(*o, buf, Encoding::Utf16(t.encoding))),
+                    TestValue::Any => {
+                        Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf16(t.encoding)))
+                    }
                 }
             }
 
@@ -1279,11 +1298,31 @@ impl Test {
                 match stream_kind {
                     StreamKind::Text(_) => {
                         let mut offset = *o;
+
+                        let mut line_limit = r.length.unwrap_or(usize::MAX);
+
                         for line in buf.split(|c| c == &b'\n') {
+                            // we don't need to break on offset
+                            // limit as buf contains the good amount
+                            // of bytes to match against
+                            if line_limit == 0 {
+                                break;
+                            }
+
                             if let Some(re_match) = r.re.find(&line) {
+                                // the offset of the string is computed from the start of the buffer
+                                let start_offset = offset + re_match.start() as u64;
+
+                                // if we matched until EOL we need to add one to include the delimiter removed from the split
+                                let stop_offset = if re_match.end() == line.len() {
+                                    Some(start_offset + re_match.as_bytes().len() as u64 + 1)
+                                } else {
+                                    None
+                                };
+
                                 return Some(MatchRes::Bytes(
-                                    // the offset of the string is computed from the start of the buffer
-                                    offset + re_match.start() as u64,
+                                    start_offset,
+                                    stop_offset,
                                     re_match.as_bytes(),
                                     Encoding::Utf8,
                                 ));
@@ -1292,6 +1331,7 @@ impl Test {
                             offset += line.len() as u64;
                             // we have to add one because lines do not contain splitting character
                             offset += 1;
+                            line_limit = line_limit.saturating_sub(1)
                         }
                         None
                     }
@@ -1301,6 +1341,7 @@ impl Test {
                             Some(MatchRes::Bytes(
                                 // the offset of the string is computed from the start of the buffer
                                 o + re_match.start() as u64,
+                                None,
                                 re_match.as_bytes(),
                                 Encoding::Utf8,
                             ))
@@ -1314,7 +1355,7 @@ impl Test {
             (Self::Search(t), ReadValue::Bytes(o, buf)) => {
                 // the offset of the string is computed from the start of the buffer
                 t.matches(&buf)
-                    .map(|(p, m)| MatchRes::Bytes(o + p, m, Encoding::Utf8))
+                    .map(|(p, m)| MatchRes::Bytes(o + p, None, m, Encoding::Utf8))
             }
 
             _ => None,
