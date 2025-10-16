@@ -2929,7 +2929,7 @@ impl MagicDb {
             ($rule: expr) => {{
                 $rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
 
-                if !magic.mimetype.is_none() {
+                if !magic.message.is_empty() {
                     magic.set_source($rule.source.as_deref());
                     return Ok(magic);
                 }
