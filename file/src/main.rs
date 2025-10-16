@@ -27,7 +27,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    // Scan paths and attempt at classifying files
     Scan(ScanOpt),
+    // Compile magic rules into binary format
     Compile(CompileOpt),
 }
 
