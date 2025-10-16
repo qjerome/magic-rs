@@ -61,7 +61,7 @@ where
             hot_head: vec![],
             hot_tail: vec![],
             warm: None,
-            cold: vec![0; 4096],
+            cold: vec![0; block_size as usize],
             loaded: vec![false; cache_cap as usize],
             block_size,
             warm_size: None,
@@ -111,7 +111,7 @@ where
 
     #[inline(always)]
     fn warm(&mut self) -> Result<&mut MmapMut, io::Error> {
-        if self.warm.is_none() {
+        if self.warm.is_none() && self.warm_size.is_some() {
             self.warm = Some(MmapMut::map_anon(
                 self.warm_size.unwrap_or_default() as usize
             )?);
@@ -162,27 +162,21 @@ where
 
         if range.start > self.pos_end || range_len == 0 {
             return Ok(EMPTY_RANGE);
-        }
-
-        if range.start < self.hot_head.len() as u64 && range.end <= self.hot_head.len() as u64 {
+        } else if range.start < self.hot_head.len() as u64
+            && range.end <= self.hot_head.len() as u64
+        {
             self.seek(SeekFrom::Start(range.end))?;
             return Ok(&self.hot_head[range.start as usize..range.end as usize]);
-        }
-
-        if range.start > (self.pos_end - self.hot_tail.len() as u64) {
+        } else if range.start > (self.pos_end - self.hot_tail.len() as u64) {
             let start_from_end = self.pos_end.saturating_sub(1).saturating_sub(range.start);
             self.seek(SeekFrom::Start(range.end))?;
             return Ok(&self.hot_tail
                 [start_from_end as usize..start_from_end.saturating_add(range_len) as usize]);
-        }
-
-        if range.end < self.warm_size.unwrap_or_default() {
+        } else if range.end < self.warm_size.unwrap_or_default() {
             self.range_warmup(range.clone())?;
             self.seek(SeekFrom::Start(range.end))?;
             return Ok(&self.warm()?[range.start as usize..range.end as usize]);
-        }
-
-        if range_len > self.cold.len() as u64 {
+        } else if range_len > self.cold.len() as u64 {
             self.cold.resize(range_len as usize, 0);
         }
 
