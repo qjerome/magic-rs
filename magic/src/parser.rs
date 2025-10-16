@@ -123,6 +123,11 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
     result
 }
 
+#[inline(always)]
+fn is_printable_ascii(c: u8) -> bool {
+    c.is_ascii() && (c.is_ascii_graphic() || c.is_ascii_whitespace())
+}
+
 pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
     let mut result = Vec::new();
     let mut chars = s.bytes().peekable();
@@ -174,7 +179,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                         }
 
                         if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
-                            binary = true;
+                            binary = !is_printable_ascii(hex);
                             result.push(hex);
                         } else {
                             result.push(c as u8); // Push the backslash if the hex sequence is invalid
@@ -194,9 +199,8 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                             }
                             break;
                         }
-                        //let octal_str: String = chars.by_ref().take(1).collect();
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
-                            binary = true;
+                            binary = !is_printable_ascii(octal);
                             result.push(octal);
                         } else {
                             result.push(c as u8); // Push the backslash if the octal sequence is invalid
