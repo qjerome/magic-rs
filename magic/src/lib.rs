@@ -701,6 +701,23 @@ impl SearchTest {
             // so we accelerate the search by finding potential matches
             i += memchr(*needle, &buf[i..])?;
 
+            // if we want a full word match
+            if self.str_mods.contains(StringMod::FullWordMatch) {
+                let prev_is_whitespace = buf
+                    .get(i.saturating_sub(1))
+                    .map(|c| c.is_ascii_whitespace())
+                    .unwrap_or_default();
+
+                // if it is not the first character
+                // and its previous character isn't
+                // a whitespace. It cannot be a
+                // fullword match
+                if i > 0 && !prev_is_whitespace {
+                    i += 1;
+                    continue;
+                }
+            }
+
             if let Some(npos) = self.n_pos {
                 if i > npos {
                     return None;
