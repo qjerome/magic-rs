@@ -180,7 +180,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 
     // we don't walk rules recursively
     let mut wo = fs_walk::WalkOptions::new();
-    wo.files().max_depth(0);
+    wo.files().max_depth(0).sort(true);
 
     let mut db = MagicDb::new();
 
