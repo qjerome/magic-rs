@@ -1,0 +1,63 @@
+
+#------------------------------------------------------------------------------
+# $File: rust,v 1.2 2022/11/18 15:58:15 christos Exp $
+# Magic for Rust and related languages programs
+#
+
+# Rust compiler metadata
+# From: Alexandre Iooss <erdnaxe@crans.org>
+# URL: https://github.com/rust-lang/rust/blob/1.64.0/compiler/rustc_metadata/src/rmeta/mod.rs
+0	string		rust\x00\x00\x00
+>12	string		\014rustc\x20		Rust compiler metadata
+!:ext	rmeta
+!:mime  application/x-rust-metadata
+>>7	byte		x			\b, version %d
+
+# Rust compiler metadata updated with new layout
+# From: Quentin Jérôme <quentin.jerome@circl.lu>
+# Reference: https://github.com/rust-lang/rust/blob/master/compiler/rustc_metadata/src/rmeta/mod.rs
+0	    string		rust\x00\x00\x00
+>0x11   string	    rustc		Rust compiler metadata
+# version number 
+>>0x7   byte        x           , version %d
+!:ext	rmeta
+!:mime  application/x-rust-metadata
+>>0x10	pstring	    x			\b, %s
+
+# Rust incremental compilation metadata
+# From: Alexandre Iooss <erdnaxe@crans.org>
+# URL: https://github.com/rust-lang/rust/blob/1.64.0/compiler/rustc_incremental/src/persist/file_format.rs
+0	string		RSIC
+>4	uleshort	=0			Rust incremental compilation metadata
+!:ext	bin
+>>6	pstring		x			\b, rustc %s
+
+# Rust source text identification
+# From: Quentin Jérôme <quentin.jerome@circl.lu>
+# we try to search for crate level attribute
+0	string		#![
+>&0 regex/1l  \\w+\\s?.*?\\]$
+>>0 use rust-src
+
+# we search for a use declaration at the top of the file
+0   string/f use
+>0 use rust-import
+
+# we search for a function definition in the 4096
+# first bytes of the file
+0   search/4096fs fn
+>&0 regex/1l fn\\s+[a-zA-Z0-9_]+\\(.*?\\).*?\\{$
+>>0 use rust-src
+
+# we search for a use statement in the 4096 first
+# bytes of the file
+0   search/4096fs use
+>&0 use rust-import
+
+0 name rust-import
+>0 regex/1l ^use\\s[a-zA-Z0-9_]+(::.*?(;|\\{)|;)$
+>>0 use rust-src
+
+0 name rust-src Rust source code
+!:ext  rs
+!:mime text/x-rust
