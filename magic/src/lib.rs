@@ -2209,11 +2209,11 @@ impl EntryNode {
             }
 
             if let Some(mimetype) = self.mimetype.as_ref() {
-                magic.insert_mimetype(Cow::Borrowed(mimetype));
+                magic.set_mime_type(Cow::Borrowed(mimetype));
             }
 
             if let Some(apple_ty) = self.apple.as_ref() {
-                magic.insert_apple_type(Cow::Borrowed(apple_ty));
+                magic.set_creator_code(Cow::Borrowed(apple_ty));
             }
 
             if !self.exts.is_empty() {
@@ -2447,8 +2447,8 @@ pub struct Magic<'m> {
     stream_kind: Option<StreamKind>,
     source: Option<Cow<'m, str>>,
     message: Vec<Cow<'m, str>>,
-    mimetype: Option<Cow<'m, str>>,
-    apple: Option<Cow<'m, str>>,
+    mime_type: Option<Cow<'m, str>>,
+    creator_code: Option<Cow<'m, str>>,
     strength: Option<u64>,
     exts: HashSet<Cow<'m, str>>,
     is_default: bool,
@@ -2470,8 +2470,8 @@ impl<'m> Magic<'m> {
         self.stream_kind = None;
         self.source = None;
         self.message.clear();
-        self.mimetype = None;
-        self.apple = None;
+        self.mime_type = None;
+        self.creator_code = None;
         self.strength = None;
         self.exts.clear();
         self.is_default = false;
@@ -2488,8 +2488,8 @@ impl<'m> Magic<'m> {
                 .map(Cow::into_owned)
                 .map(Cow::Owned)
                 .collect(),
-            mimetype: self.mimetype.map(|m| Cow::Owned(m.into_owned())),
-            apple: self.apple.map(|m| Cow::Owned(m.into_owned())),
+            mime_type: self.mime_type.map(|m| Cow::Owned(m.into_owned())),
+            creator_code: self.creator_code.map(|m| Cow::Owned(m.into_owned())),
             strength: self.strength,
             exts: self
                 .exts
@@ -2527,8 +2527,8 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
-    pub fn mimetype(&self) -> &str {
-        self.mimetype.as_deref().unwrap_or(match self.stream_kind {
+    pub fn mime_type(&self) -> &str {
+        self.mime_type.as_deref().unwrap_or(match self.stream_kind {
             Some(StreamKind::Text(_)) => DEFAULT_TEXT_MIMETYPE,
             Some(StreamKind::Binary) | None => DEFAULT_BIN_MIMETYPE,
         })
@@ -2543,18 +2543,18 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
-    fn insert_mimetype<'a: 'm>(&mut self, mime: Cow<'a, str>) {
-        if self.mimetype.is_none() {
+    fn set_mime_type<'a: 'm>(&mut self, mime: Cow<'a, str>) {
+        if self.mime_type.is_none() {
             debug!("insert mime: {:?}", mime);
-            self.mimetype = Some(mime)
+            self.mime_type = Some(mime)
         }
     }
 
     #[inline(always)]
-    fn insert_apple_type<'a: 'm>(&mut self, apple_ty: Cow<'a, str>) {
-        if self.apple.is_none() {
+    fn set_creator_code<'a: 'm>(&mut self, apple_ty: Cow<'a, str>) {
+        if self.creator_code.is_none() {
             debug!("insert apple type: {apple_ty:?}");
-            self.apple = Some(apple_ty)
+            self.creator_code = Some(apple_ty)
         }
     }
 
@@ -2581,8 +2581,8 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
-    pub fn apple(&self) -> Option<&Cow<'m, str>> {
-        self.apple.as_ref()
+    pub fn creator_code(&self) -> Option<&Cow<'m, str>> {
+        self.creator_code.as_ref()
     }
 
     #[inline(always)]
@@ -2731,10 +2731,10 @@ impl MagicDb {
 
         if is_ndjson {
             magic.push_message(Cow::Borrowed("New Line Delimited"));
-            magic.insert_mimetype(Cow::Borrowed("application/x-ndjson"));
+            magic.set_mime_type(Cow::Borrowed("application/x-ndjson"));
             magic.insert_extensions(["ndjson", "jsonl"].into_iter());
         } else {
-            magic.insert_mimetype(Cow::Borrowed("application/json"));
+            magic.set_mime_type(Cow::Borrowed("application/json"));
             magic.insert_extensions(["json"].into_iter());
         }
 
@@ -2788,7 +2788,7 @@ impl MagicDb {
             return Ok(false);
         }
 
-        magic.insert_mimetype(Cow::Borrowed("text/csv"));
+        magic.set_mime_type(Cow::Borrowed("text/csv"));
         magic.push_message(Cow::Borrowed("CSV"));
         magic.push_message(Cow::Borrowed(enc.as_magic_str()));
         magic.push_message(Cow::Borrowed("text"));
@@ -2830,7 +2830,7 @@ impl MagicDb {
             magic.push_message(Cow::Borrowed("tar archive"));
         }
 
-        magic.insert_mimetype(Cow::Borrowed("application/x-tar"));
+        magic.set_mime_type(Cow::Borrowed("application/x-tar"));
         magic.set_source(Some(HARDCODED_SOURCE));
         magic.update_strength(HARDCODED_MAGIC_STRENGTH);
         magic.insert_extensions(["tar"].into_iter());
@@ -2868,7 +2868,7 @@ impl MagicDb {
 
         if buf.len() == 0 {
             magic.push_message(Cow::Borrowed("empty"));
-            magic.insert_mimetype(Cow::Borrowed(DEFAULT_BIN_MIMETYPE));
+            magic.set_mime_type(Cow::Borrowed(DEFAULT_BIN_MIMETYPE));
             return Ok(());
         }
 

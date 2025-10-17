@@ -81,7 +81,7 @@ struct SerMagicResult<'m> {
     source: Option<Cow<'m, str>>,
     magic: String,
     mime_type: &'m str,
-    creator_type: Option<Cow<'m, str>>,
+    creator_code: Option<Cow<'m, str>>,
     strength: Option<u64>,
     exts: &'m HashSet<Cow<'m, str>>,
 }
@@ -98,8 +98,8 @@ impl<'m> SerMagicResult<'m> {
             path: p.map(|p| p.as_ref().to_path_buf()),
             source: m.source().cloned(),
             magic: m.message(),
-            mime_type: m.mimetype(),
-            creator_type: m.apple().cloned(),
+            mime_type: m.mime_type(),
+            creator_code: m.creator_code().cloned(),
             strength: m.strength(),
             exts: m.exts(),
         }
@@ -231,7 +231,7 @@ fn main() -> Result<(), anyhow::Error> {
                                     "file:{} source:{} strength:{strength} mime:{} magic:{}",
                                     f.to_string_lossy(),
                                     magic.source().unwrap_or(&Cow::Borrowed("unknown")),
-                                    magic.mimetype(),
+                                    magic.mime_type(),
                                     magic.message()
                                 )
                             }
@@ -261,7 +261,7 @@ fn main() -> Result<(), anyhow::Error> {
                                 f.to_string_lossy(),
                                 magic.source().unwrap_or(&Cow::Borrowed("none")),
                                 magic.strength().unwrap_or_default(),
-                                magic.mimetype(),
+                                magic.mime_type(),
                                 magic.message()
                             )
                         } else {
