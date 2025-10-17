@@ -44,7 +44,8 @@ pub const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
 
-pub const OCTET_STREAM_MIMETYPE: &str = "application/octet-stream";
+pub const DEFAULT_BIN_MIMETYPE: &str = "application/octet-stream";
+pub const DEFAULT_TEXT_MIMETYPE: &str = "text/plain";
 
 pub(crate) const TIMESTAMP_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
 
@@ -2443,6 +2444,7 @@ impl MatchState {
 
 #[derive(Debug, Default)]
 pub struct Magic<'m> {
+    stream_kind: Option<StreamKind>,
     source: Option<Cow<'m, str>>,
     message: Vec<Cow<'m, str>>,
     mimetype: Option<Cow<'m, str>>,
@@ -2459,7 +2461,13 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
+    fn set_stream_kind(&mut self, stream_kind: StreamKind) {
+        self.stream_kind = Some(stream_kind)
+    }
+
+    #[inline(always)]
     fn reset(&mut self) {
+        self.stream_kind = None;
         self.source = None;
         self.message.clear();
         self.mimetype = None;
@@ -2472,6 +2480,7 @@ impl<'m> Magic<'m> {
     #[inline]
     pub fn into_owned<'owned>(self) -> Magic<'owned> {
         Magic {
+            stream_kind: self.stream_kind,
             source: self.source.map(|s| Cow::Owned(s.into_owned())),
             message: self
                 .message
@@ -2519,7 +2528,10 @@ impl<'m> Magic<'m> {
 
     #[inline(always)]
     pub fn mimetype(&self) -> &str {
-        self.mimetype.as_deref().unwrap_or(OCTET_STREAM_MIMETYPE)
+        self.mimetype.as_deref().unwrap_or(match self.stream_kind {
+            Some(StreamKind::Text(_)) => DEFAULT_TEXT_MIMETYPE,
+            Some(StreamKind::Binary) | None => DEFAULT_BIN_MIMETYPE,
+        })
     }
 
     #[inline(always)]
@@ -2851,23 +2863,22 @@ impl MagicDb {
         let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
 
         magic.set_source(Some(HARDCODED_SOURCE));
+        magic.set_stream_kind(stream_kind);
         magic.is_default = true;
 
         if buf.len() == 0 {
             magic.push_message(Cow::Borrowed("empty"));
-            magic.insert_mimetype(Cow::Borrowed("inode/x-empty"));
+            magic.insert_mimetype(Cow::Borrowed(DEFAULT_BIN_MIMETYPE));
             return Ok(());
         }
 
         match stream_kind {
             StreamKind::Binary => {
                 magic.push_message(Cow::Borrowed("data"));
-                magic.insert_mimetype(Cow::Borrowed(OCTET_STREAM_MIMETYPE));
             }
             StreamKind::Text(e) => {
                 magic.push_message(Cow::Borrowed(e.as_magic_str()));
                 magic.push_message(Cow::Borrowed("text"));
-                magic.insert_mimetype(Cow::Borrowed("text/plain"));
             }
         }
 
@@ -2936,6 +2947,7 @@ impl MagicDb {
                 $rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
 
                 if !magic.message.is_empty() {
+                    magic.set_stream_kind(stream_kind);
                     magic.set_source($rule.source.as_deref());
                     return Ok(magic);
                 }
@@ -2999,6 +3011,7 @@ impl MagicDb {
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
+                magic.set_stream_kind(stream_kind);
                 magic.set_source(rule.source.as_deref());
                 out.push((magic.strength.unwrap_or_default(), magic));
                 magic = Magic::default();
