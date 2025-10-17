@@ -28,7 +28,7 @@ use tracing::{Level, debug, enabled, error, trace};
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},
     parser::{FileMagicParser, Rule},
-    utils::decode_id3,
+    utils::{decode_id3, find_json_boundaries},
 };
 
 mod numeric;
@@ -2691,39 +2691,49 @@ impl MagicDb {
             return Ok(false);
         }
 
-        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
-        let first = buf.first();
+        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?.trim_ascii();
 
-        // maybe this is a json document
-        if first == Some(&b'[') || first == Some(&b'{') {
-            trace!("try decoding json");
-            let ok = serde_json::from_slice::<serde_json::Value>(buf).is_ok();
+        let Some((start, end)) = find_json_boundaries(buf) else {
+            return Ok(false);
+        };
 
-            if !ok {
-                return Ok(false);
-            }
+        let mut is_ndjson = false;
 
-            let has_nl = if let Some(i) = memchr(b'\n', buf) {
-                i != buf.len().saturating_sub(1)
-            } else {
-                false
-            };
-
-            if has_nl {
-                magic.push_message(Cow::Borrowed("New Line Delimited"));
-                magic.insert_mimetype(Cow::Borrowed("application/x-ndjson"));
-                magic.insert_extensions(["ndjson", "jsonl"].into_iter());
-            } else {
-                magic.insert_mimetype(Cow::Borrowed("application/json"));
-                magic.insert_extensions(["json"].into_iter());
-            }
-            magic.push_message(Cow::Borrowed("JSON text data"));
-            magic.set_source(Some(HARDCODED_SOURCE));
-            magic.update_strength(HARDCODED_MAGIC_STRENGTH);
-            return Ok(ok);
+        trace!("maybe a json document");
+        let ok = serde_json::from_slice::<serde_json::Value>(&buf[start..=end]).is_ok();
+        if !ok {
+            return Ok(false);
         }
 
-        Ok(false)
+        // we are sure it is json now we must look if we are ndjson
+        if end + 1 < buf.len() {
+            // after first json
+            let buf = &buf[end + 1..];
+            if let Some((second_start, second_end)) = find_json_boundaries(buf) {
+                // there is a new line between the two json docs
+                if memchr(b'\n', &buf[..second_start]).is_some() {
+                    trace!("might be ndjson");
+                    is_ndjson = serde_json::from_slice::<serde_json::Value>(
+                        &buf[second_start..=second_end],
+                    )
+                    .is_ok();
+                }
+            }
+        }
+
+        if is_ndjson {
+            magic.push_message(Cow::Borrowed("New Line Delimited"));
+            magic.insert_mimetype(Cow::Borrowed("application/x-ndjson"));
+            magic.insert_extensions(["ndjson", "jsonl"].into_iter());
+        } else {
+            magic.insert_mimetype(Cow::Borrowed("application/json"));
+            magic.insert_extensions(["json"].into_iter());
+        }
+
+        magic.push_message(Cow::Borrowed("JSON text data"));
+        magic.set_source(Some(HARDCODED_SOURCE));
+        magic.update_strength(HARDCODED_MAGIC_STRENGTH);
+        return Ok(true);
     }
 
     #[inline(always)]
