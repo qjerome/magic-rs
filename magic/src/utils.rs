@@ -1,4 +1,5 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use memchr::memchr2;
 
 use crate::TIMESTAMP_FORMAT;
 
@@ -111,6 +112,41 @@ pub(crate) fn windows_filetime_to_string(timestamp: i64) -> String {
         .unwrap_or("invalid timestamp".into())
 }
 
+#[inline(always)]
+pub(crate) fn find_json_boundaries<S: AsRef<[u8]>>(buf: S) -> Option<(usize, usize)> {
+    let buf = buf.as_ref();
+    let mut cnt = 0usize;
+    let mut in_string = false;
+    let mut prev_char = 0u8;
+
+    let Some(i_open) = memchr2(b'[', b'{', buf) else {
+        return None;
+    };
+
+    let (opening, closing) = if buf[i_open] == b'[' {
+        (b'[', b']')
+    } else {
+        (b'{', b'}')
+    };
+
+    for (i, c) in buf[i_open..].iter().enumerate() {
+        if c == &b'"' && prev_char != b'\\' {
+            in_string ^= true
+        }
+        if c == &opening && !in_string {
+            cnt += 1
+        } else if c == &closing && !in_string {
+            cnt = cnt.saturating_sub(1)
+        }
+        if cnt == 0 {
+            return Some((i_open, i + i_open));
+        }
+        prev_char = *c;
+    }
+
+    return None;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +200,54 @@ mod tests {
         assert_eq!(decode_id3(0x00007F7F), 16_383);
         assert_eq!(decode_id3(0x0000017E), 254);
         assert_eq!(decode_id3(0x7F7F7F7F), 268_435_455);
+    }
+
+    #[test]
+    fn test_find_json_boundaries() {
+        // Valid JSON objects
+        assert_eq!(find_json_boundaries(b"{\"key\": \"value\"}"), Some((0, 15)));
+        assert_eq!(find_json_boundaries(b"{\"a\": {\"b\": []}}"), Some((0, 15)));
+        assert_eq!(find_json_boundaries(b"{\"a\": [1, 2, 3]}"), Some((0, 15)));
+
+        // Valid JSON arrays
+        assert_eq!(find_json_boundaries(b"[1, 2, 3]"), Some((0, 8)));
+        assert_eq!(
+            find_json_boundaries(b"[{\"a\": 1}, {\"b\": 2}]"),
+            Some((0, 19))
+        );
+
+        // Nested structures
+        assert_eq!(
+            find_json_boundaries(b"{\"a\": {\"b\": {\"c\": []}}}"),
+            Some((0, 22))
+        );
+        assert_eq!(find_json_boundaries(b"[[[1, 2], [3, 4]]]"), Some((0, 17)));
+
+        // Strings with escaped quotes
+        assert_eq!(
+            find_json_boundaries(b"{\"key\": \"va\\\"lue\"}"),
+            Some((0, 17))
+        );
+        assert_eq!(
+            find_json_boundaries(b"[{\"a\": \"va\\\"lue\"}]"),
+            Some((0, 17))
+        );
+
+        // No JSON
+        assert_eq!(find_json_boundaries(b"no json here"), None);
+
+        // Incomplete JSON
+        assert_eq!(find_json_boundaries(b"{\"key\": \"value\""), None);
+        assert_eq!(find_json_boundaries(b"[1, 2, 3"), None);
+
+        // Multiple JSON documents
+        assert_eq!(find_json_boundaries(b"{\"a\": 1}{\"b\": 2}"), Some((0, 7)));
+        assert_eq!(find_json_boundaries(b"[1, 2][3, 4]"), Some((0, 5)));
+
+        // Edge cases
+        assert_eq!(find_json_boundaries(b"{}"), Some((0, 1)));
+        assert_eq!(find_json_boundaries(b"[]"), Some((0, 1)));
+        assert_eq!(find_json_boundaries(b""), None);
+        assert_eq!(find_json_boundaries(b"   {\"a\": 1}   "), Some((3, 10)));
     }
 }
