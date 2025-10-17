@@ -2344,10 +2344,6 @@ impl MagicRule {
         self.entries.entry.test.is_text()
             && self.entries.children.iter().all(|e| e.entry.test.is_text())
     }
-
-    fn is_binary(&self) -> bool {
-        !self.is_text()
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
