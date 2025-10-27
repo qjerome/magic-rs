@@ -47,6 +47,19 @@ impl LazyCache<File> {
     }
 }
 
+impl<R> io::Read for LazyCache<R>
+where
+    R: Read + Seek,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let r = self.inner_read_count(buf.len() as u64)?;
+        for (i, b) in r.iter().enumerate() {
+            buf[i] = *b;
+        }
+        Ok(r.len())
+    }
+}
+
 impl<R> LazyCache<R>
 where
     R: Read + Seek,
@@ -191,11 +204,16 @@ where
         self.get_range_u64(range)
     }
 
-    /// Read at current reader position and return byte slice
-    pub fn read(&mut self, count: u64) -> Result<&[u8], io::Error> {
+    #[inline(always)]
+    fn inner_read_count(&mut self, count: u64) -> Result<&[u8], io::Error> {
         let pos = self.stream_pos;
         let range = pos..(pos.saturating_add(count));
         self.get_range_u64(range)
+    }
+
+    /// Read at current reader position and return byte slice
+    pub fn read_count(&mut self, count: u64) -> Result<&[u8], io::Error> {
+        self.inner_read_count(count)
     }
 
     pub fn read_exact_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
@@ -208,8 +226,8 @@ where
         }
     }
 
-    pub fn read_exact(&mut self, count: u64) -> Result<&[u8], io::Error> {
-        let b = self.read(count)?;
+    pub fn read_exact_count(&mut self, count: u64) -> Result<&[u8], io::Error> {
+        let b = self.read_count(count)?;
         debug_assert!(b.len() <= count as usize);
         if b.len() as u64 != count {
             Err(io::ErrorKind::UnexpectedEof.into())
@@ -219,7 +237,7 @@ where
     }
 
     pub fn read_exact_into(&mut self, buf: &mut [u8]) -> Result<(), io::Error> {
-        let read = self.read_exact(buf.len() as u64)?;
+        let read = self.read_exact_count(buf.len() as u64)?;
         // this function call should not panic as read_exact
         // guarantees we read exactly the length of buf
         buf.copy_from_slice(read);
@@ -253,7 +271,7 @@ where
         let mut end = 0;
 
         'outer: while limit - end > 0 {
-            let buf = self.read(self.block_size)?;
+            let buf = self.read_count(self.block_size)?;
 
             for b in buf {
                 if limit - end == 0 {
@@ -303,7 +321,7 @@ where
         };
 
         'outer: while limit.saturating_sub(end) > 0 {
-            let buf = self.read(even_bs)?;
+            let buf = self.read_count(even_bs)?;
 
             let even = buf
                 .iter()
@@ -481,25 +499,25 @@ mod tests {
     #[test]
     fn test_read_method() {
         let mut cache = lazy_cache!(b"hello world");
-        let _ = cache.read(6).unwrap();
-        let data = cache.read(5).unwrap();
+        let _ = cache.read_count(6).unwrap();
+        let data = cache.read_count(5).unwrap();
         assert_eq!(data, b"world");
         // We reached the end so next read should bring an empty slice
-        assert!(cache.read(1).unwrap().is_empty());
+        assert!(cache.read_count(1).unwrap().is_empty());
     }
 
     #[test]
     fn test_read_empty() {
         let mut cache = lazy_cache!(b"hello world");
-        let data = cache.read(0).unwrap();
+        let data = cache.read_count(0).unwrap();
         assert!(data.is_empty());
     }
 
     #[test]
     fn test_read_beyond_end() {
         let mut cache = lazy_cache!(b"hello world");
-        let _ = cache.read(11).unwrap();
-        let data = cache.read(5).unwrap();
+        let _ = cache.read_count(11).unwrap();
+        let data = cache.read_count(5).unwrap();
         assert!(data.is_empty());
     }
 
@@ -522,17 +540,17 @@ mod tests {
     #[test]
     fn test_read_exact() {
         let mut cache = lazy_cache!(b"hello world");
-        let data = cache.read_exact(5).unwrap();
+        let data = cache.read_exact_count(5).unwrap();
         assert_eq!(data, b"hello");
-        assert_eq!(cache.read_exact(6).unwrap(), b" world");
-        assert!(cache.read_exact(0).is_ok());
-        assert!(cache.read_exact(1).is_err());
+        assert_eq!(cache.read_exact_count(6).unwrap(), b" world");
+        assert!(cache.read_exact_count(0).is_ok());
+        assert!(cache.read_exact_count(1).is_err());
     }
 
     #[test]
     fn test_read_exact_error() {
         let mut cache = lazy_cache!(b"hello world");
-        let result = cache.read_exact(20);
+        let result = cache.read_exact_count(20);
         assert!(result.is_err());
     }
 
@@ -541,7 +559,7 @@ mod tests {
         let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b' ', 10).unwrap();
         assert_eq!(data, b"hello ");
-        assert_eq!(cache.read_exact(5).unwrap(), b"world");
+        assert_eq!(cache.read_exact_count(5).unwrap(), b"world");
     }
 
     #[test]
@@ -549,7 +567,7 @@ mod tests {
         let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b'\n', 11).unwrap();
         assert_eq!(data, b"hello world");
-        assert!(cache.read(1).unwrap().is_empty());
+        assert!(cache.read_count(1).unwrap().is_empty());
     }
 
     #[test]
@@ -557,7 +575,7 @@ mod tests {
         let mut cache = lazy_cache!(b"hello world");
         let data = cache.read_until_or_limit(b'\n', 42).unwrap();
         assert_eq!(data, b"hello world");
-        assert!(cache.read(1).unwrap().is_empty());
+        assert!(cache.read_count(1).unwrap().is_empty());
     }
 
     #[test]

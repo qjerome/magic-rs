@@ -60,7 +60,7 @@ macro_rules! debug_panic {
 macro_rules! read {
     ($r: expr, $ty: ty) => {{
         let mut a = [0u8; std::mem::size_of::<$ty>()];
-        $r.read_exact_into(&mut a)?;
+        $r.read_exact(&mut a)?;
         a
     }};
 }
@@ -229,11 +229,7 @@ impl Message {
 
 impl ScalarDataType {
     #[inline(always)]
-    fn read<R: Read + Seek>(
-        &self,
-        from: &mut LazyCache<R>,
-        switch_endianness: bool,
-    ) -> Result<Scalar, Error> {
+    fn read<R: Read + Seek>(&self, from: &mut R, switch_endianness: bool) -> Result<Scalar, Error> {
         macro_rules! _read_le {
             ($ty: ty) => {{
                 if switch_endianness {
@@ -319,11 +315,7 @@ impl ScalarDataType {
 
 impl FloatDataType {
     #[inline(always)]
-    fn read<R: Read + Seek>(
-        &self,
-        from: &mut LazyCache<R>,
-        switch_endianness: bool,
-    ) -> Result<Float, Error> {
+    fn read<R: Read + Seek>(&self, from: &mut R, switch_endianness: bool) -> Result<Float, Error> {
         macro_rules! _read_le {
             ($ty: ty) => {{
                 if switch_endianness {
@@ -962,7 +954,7 @@ impl PStringTest {
             }
         }
 
-        let read = haystack.read_exact(len as u64)?;
+        let read = haystack.read_exact_count(len as u64)?;
 
         Ok(Some(read))
     }
@@ -1020,16 +1012,16 @@ impl Test {
                     TestValue::Value(str) => {
                         let buf = if let Some(length) = t.length {
                             // if there is a length specified
-                            let read = haystack.read_exact(length as u64)?;
+                            let read = haystack.read_exact_count(length as u64)?;
                             read
                         } else {
                             // no length specified we read until end of string
                             let read = match t.cmp_op {
                                 CmpOp::Eq | CmpOp::Neq => {
                                     if !t.has_length_mod() {
-                                        haystack.read_exact(str.len() as u64)?
+                                        haystack.read_exact_count(str.len() as u64)?
                                     } else {
-                                        haystack.read(FILE_BYTES_MAX as u64)?
+                                        haystack.read_count(FILE_BYTES_MAX as u64)?
                                     }
                                 }
                                 CmpOp::Lt | CmpOp::Gt => {
@@ -1071,7 +1063,7 @@ impl Test {
             Self::String16(t) => {
                 match t.test_val.as_ref() {
                     TestValue::Value(str16) => {
-                        let read = haystack.read_exact((str16.len() * 2) as u64)?;
+                        let read = haystack.read_exact_count((str16.len() * 2) as u64)?;
 
                         Ok(Some(ReadValue::Bytes(test_value_offset, read)))
                     }
@@ -1100,7 +1092,7 @@ impl Test {
             }
 
             Self::Search(_) => {
-                let buf = haystack.read(FILE_BYTES_MAX as u64)?;
+                let buf = haystack.read_count(FILE_BYTES_MAX as u64)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
             }
 
@@ -1119,7 +1111,7 @@ impl Test {
                     }
                 };
 
-                let read = haystack.read(length as u64)?;
+                let read = haystack.read_count(length as u64)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, read)))
             }
 
