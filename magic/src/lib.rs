@@ -813,10 +813,10 @@ impl DynDisplay for MatchRes<'_> {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
             Self::Bytes(_, _, v, enc) => match enc {
-                Encoding::Utf8 => Ok(String::from_utf8_lossy(v).to_string()),
+                Encoding::Utf8 => String::from_utf8_lossy(v).to_string().dyn_fmt(f),
                 Encoding::Utf16(enc) => {
                     let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
-                    Ok(String::from_utf16_lossy(&utf16))
+                    String::from_utf16_lossy(&utf16).dyn_fmt(f)
                 }
             },
         }
