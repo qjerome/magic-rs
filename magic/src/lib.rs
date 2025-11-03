@@ -2995,7 +2995,7 @@ impl MagicDb {
 
         if Self::try_hard_magic(haystack, stream_kind, &mut magic)? {
             out.push((magic.strength.unwrap_or_default(), magic));
-            return Ok(out);
+            magic = Magic::default();
         }
 
         for (_, rule) in self.rules.iter() {
