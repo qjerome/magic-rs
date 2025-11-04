@@ -11,6 +11,7 @@ use flagset::FlagSet;
 use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
 use regex::bytes;
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
@@ -615,7 +616,7 @@ impl Offset {
 }
 
 impl Use {
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         assert_eq!(pair.as_rule(), Rule::r#use);
         let (line, _) = pair.line_col();
         let mut pairs = pair.into_inner();
@@ -658,16 +659,21 @@ impl Use {
             "wrong parsing rule"
         );
 
-        let message = pairs.next().map(|m| Message::from_pair(m));
+        let mut message = None;
+        if let Some(msg_pair) = pairs.next() {
+            if !msg_pair.as_str().is_empty() {
+                message = Some(Message::from_pair(msg_pair)?);
+            }
+        };
 
-        Self {
+        Ok(Self {
             line,
             depth,
             start_offset: offset,
             rule_name: rule_name_token.as_str().to_string(),
             switch_endianness: endianness_switch,
             message,
-        }
+        })
     }
 }
 
@@ -1171,6 +1177,42 @@ impl Test {
 }
 
 impl Message {
+    const PRINTF_CONVERSION_SPECIFIERS: &[char] = &[
+        'd', 'i', 'u', 'o', 'x', 'X', 'f', 'F', 'e', 'E', 'g', 'G', 'a', 'A', 'c', 's', 'p',
+    ];
+
+    #[inline]
+    fn c_format_to_rust(full_specifier: &str) -> String {
+        let chars: Vec<char> = full_specifier.chars().collect();
+
+        let conversion_specifier: String = chars
+            .last()
+            .map(|c| match c {
+                'd' | 'i' | 'u' | 'c' | 'f' | 's' => "".into(),
+                'x' | 'X' | 'o' | 'e' | 'E' | 'p' => c.clone().into(),
+                _ => {
+                    warn!("default rust format for printf specifier: {full_specifier}");
+                    "".into()
+                }
+            })
+            .unwrap_or_default();
+
+        let mod_specifier: String = {
+            let s: String = chars
+                .get(..chars.len().saturating_sub(1))
+                .map(|c| c.iter().collect())
+                .unwrap_or_default();
+            s.replace("ll", "").replace("-", "<")
+        };
+
+        let rust_spec = format!("{mod_specifier}{conversion_specifier}");
+        if rust_spec.is_empty() {
+            "{}".into()
+        } else {
+            format!("{{:{rust_spec}}}")
+        }
+    }
+
     fn convert_printf_to_rust_format(c_format: &str) -> (String, Option<String>) {
         let mut rust_format = String::new();
         let mut chars = c_format.chars().peekable();
@@ -1179,46 +1221,25 @@ impl Message {
         while let Some(c) = chars.next() {
             if c == '%' {
                 // Handle format specifier
-                let mut specifier = String::new();
-                let mut hash_flag = false;
-
-                // Check for flags like #
-                if let Some(&'#') = chars.peek() {
-                    chars.next();
-                    hash_flag = true;
-                }
+                let mut full_specifier = String::new();
 
                 // Read the rest of the specifier
                 while let Some(&next_char) = chars.peek() {
-                    if next_char.is_alphabetic() {
-                        specifier.push(chars.next().unwrap());
+                    if Self::PRINTF_CONVERSION_SPECIFIERS.contains(&next_char) {
+                        full_specifier.push(chars.next().unwrap());
                         break;
                     } else {
-                        specifier.push(chars.next().unwrap());
+                        full_specifier.push(chars.next().unwrap());
                     }
                 }
 
                 // Convert C format specifier to Rust format specifier
-                let rust_specifier = match specifier.as_str() {
-                    "d" | "i" => "{}",
-                    "x" => {
-                        if hash_flag {
-                            "0x{:x}"
-                        } else {
-                            "{:x}"
-                        }
-                    }
-                    "f" => "{}",
-                    "s" => "{}",
-                    "o" => "{:o}",
-                    // Add more C format specifier conversions here if needed
-                    _ => "{}", // Default case
-                };
+                let rust_specifier: String = Self::c_format_to_rust(&full_specifier);
 
-                printf_spec = Some(specifier);
+                printf_spec = Some(full_specifier);
 
                 // Append the converted specifier
-                rust_format.push_str(rust_specifier);
+                rust_format.push_str(&rust_specifier);
             } else {
                 rust_format.push(c);
             }
@@ -1227,24 +1248,23 @@ impl Message {
         (rust_format, printf_spec)
     }
 
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         assert_eq!(pair.as_rule(), Rule::message);
         Self::from_str(pair.as_str())
     }
 
     #[inline]
-    fn from_str<S: AsRef<str>>(s: S) -> Message {
+    fn from_str<S: AsRef<str>>(s: S) -> Result<Message, Error> {
         let (s, printf_spec) = Self::convert_printf_to_rust_format(s.as_ref());
 
-        // FIXME: remove unwrap
-        let fs = FormatString::from_string(s.to_string()).unwrap();
+        let fs = FormatString::from_string(s)?;
         if fs.contains_format() {
-            Message::Format {
+            Ok(Message::Format {
                 printf_spec: printf_spec.unwrap_or_default(),
                 fs,
-            }
+            })
         } else {
-            Message::String(fs.into_string())
+            Ok(Message::String(fs.into_string()))
         }
     }
 }
@@ -1278,15 +1298,11 @@ impl Match {
         let test = Test::from_pair(test_pair.into_inner().next().unwrap())?;
 
         // parsing the message
-        let message = match pairs.next() {
-            Some(msg_pair) => {
-                if !msg_pair.as_str().is_empty() {
-                    Some(Message::from_pair(msg_pair))
-                } else {
-                    None
-                }
+        let mut message = None;
+        if let Some(msg_pair) = pairs.next() {
+            if !msg_pair.as_str().is_empty() {
+                message = Some(Message::from_pair(msg_pair)?);
             }
-            None => None,
         };
 
         let test_strength = test.strength();
@@ -1415,7 +1431,9 @@ impl MagicRule {
 
                     let mut message = None;
                     if let Some(msg) = pairs.next() {
-                        message = Some(Message::from_pair(msg))
+                        if !msg.as_str().is_empty() {
+                            message = Some(Message::from_pair(msg)?)
+                        }
                     }
 
                     items.push(Entry::Match(
@@ -1432,7 +1450,7 @@ impl MagicRule {
                     items.push(Entry::Match(pair.as_span(), Match::from_pair(pair)?));
                 }
                 Rule::r#use => {
-                    items.push(Entry::Match(pair.as_span(), Use::from_pair(pair).into()));
+                    items.push(Entry::Match(pair.as_span(), Use::from_pair(pair)?.into()));
                 }
                 Rule::flag => items.push(Entry::Flag(pair.as_span(), Flag::from_pair(pair)?)),
                 Rule::EOI => {}
