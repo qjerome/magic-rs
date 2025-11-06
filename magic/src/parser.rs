@@ -137,11 +137,6 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
     // actually a valid ASCII character.
     let mut binary = false;
     while let Some(c) = chars.next() {
-        // string termination
-        if c == b'\0' {
-            return (binary, result);
-        }
-
         if c == b'\\' {
             if let Some(next_char) = chars.peek() {
                 match next_char {
@@ -180,6 +175,11 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                         }
 
                         if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
+                            // we reached end of string
+                            if chars.peek().is_none() && !binary && hex == 0 {
+                                continue;
+                            }
+
                             binary = !is_printable_ascii(hex);
                             result.push(hex);
                         } else {
@@ -201,6 +201,11 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                             break;
                         }
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
+                            // we reached end of string
+                            if chars.peek().is_none() && !binary && octal == 0 {
+                                continue;
+                            }
+
                             binary = !is_printable_ascii(octal);
                             result.push(octal);
                         } else {
