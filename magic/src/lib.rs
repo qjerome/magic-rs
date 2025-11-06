@@ -1425,20 +1425,52 @@ impl Test {
             Test::PString(t) => out += t.test_value_len().saturating_mul(MULT),
 
             Test::Search(s) => {
-                // NOTE: this is how it is implemented in libmagic
-                // but it seems odd to have strength decreasing as
-                // search str len increase, as smaller search tend
-                // to be less reliable.
-                out += s.str.len() * max(MULT.checked_div(s.str.len()).unwrap_or_default(), 1)
+                // NOTE: this implementation deviates from what is in
+                // C libmagic. The purpose of this implementation is to
+                // minimize the difference between similar tests,
+                // implemented differently (ex: string test VS very localized search test).
+                let n_pos = s.n_pos.unwrap_or(FILE_BYTES_MAX);
+
+                match n_pos {
+                    // a search on one line should be equivalent to a string match
+                    0..=80 => out += s.str.len().saturating_mul(MULT),
+                    // search on the first 3 lines gets a little penalty
+                    81..=240 => out += s.str.len() * s.str.len().clamp(0, MULT - 2),
+                    // a search on more than 3 lines isn't considered very accurate
+                    _ => out += s.str.len(),
+                }
             }
 
             Test::Regex(r) => {
-                let v = r.non_magic_len;
-                // NOTE: this is how it is implemented in libmagic
-                // but it seems odd to have strength decreasing as
-                // regex str len increase, as smaller regex tend
-                // to be less reliable.
-                out += v * max(MULT.checked_div(v).unwrap_or_default(), 1);
+                // NOTE: this implementation deviates from what is in
+                // C libmagic. The purpose of this implementation is to
+                // minimize the difference between similar tests,
+                // implemented differently (ex: string test VS very localized regex test).
+
+                // we divide length by the number of capture group
+                // which gives us a value close to he average string
+                // length match in the regex.
+                let v = r.non_magic_len / r.re.captures_len();
+
+                let len = r
+                    .length
+                    .map(|l| {
+                        if r.mods.contains(ReMod::LineLimit) {
+                            l * 80
+                        } else {
+                            l
+                        }
+                    })
+                    .unwrap_or(FILE_BYTES_MAX);
+
+                match len {
+                    // a search on one line should be equivalent to a string match
+                    0..=80 => out += v.saturating_mul(MULT),
+                    // search on the first 3 lines gets a little penalty
+                    81..=240 => out += v * v.clamp(0, MULT - 2),
+                    // a search on more than 3 lines isn't considered very accurate
+                    _ => out += v,
+                }
             }
 
             Test::String16(t) => {
