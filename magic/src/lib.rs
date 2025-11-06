@@ -2405,6 +2405,7 @@ struct ContinuationLevel(u8);
 enum TextEncoding {
     Ascii,
     Utf8,
+    Unknown,
 }
 
 impl TextEncoding {
@@ -2412,6 +2413,7 @@ impl TextEncoding {
         match self {
             TextEncoding::Ascii => "ASCII",
             TextEncoding::Utf8 => "UTF-8",
+            TextEncoding::Unknown => "Unknown",
         }
     }
 }
@@ -2673,9 +2675,40 @@ pub struct MagicDb {
 }
 
 #[inline(always)]
+/// Returns `true` if the byte stream is likely text.
+fn is_likely_text(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let mut printable = 0f64;
+    let mut high_bytes = 0f64; // Bytes > 0x7F (non-ASCII)
+
+    for byte in bytes.iter() {
+        match byte {
+            0x00 => return false,
+            0x09 | 0x0A | 0x0D => printable += 1.0, // Whitespace
+            0x20..=0x7E => printable += 1.0,        // Printable ASCII
+            _ => high_bytes += 1.0,
+        }
+    }
+
+    let total = bytes.len() as f64;
+    let printable_ratio = printable / total;
+    let high_bytes_ratio = high_bytes / total;
+
+    // Heuristic thresholds (adjust as needed):
+    printable_ratio > 0.85 && high_bytes_ratio < 0.20
+}
+
+#[inline(always)]
 fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
     let Ok(s) = str::from_utf8(stream.as_ref()) else {
-        return StreamKind::Binary;
+        if is_likely_text(stream.as_ref()) {
+            return StreamKind::Text(TextEncoding::Unknown);
+        } else {
+            return StreamKind::Binary;
+        }
     };
 
     let count = s.chars().count();
