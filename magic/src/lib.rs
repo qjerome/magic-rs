@@ -399,6 +399,13 @@ enum CmpOp {
     Not, // ~ operator
 }
 
+impl CmpOp {
+    #[inline(always)]
+    fn is_neq(&self) -> bool {
+        matches!(self, Self::Neq)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ScalarTransform {
     op: Op,
