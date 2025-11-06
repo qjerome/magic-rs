@@ -767,81 +767,122 @@ impl PStringTest {
 }
 
 impl SearchTest {
-    fn from_pair_with_slice(pair: Pair<'_, Rule>, str: &[u8], binary: bool) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Self {
         let mut length = None;
         let mut str_mods: FlagSet<StringMod> = FlagSet::empty();
         let mut re_mods: FlagSet<ReMod> = FlagSet::empty();
-        for p in pair.into_inner() {
-            match p.as_rule() {
-                Rule::pos_number => length = Some(parse_pos_number(p) as usize),
-                Rule::search_mod => {
-                    for m in p.as_str().chars() {
-                        match m {
-                            'b' => str_mods |= StringMod::ForceBin,
-                            'C' => str_mods |= StringMod::UpperInsensitive,
-                            'c' => str_mods |= StringMod::LowerInsensitive,
-                            'f' => str_mods |= StringMod::FullWordMatch,
-                            'T' => str_mods |= StringMod::Trim,
-                            't' => str_mods |= StringMod::ForceText,
-                            'W' => str_mods |= StringMod::CompactWhitespace,
-                            'w' => str_mods |= StringMod::OptBlank,
-                            's' => re_mods |= ReMod::StartOffsetUpdate,
-                            _ => {}
+        let mut cmp_op = CmpOp::Eq;
+        let mut value = None;
+        let mut binary = false;
+
+        for pair in pair.into_inner() {
+            match pair.as_rule() {
+                Rule::search => {
+                    for p in pair.into_inner() {
+                        match p.as_rule() {
+                            Rule::pos_number => length = Some(parse_pos_number(p) as usize),
+                            Rule::search_mod => {
+                                for m in p.as_str().chars() {
+                                    match m {
+                                        'b' => str_mods |= StringMod::ForceBin,
+                                        'C' => str_mods |= StringMod::UpperInsensitive,
+                                        'c' => str_mods |= StringMod::LowerInsensitive,
+                                        'f' => str_mods |= StringMod::FullWordMatch,
+                                        'T' => str_mods |= StringMod::Trim,
+                                        't' => str_mods |= StringMod::ForceText,
+                                        'W' => str_mods |= StringMod::CompactWhitespace,
+                                        'w' => str_mods |= StringMod::OptBlank,
+                                        's' => re_mods |= ReMod::StartOffsetUpdate,
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            // parser should guarantee this branch is never reached
+                            _ => unimplemented!(),
                         }
                     }
                 }
-                // parser should guarantee this branch is never reached
+                Rule::op_neq => cmp_op = CmpOp::Neq,
+                Rule::op_eq => cmp_op = CmpOp::Eq,
+                Rule::string_value => {
+                    let (bin, v) = unescape_string_to_vec(&pair.as_str());
+                    binary = bin;
+                    value = Some(v.to_vec());
+                }
                 _ => unimplemented!(),
             }
         }
+
         Self {
-            str: str.to_vec(),
+            // guarantee not to panic by parser
+            str: value.unwrap(),
             n_pos: length,
             str_mods,
             re_mods,
             binary,
+            cmp_op,
         }
     }
 }
 
 impl RegexTest {
-    fn from_pair_with_re(pair: Pair<'_, Rule>, re: &str, binary: bool) -> Result<Self, Error> {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let mut length = None;
         let mut mods = FlagSet::empty();
         let str_mods = FlagSet::empty();
-        for p in pair.into_inner() {
-            match p.as_rule() {
-                Rule::pos_number => length = Some(parse_pos_number(p) as usize),
-                Rule::regex_mod => {
-                    for m in p.as_str().chars() {
-                        match m {
-                            'c' => {
-                                mods |= ReMod::CaseInsensitive;
+        let mut cmp_op = CmpOp::Eq;
+        let mut binary = false;
+        let mut prep_re = None;
+
+        for pair in pair.into_inner() {
+            match pair.as_rule() {
+                Rule::regex => {
+                    for p in pair.into_inner() {
+                        match p.as_rule() {
+                            Rule::pos_number => length = Some(parse_pos_number(p) as usize),
+                            Rule::regex_mod => {
+                                for m in p.as_str().chars() {
+                                    match m {
+                                        'c' => {
+                                            mods |= ReMod::CaseInsensitive;
+                                        }
+                                        's' => mods |= ReMod::StartOffsetUpdate,
+                                        'l' => mods |= ReMod::LineLimit,
+                                        'b' => mods |= ReMod::ForceBin,
+                                        't' => mods |= ReMod::ForceText,
+                                        'T' => mods |= ReMod::TrimMatch,
+                                        _ => {}
+                                    }
+                                }
                             }
-                            's' => mods |= ReMod::StartOffsetUpdate,
-                            'l' => mods |= ReMod::LineLimit,
-                            'b' => mods |= ReMod::ForceBinary,
-                            't' => mods |= ReMod::ForceText,
-                            'T' => mods |= ReMod::TrimMatch,
-                            _ => {}
+                            // parser should guarantee this branch is never reached
+                            _ => unimplemented!(),
                         }
                     }
                 }
-                // parser should guarantee this branch is never reached
+                Rule::op_neq => cmp_op = CmpOp::Neq,
+                Rule::op_eq => cmp_op = CmpOp::Eq,
+                Rule::string_value => {
+                    let (bin, s) = unescape_string_to_vec(pair.as_str());
+                    binary = bin;
+                    prep_re = Some(prepare_bytes_re(&s));
+                }
                 _ => unimplemented!(),
             }
         }
-        let non_magic_len = nonmagic(re);
-        let re = format!("(?-u){re}");
+
+        let prep_re = prep_re.unwrap();
+        let non_magic_len = nonmagic(&prep_re);
+        let ascii_re = format!("(?-u){prep_re}");
 
         Ok(Self {
-            //FIXME: remove unwrap
-            re: bytes::Regex::new(&re).unwrap(),
+            re: bytes::Regex::new(&ascii_re)?,
             length,
             mods,
             str_mods,
             binary,
             non_magic_len,
+            cmp_op,
         })
     }
 }
@@ -938,28 +979,8 @@ impl Test {
                     test_val: scalar,
                 })
             }
-            Rule::search_test => {
-                let mut search_test = pair.into_inner();
-
-                let test_type = search_test.next().expect("expecting a string type");
-
-                let test_value = search_test.next().expect("expecting a string value");
-                assert_eq!(test_value.as_rule(), Rule::string_value);
-
-                match test_type.as_rule() {
-                    Rule::search => {
-                        let (bin, v) = unescape_string_to_vec(&test_value.as_str());
-                        SearchTest::from_pair_with_slice(test_type, &v, bin).into()
-                    }
-
-                    Rule::regex => {
-                        let (bin, s) = unescape_string_to_vec(test_value.as_str());
-                        RegexTest::from_pair_with_re(test_type, &prepare_bytes_re(&s), bin)?.into()
-                    }
-                    // parser should guarantee this branch is never reached
-                    _ => unimplemented!(),
-                }
-            }
+            Rule::search_test => SearchTest::from_pair(pair).into(),
+            Rule::regex_test => RegexTest::from_pair(pair)?.into(),
             Rule::string_test => {
                 let mut string_test = pair.into_inner();
 

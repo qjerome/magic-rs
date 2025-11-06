@@ -118,6 +118,8 @@ pub enum Error {
     Utf8(#[from] Utf8Error),
     #[error("formatting: {0}")]
     Format(#[from] dyf::Error),
+    #[error("regex: {0}")]
+    Regex(#[from] regex::Error),
     #[error("{0}")]
     Serialize(#[from] bincode::error::EncodeError),
     #[error("{0}")]
@@ -506,6 +508,86 @@ struct RegexTest {
     str_mods: FlagSet<StringMod>,
     non_magic_len: usize,
     binary: bool,
+    cmp_op: CmpOp,
+}
+
+impl RegexTest {
+    #[inline(always)]
+    fn is_binary(&self) -> bool {
+        self.binary
+            || self.mods.contains(ReMod::ForceBin)
+            || self.str_mods.contains(StringMod::ForceBin)
+    }
+
+    fn match_buf<'buf>(
+        &self,
+        off_buf: u64, // absolute buffer offset in content
+        stream_kind: StreamKind,
+        buf: &'buf [u8],
+    ) -> Option<MatchRes<'buf>> {
+        let mr = match stream_kind {
+            StreamKind::Text(_) => {
+                let mut off_txt = off_buf;
+
+                let mut line_limit = self.length.unwrap_or(usize::MAX);
+
+                for line in buf.split(|c| c == &b'\n') {
+                    // we don't need to break on offset
+                    // limit as buf contains the good amount
+                    // of bytes to match against
+                    if line_limit == 0 {
+                        break;
+                    }
+
+                    if let Some(re_match) = self.re.find(&line) {
+                        // the offset of the string is computed from the start of the buffer
+                        let start_offset = off_txt + re_match.start() as u64;
+
+                        // if we matched until EOL we need to add one to include the delimiter removed from the split
+                        let stop_offset = if re_match.end() == line.len() {
+                            Some(start_offset + re_match.as_bytes().len() as u64 + 1)
+                        } else {
+                            None
+                        };
+
+                        return Some(MatchRes::Bytes(
+                            start_offset,
+                            stop_offset,
+                            re_match.as_bytes(),
+                            Encoding::Utf8,
+                        ));
+                    }
+
+                    off_txt += line.len() as u64;
+                    // we have to add one because lines do not contain splitting character
+                    off_txt += 1;
+                    line_limit = line_limit.saturating_sub(1)
+                }
+                None
+            }
+
+            StreamKind::Binary => {
+                if let Some(re_match) = self.re.find(&buf) {
+                    Some(MatchRes::Bytes(
+                        // the offset of the string is computed from the start of the buffer
+                        off_buf + re_match.start() as u64,
+                        None,
+                        re_match.as_bytes(),
+                        Encoding::Utf8,
+                    ))
+                } else {
+                    None
+                }
+            }
+        };
+
+        // handle the case where we want the regex not to match
+        if self.cmp_op.is_neq() && mr.is_none() {
+            return Some(MatchRes::Bytes(off_buf, None, buf, Encoding::Utf8));
+        }
+
+        mr
+    }
 }
 
 impl From<RegexTest> for Test {
@@ -680,6 +762,7 @@ struct SearchTest {
     str_mods: FlagSet<StringMod>,
     re_mods: FlagSet<ReMod>,
     binary: bool,
+    cmp_op: CmpOp,
 }
 
 impl From<SearchTest> for Test {

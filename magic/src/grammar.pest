@@ -13,7 +13,7 @@ rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWL
 match_no_depth = { stream_offset ~ test ~ message? }
 match_depth    = { depth+ ~ stream_offset ~ test ~ message? }
 
-test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | indirect_test | guid_test | float_test }
+test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | regex_test | indirect_test | guid_test | float_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
 endianness_switch = @{ "\\^" }
@@ -171,7 +171,9 @@ default_test = ${ default ~ WHITESPACE+ ~ any_value }
 indirect_test = ${ indirect ~ WHITESPACE+ ~ any_value }
 
 // regex / search test
-search_test = ${ (regex | search) ~ WHITESPACE+ ~ "="? ~ string_value }
+search_test = ${ search ~ WHITESPACE+ ~ (op_eq | op_neq)? ~ string_value }
+
+regex_test = ${ regex ~ WHITESPACE+ ~ (op_eq | op_neq)? ~ string_value }
 
 // string test
 string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
