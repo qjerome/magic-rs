@@ -1420,9 +1420,9 @@ impl Test {
                 }
             },
 
-            Test::String(t) => out += t.test_value_len().saturating_add(MULT),
+            Test::String(t) => out += t.test_value_len().saturating_mul(MULT),
 
-            Test::PString(t) => out += t.test_value_len().saturating_add(MULT),
+            Test::PString(t) => out += t.test_value_len().saturating_mul(MULT),
 
             Test::Search(s) => {
                 // NOTE: this is how it is implemented in libmagic
@@ -1456,7 +1456,7 @@ impl Test {
 
         // matching any output gets penalty
         if self.is_match_any() {
-            out = 0
+            return 0;
         }
 
         if let Some(op) = self.cmp_op() {
