@@ -804,7 +804,7 @@ impl SearchTest {
 
             if let Some(npos) = self.n_pos {
                 if i > npos {
-                    return None;
+                    break;
                 }
             }
 
@@ -812,10 +812,20 @@ impl SearchTest {
             let (ok, consumed) = string_match(&self.str, self.str_mods, &buf[i..]);
 
             if ok {
-                return Some((pos as u64, &buf[i..i + consumed]));
+                return Some(MatchRes::Bytes(
+                    off_buf.saturating_add(pos as u64),
+                    None,
+                    &buf[i..i + consumed],
+                    Encoding::Utf8,
+                ));
             } else {
                 i += max(consumed, 1)
             }
+        }
+
+        // handles the case where we want the string not to be found
+        if self.cmp_op.is_neq() {
+            return Some(MatchRes::Bytes(off_buf, None, buf, Encoding::Utf8));
         }
 
         None
