@@ -2008,7 +2008,8 @@ impl Match {
 
                 if enabled!(Level::DEBUG) {
                     trace_msg = Some(vec![format!(
-                        "source={source} line={line} stream_offset={:#x}",
+                        "source={source} line={line} depth={} stream_offset={:#x}",
+                        self.depth,
                         haystack.lazy_stream_position()
                     )])
                 }
