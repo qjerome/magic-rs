@@ -773,7 +773,7 @@ impl From<SearchTest> for Test {
 
 impl SearchTest {
     #[inline]
-    fn matches<'buf>(&self, buf: &'buf [u8]) -> Option<(u64, &'buf [u8])> {
+    fn match_buf<'buf>(&self, off_buf: u64, buf: &'buf [u8]) -> Option<MatchRes<'buf>> {
         let mut i = 0;
 
         let Some(needle) = self.str.get(0) else {
@@ -1380,69 +1380,9 @@ impl Test {
                 }
             }
 
-            (Self::Regex(r), ReadValue::Bytes(o, buf)) => {
-                match stream_kind {
-                    StreamKind::Text(_) => {
-                        let mut offset = *o;
+            (Self::Regex(r), ReadValue::Bytes(o, buf)) => r.match_buf(*o, stream_kind, buf),
 
-                        let mut line_limit = r.length.unwrap_or(usize::MAX);
-
-                        for line in buf.split(|c| c == &b'\n') {
-                            // we don't need to break on offset
-                            // limit as buf contains the good amount
-                            // of bytes to match against
-                            if line_limit == 0 {
-                                break;
-                            }
-
-                            if let Some(re_match) = r.re.find(&line) {
-                                // the offset of the string is computed from the start of the buffer
-                                let start_offset = offset + re_match.start() as u64;
-
-                                // if we matched until EOL we need to add one to include the delimiter removed from the split
-                                let stop_offset = if re_match.end() == line.len() {
-                                    Some(start_offset + re_match.as_bytes().len() as u64 + 1)
-                                } else {
-                                    None
-                                };
-
-                                return Some(MatchRes::Bytes(
-                                    start_offset,
-                                    stop_offset,
-                                    re_match.as_bytes(),
-                                    Encoding::Utf8,
-                                ));
-                            }
-
-                            offset += line.len() as u64;
-                            // we have to add one because lines do not contain splitting character
-                            offset += 1;
-                            line_limit = line_limit.saturating_sub(1)
-                        }
-                        None
-                    }
-
-                    StreamKind::Binary => {
-                        if let Some(re_match) = r.re.find(&buf) {
-                            Some(MatchRes::Bytes(
-                                // the offset of the string is computed from the start of the buffer
-                                o + re_match.start() as u64,
-                                None,
-                                re_match.as_bytes(),
-                                Encoding::Utf8,
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                }
-            }
-
-            (Self::Search(t), ReadValue::Bytes(o, buf)) => {
-                // the offset of the string is computed from the start of the buffer
-                t.matches(&buf)
-                    .map(|(p, m)| MatchRes::Bytes(o + p, None, m, Encoding::Utf8))
-            }
+            (Self::Search(t), ReadValue::Bytes(o, buf)) => t.match_buf(*o, &buf),
 
             _ => None,
         }
