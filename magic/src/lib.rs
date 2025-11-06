@@ -2727,6 +2727,14 @@ impl MagicDb {
             return Ok(false);
         };
 
+        // if anything else than whitespace before start
+        // this is not json
+        for c in buf[0..start].iter() {
+            if !c.is_ascii_whitespace() {
+                return Ok(false);
+            }
+        }
+
         let mut is_ndjson = false;
 
         trace!("maybe a json document");
