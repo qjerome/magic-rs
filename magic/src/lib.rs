@@ -475,7 +475,7 @@ flags! {
         CaseInsensitive,
         StartOffsetUpdate,
         LineLimit,
-        ForceBinary,
+        ForceBin,
         ForceText,
         TrimMatch,
     }
