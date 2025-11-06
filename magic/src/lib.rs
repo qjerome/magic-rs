@@ -2363,9 +2363,24 @@ impl MagicRule {
         )
     }
 
-    fn is_text(&self) -> bool {
+    pub fn is_text(&self) -> bool {
         self.entries.entry.test.is_text()
             && self.entries.children.iter().all(|e| e.entry.test.is_text())
+    }
+
+    #[inline(always)]
+    pub fn score(&self) -> u64 {
+        self.entries.score
+    }
+
+    #[inline(always)]
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_ref().map(|s| s.as_ref())
+    }
+
+    #[inline(always)]
+    pub fn line(&self) -> usize {
+        self.entries.entry.line
     }
 }
 
