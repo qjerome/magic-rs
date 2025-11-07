@@ -257,6 +257,21 @@
 !:strength + 30
 !:mime text/x-script.python
 
+# It is possible for the python interpreter to execute 
+# ZIP file. An extension from this is that a python shebang
+# at the top of such a ZIP archive will be executed as python
+# code
+# From: Quentin JÉRÔME <quentin.jerome@circl.lu>
+0	search/1/wb	#!\040/usr/bin/python	Python script text executable (binary data)
+!:strength + 30
+!:mime text/x-script.python
+0	search/1/wb	#!\040/usr/local/bin/python	Python script text executable (binary data)
+!:strength + 30
+!:mime text/x-script.python
+0	search/10/wb	#!\040/usr/bin/env\040python	Python script text executable (binary data)
+!:strength + 30
+!:mime text/x-script.python
+
 
 # from module.submodule import func1, func2
 0	search/8192	import
