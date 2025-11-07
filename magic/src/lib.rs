@@ -2660,7 +2660,13 @@ impl<'m> Magic<'m> {
     #[inline(always)]
     fn insert_extensions<'a: 'm, I: Iterator<Item = &'a str>>(&mut self, exts: I) {
         if self.exts.is_empty() {
-            self.exts.extend(exts.map(|e| Cow::Borrowed(e)))
+            self.exts.extend(exts.filter_map(|e| {
+                if e.is_empty() {
+                    None
+                } else {
+                    Some(Cow::Borrowed(e))
+                }
+            }));
         }
     }
 
