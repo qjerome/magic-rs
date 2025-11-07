@@ -112,6 +112,17 @@
 0	string/fwt	#!\ /usr/bin/dash	Dash shell script text executable
 !:mime	text/x-shellscript
 
+# Ash shell magic
+# From: Quentin JÉRÔME <quentin.jerome@circl.lu>
+0	string/fwt	#!\ /bin/ash	Aash shell script text executable
+!:mime	text/x-shellscript
+0	string/fwt	#!\ /usr/bin/ash	Ash shell script text executable
+!:mime	text/x-shellscript
+0	string/fwt	#!\ /usr/bin/env\ ash	Ash shell script text executable
+!:mime	text/x-shellscript
+0	string/fwt	#!\ /bin/env\ ash	Ash shell script text executable
+!:mime	text/x-shellscript
+
 # Fish shell magic
 # From: Benjamin Lowry <ben@ben.gmbh>
 0	string/fwt	#!\ /usr/local/bin/fish		fish shell script text executable
