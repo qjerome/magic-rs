@@ -39,23 +39,10 @@
 >&0 regex/1l  \\w+\\s?.*?\\]$
 >>0 use rust-src
 
-# we search for a use declaration at the top of the file
-0   string/f use
->0 use rust-import
-
 # we search for a function definition in the 4096
 # first bytes of the file
 0   search/4096fs fn
 >&0 regex/1l fn\\s+[a-zA-Z0-9_]+\\(.*?\\).*?\\{$
->>0 use rust-src
-
-# we search for a use statement in the 4096 first
-# bytes of the file
-0   search/4096fs use
->&0 use rust-import
-
-0 name rust-import
->0 regex/1l ^use\\s[a-zA-Z0-9_]+(::.*?(;|\\{)|;)$
 >>0 use rust-src
 
 0 name rust-src Rust source code text
