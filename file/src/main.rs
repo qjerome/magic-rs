@@ -31,6 +31,8 @@ enum Command {
     Scan(ScanOpt),
     /// Compile magic rules into binary format
     Compile(CompileOpt),
+    /// Show rules' information
+    Show(ShowOpt),
 }
 
 #[derive(Debug, Parser)]
@@ -73,6 +75,14 @@ struct CompileOpt {
     output: PathBuf,
 }
 
+#[derive(Debug, Parser)]
+struct ShowOpt {
+    /// Path to magic rule file or directory
+    /// containing rule files to use
+    #[arg(short, long)]
+    rules: Vec<PathBuf>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct SerMagicResult<'m> {
@@ -106,6 +116,36 @@ impl<'m> SerMagicResult<'m> {
     }
 }
 
+fn db_load_rules(db: &mut MagicDb, rules: &[PathBuf], silent: bool) -> Result<(), magic_rs::Error> {
+    for rule in rules {
+        if rule.is_dir() {
+            let walker = WalkOptions::new()
+                .files()
+                .max_depth(0)
+                .sort(true)
+                .walk(rule);
+            for p in walker.flatten() {
+                info!("loading magic rule: {}", p.to_string_lossy());
+                let magic = MagicFile::open(&p).inspect_err(|e| {
+                    if !silent {
+                        error!("{} {e}", p.to_string_lossy())
+                    }
+                });
+                // FIXME: we ignore error for the moment
+                if magic.is_err() {
+                    continue;
+                }
+                let _ = db.load(magic?)?;
+            }
+        } else {
+            info!("loading magic rule: {}", rule.to_string_lossy());
+            db.load(MagicFile::open(rule)?)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), anyhow::Error> {
     let c = {
         let c: clap::Command = Cli::command();
@@ -133,6 +173,27 @@ fn main() -> Result<(), anyhow::Error> {
         .init();
 
     match cli.command {
+        Some(Command::Show(o)) => {
+            let mut db = MagicDb::new();
+
+            db_load_rules(&mut db, &o.rules, false)?;
+
+            for r in db.rules() {
+                println!(
+                    "{}:{} score={} text={} extensions={}",
+                    r.source().unwrap_or("unknown"),
+                    r.line(),
+                    r.score(),
+                    r.is_text(),
+                    {
+                        let mut v: Vec<&str> =
+                            r.extensions().into_iter().map(|s| s.as_ref()).collect();
+                        v.sort();
+                        v.join("/")
+                    }
+                )
+            }
+        }
         Some(Command::Scan(o)) => {
             let db = if let Some(db) = o.db {
                 let start = Instant::now();
@@ -146,31 +207,7 @@ fn main() -> Result<(), anyhow::Error> {
                 let mut db = MagicDb::new();
 
                 let start = Instant::now();
-                for rule in o.rules {
-                    if rule.is_dir() {
-                        let walker = WalkOptions::new()
-                            .files()
-                            .max_depth(0)
-                            .sort(true)
-                            .walk(rule);
-                        for p in walker.flatten() {
-                            info!("loading magic rule: {}", p.to_string_lossy());
-                            let magic = MagicFile::open(&p).inspect_err(|e| {
-                                if !o.silent {
-                                    error!("{} {e}", p.to_string_lossy())
-                                }
-                            });
-                            // FIXME: we ignore error for the moment
-                            if magic.is_err() {
-                                continue;
-                            }
-                            let _ = db.load(magic?)?;
-                        }
-                    } else {
-                        info!("loading magic rule: {}", rule.to_string_lossy());
-                        db.load(MagicFile::open(rule)?)?;
-                    }
-                }
+                db_load_rules(&mut db, &o.rules, o.silent)?;
                 info!("Time to parse rule files: {:?}", start.elapsed());
                 db
             } else {
@@ -240,9 +277,7 @@ fn main() -> Result<(), anyhow::Error> {
                         let ext: Option<&str> = if o.no_accel {
                             None
                         } else {
-                            // files without extension must set have an empty string extension to benefit from
-                            // extension acceleration
-                            Some(f.extension().and_then(|e| e.to_str()).unwrap_or_default())
+                            f.extension().and_then(|e| e.to_str())
                         };
 
                         let Ok(magic) = db.magic_first(&mut file, ext).inspect_err(|e| {
