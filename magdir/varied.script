@@ -12,19 +12,19 @@
 
 
 # using env
-0	regex/t		#![[:space:]]*/usr/bin/env[[:space:]]*	a
+0	regex/1lt		#![[:space:]]*/usr/bin/env[[:space:]]*	a
 >&0	string/T	>\0			%s script text executable
 !:strength / 2
 
-0	regex/b		#![[:space:]]*/usr/bin/env[[:space:]]*	a
+0	regex/1lb		#![[:space:]]*/usr/bin/env[[:space:]]*	a
 >&0	string/T	>\0			%s script executable (binary data)
 !:strength / 2
 
 # using env
-0	regex/t		#![[:space:]]*/usr/bin/env[[:space:]]*-[Si0]	a
+0	regex/1lt		#![[:space:]]*/usr/bin/env[[:space:]]*-[Si0]	a
 >&0	string/T	>\0			%s script text executable
 !:strength / 2
 
-0	regex/b		#![[:space:]]*/usr/bin/env[[:space:]]*-[Si0]	a
+0	regex/1lb		#![[:space:]]*/usr/bin/env[[:space:]]*-[Si0]	a
 >&0	string/T	>\0			%s script executable (binary data)
 !:strength / 2
