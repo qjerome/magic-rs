@@ -28,7 +28,7 @@
 0	string	#!\ /usr/bin/env\ perl	Perl script text executable
 !:mime	text/x-perl
 0	string	#!
->0	regex	\^#!.*/bin/perl([[:space:]].*)*$	Perl script text executable
+>0	regex/1l	\^#!.*/bin/perl([[:space:]].*)*$	Perl script text executable
 !:mime	text/x-perl
 
 # by Dmitry V. Levin and Alexey Tourbin
