@@ -1417,7 +1417,8 @@ impl EntryNode {
                 }
             }
         }
-        let mut e = Self {
+
+        Ok(Self {
             root,
             entry: parent,
             children,
@@ -1425,16 +1426,7 @@ impl EntryNode {
             apple,
             strength_mod,
             exts,
-            children_exts: HashSet::new(),
-        };
-
-        if root {
-            let mut ch_exts = HashSet::new();
-            e.children_exts_recursive(&mut ch_exts);
-            e.children_exts.extend(ch_exts);
-        }
-
-        Ok(e)
+        })
     }
 }
 
@@ -1487,7 +1479,14 @@ impl MagicRule {
         let entries =
             EntryNode::from_entries(items).map_err(|e| Error::parser(e.to_string(), span))?;
 
-        Ok(Self { source, entries })
+        Ok(Self {
+            id: 0,
+            source,
+            entries,
+            extensions: HashSet::new(),
+            score: 0,
+            finalized: false,
+        })
     }
 }
 

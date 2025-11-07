@@ -2199,19 +2199,70 @@ struct EntryNode {
     apple: Option<String>,
     strength_mod: Option<StrengthMod>,
     exts: HashSet<String>,
-    // if root exts contains all children extensions
-    children_exts: HashSet<String>,
 }
 
 impl EntryNode {
-    fn children_exts_recursive(&self, exts: &mut HashSet<String>) {
+    fn update_exts_rec(
+        &self,
+        exts: &mut HashSet<String>,
+        deps: &HashMap<String, DependencyRule>,
+        marked: &mut HashSet<String>,
+    ) -> Result<(), ()> {
+        for ext in self.exts.iter() {
+            if !exts.contains(ext) {
+                exts.insert(ext.clone());
+            }
+        }
+
         for c in self.children.iter() {
-            for ext in c.exts.iter() {
-                if !exts.contains(ext) {
-                    exts.insert(ext.clone());
+            if let Test::Use(_, ref name) = c.entry.test {
+                if marked.contains(name) {
+                    continue;
+                }
+                if let Some(r) = deps.get(name) {
+                    marked.insert(name.clone());
+                    exts.extend(r.rule.fetch_all_extensions(deps, marked)?);
+                } else {
+                    return Err(());
+                }
+            } else {
+                c.update_exts_rec(exts, deps, marked)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn update_score_rec(
+        &self,
+        depth: usize,
+        score: &mut u64,
+        deps: &HashMap<String, DependencyRule>,
+        marked: &mut HashSet<String>,
+    ) {
+        if depth == 3 {
+            return;
+        }
+
+        *score += self
+            .children
+            .iter()
+            .map(|e| e.entry.test_strength)
+            .min()
+            .unwrap_or_default();
+
+        for c in self.children.iter() {
+            if let Test::Use(_, ref name) = c.entry.test {
+                if marked.contains(name) {
+                    continue;
+                }
+
+                if let Some(r) = deps.get(name) {
+                    marked.insert(name.clone());
+                    *score += r.rule.compute_score(depth, deps, marked);
                 }
             }
-            c.children_exts_recursive(exts);
+            c.update_score_rec(depth + 1, score, deps, marked);
         }
     }
 
@@ -2366,11 +2417,69 @@ impl EntryNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicRule {
+    id: usize,
     source: Option<String>,
     entries: EntryNode,
+    extensions: HashSet<String>,
+    /// score used for rule ranking
+    score: u64,
+    finalized: bool,
 }
 
 impl MagicRule {
+    #[inline(always)]
+    fn set_id(&mut self, id: usize) {
+        self.id = id
+    }
+
+    /// Fetches all the extensions defined in the magic rule. This
+    /// function goes recursive and find extensions also defined in
+    /// dependencies
+    fn fetch_all_extensions(
+        &self,
+        deps: &HashMap<String, DependencyRule>,
+        marked: &mut HashSet<String>,
+    ) -> Result<HashSet<String>, ()> {
+        let mut exts = HashSet::new();
+        self.entries.update_exts_rec(&mut exts, deps, marked)?;
+        Ok(exts)
+    }
+
+    /// Computes the ranking score of a magic rule by walking
+    /// tests recursively, dependencies included.
+    fn compute_score(
+        &self,
+        depth: usize,
+        deps: &HashMap<String, DependencyRule>,
+        marked: &mut HashSet<String>,
+    ) -> u64 {
+        let mut score = 0;
+        score += self.entries.entry.test_strength;
+        self.entries
+            .update_score_rec(depth, &mut score, deps, marked);
+        score
+    }
+
+    /// Finalize a rule by searching for all extensions and computing its score
+    /// for ranking. In the `MagicRule` is already finalized it returns immediately.
+    fn try_finalize(&mut self, deps: &HashMap<String, DependencyRule>) {
+        if self.finalized {
+            return;
+        }
+
+        let Ok(exts) = self.fetch_all_extensions(deps, &mut HashSet::new()) else {
+            return;
+        };
+
+        self.extensions.extend(exts);
+
+        // children_exts_recursive walks through all the dependencies
+        // so there is no reason for compute_score to fail as it is walking
+        // only some of them
+        self.score = self.compute_score(0, deps, &mut HashSet::new());
+        self.finalized = true
+    }
+
     #[inline]
     fn magic_entrypoint<'r, R: Read + Seek>(
         &'r self,
@@ -2430,7 +2539,7 @@ impl MagicRule {
 
     #[inline(always)]
     pub fn score(&self) -> u64 {
-        self.entries.score
+        self.score
     }
 
     #[inline(always)]
@@ -2441,6 +2550,11 @@ impl MagicRule {
     #[inline(always)]
     pub fn line(&self) -> usize {
         self.entries.entry.line
+    }
+
+    #[inline(always)]
+    pub fn extensions(&self) -> &HashSet<String> {
+        &self.extensions
     }
 }
 
@@ -2696,62 +2810,10 @@ impl<'m> Magic<'m> {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct SerializedDb {
-    rules: Vec<(usize, MagicRule)>,
-    dependencies: HashMap<String, DependencyRule>,
-}
-
-impl From<MagicDb> for SerializedDb {
-    #[inline]
-    fn from(mut value: MagicDb) -> Self {
-        // we decrease the Rc so that we don't panic on try_unwrap
-        value.by_ext.clear();
-
-        Self {
-            rules: value
-                .rules
-                .into_iter()
-                .map(|(i, r)| (i, Rc::try_unwrap(r).unwrap()))
-                .collect(),
-            dependencies: value.dependencies,
-        }
-    }
-}
-
-impl From<SerializedDb> for MagicDb {
-    #[inline]
-    fn from(value: SerializedDb) -> Self {
-        let rules: Vec<(usize, Rc<MagicRule>)> = value
-            .rules
-            .into_iter()
-            .map(|(i, r)| (i, Rc::new(r)))
-            .collect();
-
-        let mut by_ext = HashMap::new();
-        for (i, r) in rules.iter() {
-            for ext in r.entries.exts.iter() {
-                by_ext
-                    .entry(ext.to_lowercase())
-                    .and_modify(|v: &mut Vec<(usize, Rc<MagicRule>)>| v.push((*i, Rc::clone(r))))
-                    .or_insert_with(|| vec![(*i, Rc::clone(r))]);
-            }
-        }
-
-        Self {
-            rules,
-            dependencies: value.dependencies,
-            by_ext,
-            ..Default::default()
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MagicDb {
     rule_id: usize,
-    rules: Vec<(usize, Rc<MagicRule>)>,
-    by_ext: HashMap<String, Vec<(usize, Rc<MagicRule>)>>,
+    rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
 }
 
@@ -3029,45 +3091,21 @@ impl MagicDb {
         Ok(())
     }
 
-    #[inline(always)]
-    fn update_by_ext(&mut self, ext: &str, rule_id: usize, rule: &Rc<MagicRule>) {
-        self.by_ext
-            // we normalize extension to lowercase
-            .entry(ext.to_lowercase())
-            .and_modify(|v| {
-                v.push((rule_id, Rc::clone(rule)));
-                v.sort_by_key(|(id, r)| (r.is_text(), *id));
-            })
-            .or_insert_with(|| vec![(rule_id, Rc::clone(rule))]);
-    }
-
     pub fn load(&mut self, mf: MagicFile) -> Result<&mut Self, Error> {
-        // it seems rules are evaluated in their reverse definition order
         for rule in mf.rules.into_iter() {
-            let (id, rule) = (self.next_rule_id(), Rc::new(rule));
+            let mut rule = rule;
+            rule.set_id(self.next_rule_id());
 
-            let all_exts: HashSet<Cow<'_, str>> = rule
-                .entries
-                .exts
-                .union(&rule.entries.children_exts)
-                .map(|s| Cow::Borrowed(s.as_str()))
-                .collect();
-
-            if all_exts.is_empty() {
-                self.update_by_ext("", id, &rule);
-            } else {
-                for ext in all_exts {
-                    // acceptable to clone here
-                    self.update_by_ext(&ext, id, &rule);
-                }
-            }
-            self.rules.push((id, rule));
+            self.rules.push(rule);
         }
 
-        // put text rules at the end
-        self.rules.sort_by_key(|(id, r)| (r.is_text(), *id));
         self.dependencies.extend(mf.dependencies);
+        self.prepare();
         Ok(self)
+    }
+
+    pub fn rules(&self) -> &[MagicRule] {
+        &self.rules
     }
 
     #[inline]
@@ -3100,21 +3138,22 @@ impl MagicDb {
             }};
         }
 
-        if let Some(by_extensions) = extension.and_then(|ext| self.by_ext.get(&ext.to_lowercase()))
-        {
-            for (id, rule) in by_extensions.iter() {
-                do_magic!(rule);
-                if let Some(f) = marked.get_mut(*id) {
-                    *f = true
+        if let Some(ext) = extension.map(|e| e.to_lowercase()) {
+            if !ext.is_empty() {
+                for rule in self.rules.iter().filter(|r| r.extensions.contains(&ext)) {
+                    do_magic!(rule);
+                    if let Some(f) = marked.get_mut(rule.id) {
+                        *f = true
+                    }
                 }
             }
         }
 
-        for (_, rule) in self
+        for rule in self
             .rules
             .iter()
             // we don't run again rules run by extension
-            .filter(|(id, _)| !*marked.get(*id).unwrap_or(&false))
+            .filter(|r| !*marked.get(r.id).unwrap_or(&false))
         {
             do_magic!(rule)
         }
@@ -3150,7 +3189,7 @@ impl MagicDb {
             magic = Magic::default();
         }
 
-        for (_, rule) in self.rules.iter() {
+        for rule in self.rules.iter() {
             rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
 
             // it is possible we have a strength with no message
@@ -3194,10 +3233,9 @@ impl MagicDb {
     }
 
     pub fn serialize(self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        let sdb = SerializedDb::from(self);
         let mut encoder = GzEncoder::new(vec![], Compression::best());
 
-        bincode::serde::encode_into_std_write(&sdb, &mut encoder, bincode::config::standard())?;
+        bincode::serde::encode_into_std_write(&self, &mut encoder, bincode::config::standard())?;
         Ok(encoder.finish().unwrap())
     }
 
@@ -3211,9 +3249,19 @@ impl MagicDb {
         gz.read_to_end(&mut buf).map_err(|e| {
             bincode::error::DecodeError::OtherString(format!("failed to read: {e}"))
         })?;
-        let (sdb, _): (SerializedDb, usize) =
+        let (sdb, _): (MagicDb, usize) =
             bincode::serde::decode_from_slice(&buf, bincode::config::standard())?;
         Ok(sdb.into())
+    }
+
+    #[inline(always)]
+    fn prepare(&mut self) {
+        self.rules
+            .iter_mut()
+            .for_each(|r| r.try_finalize(&self.dependencies));
+
+        // put text rules at the end
+        self.rules.sort_by_key(|r| (r.is_text(), -(r.score as i64)));
     }
 }
 
