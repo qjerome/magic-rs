@@ -174,9 +174,13 @@ fn main() -> Result<(), anyhow::Error> {
 
     match cli.command {
         Some(Command::Show(o)) => {
-            let mut db = MagicDb::new();
-
-            db_load_rules(&mut db, &o.rules, false)?;
+            let db = if !o.rules.is_empty() {
+                let mut db = MagicDb::new();
+                db_load_rules(&mut db, &o.rules, false)?;
+                db
+            } else {
+                EmbeddedMagicDb::open().unwrap()
+            };
 
             for r in db.rules() {
                 println!(
