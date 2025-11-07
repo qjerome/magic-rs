@@ -125,11 +125,11 @@
 
 # Fish shell magic
 # From: Benjamin Lowry <ben@ben.gmbh>
-0	string/fwt	#!\ /usr/local/bin/fish		fish shell script text executable
+0	string/fwt	#!\ /usr/local/bin/fish		Fish shell script text executable
 !:mime	text/x-shellscript
-0	string/fwt	#!\ /usr/bin/fish		fish shell script text executable
+0	string/fwt	#!\ /usr/bin/fish		Fish shell script text executable
 !:mime	text/x-shellscript
-0	string/fwt	#!\ /usr/bin/env\ fish		fish shell script text executable
+0	string/fwt	#!\ /usr/bin/env\ fish		Fish shell script text executable
 !:mime	text/x-shellscript
 
 0	search/1/fwt	#!\ /usr/bin/tclsh	Tcl/Tk script text executable
