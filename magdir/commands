@@ -6,10 +6,16 @@
 #0	string/w	:			shell archive or script for antique kernel text
 0	string/fwt	#!\ /bin/sh		POSIX shell script text executable
 !:mime	text/x-shellscript
+0	string/fwt	#!\ /usr/bin/sh		POSIX shell script text executable
+!:mime	text/x-shellscript
 0	string/fwb	#!\ /bin/sh		POSIX shell script executable (binary data)
 !:mime	text/x-shellscript
 >10	string	#\040This\040script\040was\040generated\040using\040Makeself	\b, self-executable archive
 >>53	string	x	\b, Makeself %s
+0	string/fwt	#!\ /usr/bin/env\ sh	POSIX shell script text executable
+!:mime	text/x-shellscript
+0	string/fwt	#!\ /bin/env\ sh	POSIX shell script text executable
+!:mime	text/x-shellscript
 
 0	string/fwt	#!\ /bin/csh		C shell script text executable
 !:mime	text/x-shellscript
