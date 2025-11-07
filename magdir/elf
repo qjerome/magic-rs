@@ -62,8 +62,10 @@
 !:mime	application/x-executable
 >16	leshort		3		pie executable,
 !:mime	application/x-pie-executable
+!:ext	so
 >16	leshort		!3		shared object,
 !:mime	application/x-sharedlib
+!:ext	so
 >16	leshort		4		core file,
 !:mime	application/x-coredump
 # OS-specific
