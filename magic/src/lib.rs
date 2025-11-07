@@ -17,7 +17,6 @@ use std::{
     io::{self, Read, Seek, SeekFrom},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
-    rc::Rc,
     str::Utf8Error,
     usize,
 };
@@ -753,6 +752,16 @@ impl StringTest {
             TestValue::Any => 0,
         }
     }
+
+    #[inline(always)]
+    fn is_binary(&self) -> bool {
+        self.binary || self.mods.contains(StringMod::ForceBin)
+    }
+
+    #[inline(always)]
+    fn is_text(&self) -> bool {
+        self.mods.contains(StringMod::ForceText)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -772,6 +781,16 @@ impl From<SearchTest> for Test {
 }
 
 impl SearchTest {
+    #[inline(always)]
+    fn is_binary(&self) -> bool {
+        (self.binary
+            || self.str_mods.contains(StringMod::ForceBin)
+            || self.re_mods.contains(ReMod::ForceBin))
+            && !(self.str_mods.contains(StringMod::ForceText)
+                || self.re_mods.contains(ReMod::ForceText))
+    }
+
+    // off_buf: absolute buffer offset in content
     #[inline]
     fn match_buf<'buf>(&self, off_buf: u64, buf: &'buf [u8]) -> Option<MatchRes<'buf>> {
         let mut i = 0;
@@ -1406,8 +1425,6 @@ impl Test {
 
         // FIXME: octal is missing but it is not used in practice ...
         match self {
-            Test::Default => return 0,
-
             Test::Scalar(s) => match s.ty {
                 _ => {
                     out += s.ty.type_size() * MULT;
@@ -1483,7 +1500,9 @@ impl Test {
 
             Test::Der => out += MULT,
 
-            _ => {}
+            Test::Default | Test::Name(_) | Test::Use(_, _) | Test::Indirect(_) | Test::Clear => {
+                return 0;
+            }
         }
 
         // matching any output gets penalty
@@ -1549,10 +1568,10 @@ impl Test {
             Self::Use(_, _) => true,
             Self::Scalar(_) => true,
             Self::Float(_) => true,
-            Self::String(_) => true,
-            Self::Search(_) => true,
+            Self::String(t) => !t.is_binary() & !t.is_text() || t.is_binary(),
+            Self::Search(t) => t.is_binary(),
             Self::PString(_) => true,
-            Self::Regex(_) => true,
+            Self::Regex(t) => t.is_binary(),
             Self::Clear => true,
             Self::Default => true,
             Self::Indirect(_) => true,
@@ -1567,11 +1586,9 @@ impl Test {
             Self::Name(_) => true,
             Self::Use(_, _) => true,
             Self::Indirect(_) => true,
-            Self::String(_) => true,
-            Self::Search(_) => true,
-            Self::Regex(_) => true,
             Self::Clear => true,
             Self::Default => true,
+            Self::String(t) => !t.is_binary() & !t.is_text() || t.is_text(),
             _ => !self.is_binary(),
         }
     }
@@ -2004,7 +2021,7 @@ impl Match {
                     magic.push_message(msg.to_string_lossy());
                 }
 
-                for (_, r) in db.rules.iter() {
+                for r in db.rules.iter() {
                     let messages_cnt = magic.message.len();
 
                     r.magic(
