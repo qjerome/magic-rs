@@ -1,5 +1,5 @@
 [package]
-name = "file"
+name = "file-rs"
 version = "0.1.0"
 edition = "2024"
 
@@ -15,3 +15,7 @@ serde_json = "1.0.145"
 serde_derive = "1.0.228"
 serde = "1.0.228"
 magic-embed = { path = "../magic-embed" }
+
+[[bin]]
+name = "file"
+path = "src/main.rs"
