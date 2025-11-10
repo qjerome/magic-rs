@@ -318,7 +318,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 /// use magic_embed::magic_embed;
 /// use magic_rs::MagicDb;
 ///
-/// #[magic_embed(include=["./magdir"], exclude=["./magdir/der"])]
+/// #[magic_embed(include=["magic/src/magdir"], exclude=["magic/src/magdir/der"])]
 /// struct EmbeddedMagicDb;
 ///
 /// let db: MagicDb = EmbeddedMagicDb::open().unwrap();

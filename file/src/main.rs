@@ -16,7 +16,7 @@ use serde_derive::Serialize;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-#[magic_embed(include=["./magdir"], exclude=["./magdir/der"])]
+#[magic_embed(include=["magic/src/magdir"], exclude=["magic/src/magdir/der"])]
 struct EmbeddedMagicDb;
 
 #[derive(Parser)]

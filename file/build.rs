@@ -5,5 +5,5 @@ fn main() {
     // final binary. File tracking with include_byte!
     // seems to work only when the file is not eliminated
     // by DCE.
-    println!("cargo::rerun-if-changed=../magdir/")
+    println!("cargo::rerun-if-changed=../magic/src/magdir");
 }
