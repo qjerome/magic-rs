@@ -2533,11 +2533,21 @@ impl MagicRule {
         )
     }
 
+    /// Checks if the rule is for matching against text content
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if the rule is for text files
     pub fn is_text(&self) -> bool {
         self.entries.entry.test.is_text()
             && self.entries.children.iter().all(|e| e.entry.test.is_text())
     }
 
+    /// Gets the rule's score used for ranking rules between them
+    ///
+    /// # Returns
+    ///
+    /// * `u64` - The rule's score
     #[inline(always)]
     pub fn score(&self) -> u64 {
         self.score
@@ -2553,6 +2563,11 @@ impl MagicRule {
         self.entries.entry.line
     }
 
+    /// Gets all the file extensions associated to the rule
+    ///
+    /// # Returns
+    ///
+    /// * `&HashSet<String>` - The set of all associated extensions
     #[inline(always)]
     pub fn extensions(&self) -> &HashSet<String> {
         &self.extensions
@@ -2656,6 +2671,7 @@ impl MatchState {
     }
 }
 
+/// Represents a file magic detection result
 #[derive(Debug, Default)]
 pub struct Magic<'m> {
     stream_kind: Option<StreamKind>,
@@ -2691,6 +2707,13 @@ impl<'m> Magic<'m> {
         self.is_default = false;
     }
 
+    /// Converts borrowed data into owned data. This method involves
+    /// data cloning, so you must use this method only if you need to
+    /// extend the lifetime of a [`Magic`] struct.
+    ///
+    /// # Returns
+    ///
+    /// * [`Magic<'owned>`] - A new [`Magic`] with owned data
     #[inline]
     pub fn into_owned<'owned>(self) -> Magic<'owned> {
         Magic {
@@ -2714,6 +2737,11 @@ impl<'m> Magic<'m> {
         }
     }
 
+    /// Gets the formatted message describing the file type
+    ///
+    /// # Returns
+    ///
+    /// * `String` - The formatted message
     #[inline(always)]
     pub fn message(&self) -> String {
         let mut out = String::new();
@@ -2740,6 +2768,11 @@ impl<'m> Magic<'m> {
         debug!("updated strength = {:?}", self.strength)
     }
 
+    /// Gets the detected MIME type
+    ///
+    /// # Returns
+    ///
+    /// * `&str` - The MIME type or default based on stream kind
     #[inline(always)]
     pub fn mime_type(&self) -> &str {
         self.mime_type.as_deref().unwrap_or(match self.stream_kind {
@@ -2785,21 +2818,41 @@ impl<'m> Magic<'m> {
         }
     }
 
+    /// Checks if this is a default fallback detection
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if this is a default detection
     #[inline(always)]
     pub fn is_default(&self) -> bool {
         self.is_default
     }
 
+    /// Gets the confidence score of the detection
+    ///
+    /// # Returns
+    ///
+    /// * `Option<u64>` - The confidence score if available
     #[inline(always)]
     pub fn strength(&self) -> Option<u64> {
         self.strength
     }
 
+    /// Gets the filename where the magic rule was defined
+    ///
+    /// # Returns
+    ///
+    /// * `Option<&str>` - The source if available
     #[inline(always)]
     pub fn source(&self) -> Option<&Cow<'m, str>> {
         self.source.as_ref()
     }
 
+    /// Gets the Apple creator code if available
+    ///
+    /// # Returns
+    ///
+    /// * `Option<&str>` - The creator code if available
     #[inline(always)]
     pub fn creator_code(&self) -> Option<&Cow<'m, str>> {
         self.creator_code.as_ref()
@@ -2811,6 +2864,11 @@ impl<'m> Magic<'m> {
     }
 }
 
+/// Gets the possible file extensions
+///
+/// # Returns
+///
+/// * `&HashSet<Cow<'m, str>>` - The set of possible extensions
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MagicDb {
     rule_id: usize,
@@ -2876,6 +2934,11 @@ impl MagicDb {
         .map(|lc| lc.with_warm_cache(100 << 20))
     }
 
+    /// Creates a new empty database
+    ///
+    /// # Returns
+    ///
+    /// * [`MagicDb`] - A new empty database
     pub fn new() -> Self {
         Self::default()
     }
@@ -3105,6 +3168,11 @@ impl MagicDb {
         Ok(self)
     }
 
+    /// Gets all rules in the database
+    ///
+    /// # Returns
+    ///
+    /// * `&[MagicRule]` - A slice of all rules
     pub fn rules(&self) -> &[MagicRule] {
         &self.rules
     }
@@ -3164,7 +3232,19 @@ impl MagicDb {
         Ok(magic)
     }
 
-    /// an empty extension must be `Some("")`, if extension acceleration is not desired specify `None`
+    /// Detects file [`Magic`] stopping at the first matching magic. Magic
+    /// rules are evaluated from the best to the least relevant, so this method
+    /// returns most of the time the best magic. For the rare cases where
+    /// it doesn't or if the best result is always required, use [`MagicDb::magic_best`]
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - A readable and seekable input
+    /// * `extension` - Optional file extension to use for acceleration
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Magic<'_>, Error>` - The detection result or an error
     pub fn magic_first<R: Read + Seek>(
         &self,
         r: &mut R,
