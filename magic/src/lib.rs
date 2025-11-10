@@ -97,30 +97,46 @@ fn read_octal_u64<R: Read + Seek>(haystack: &mut LazyCache<R>) -> Option<u64> {
     u64::from_str_radix(s, 8).ok()
 }
 
+/// Represents all possible errors that can occur during file type detection and processing.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// A generic error with a custom message.
     #[error("{0}")]
     Msg(String),
+
+    /// An error with a source location and a nested error.
     #[error("source={0} line={1} error={2}")]
     Localized(String, usize, Box<Error>),
-    #[error("unexpected rule: {0}")]
-    UnexpectedRule(String),
+
+    /// Indicates a required rule was not found.
     #[error("missing rule: {0}")]
     MissingRule(String),
+
+    /// Indicates the maximum recursion depth was reached.
     #[error("maximum recursion reached: {0}")]
     MaximumRecursion(usize),
+
+    /// Wraps an I/O error.
     #[error("io: {0}")]
     Io(#[from] io::Error),
+
+    /// Wraps a parsing error from the `pest` parser.
     #[error("parser error: {0}")]
     Parse(#[from] Box<pest::error::Error<Rule>>),
-    #[error("from-utf8: {0}")]
-    Utf8(#[from] Utf8Error),
+
+    /// Wraps a formatting error from the `dyf` crate.
     #[error("formatting: {0}")]
     Format(#[from] dyf::Error),
+
+    /// Wraps a regex-related error.
     #[error("regex: {0}")]
     Regex(#[from] regex::Error),
+
+    /// Wraps a serialization error from `bincode`.
     #[error("{0}")]
     Serialize(#[from] bincode::error::EncodeError),
+
+    /// Wraps a deserialization error from `bincode`.
     #[error("{0}")]
     Deserialize(#[from] bincode::error::DecodeError),
 }
