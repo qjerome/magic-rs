@@ -228,7 +228,6 @@ fn main() -> Result<(), anyhow::Error> {
 
                 for f in wo.walk(item).flatten() {
                     debug!("scanning file: {}", f.to_string_lossy());
-                    let start = Instant::now();
                     let Ok(mut file) = File::open(&f).inspect_err(|e| {
                         error!("failed to open file={}: {e}", f.to_string_lossy())
                     }) else {
@@ -290,13 +289,9 @@ fn main() -> Result<(), anyhow::Error> {
                             continue;
                         };
 
-                        let elapsed = start.elapsed();
-
                         if !o.json {
                             println!(
-                                "time_ns:{:?} time:{:?} file:{} source:{} strength:{} mime:{} magic:{}",
-                                elapsed.as_nanos(),
-                                elapsed,
+                                "file:{} source:{} strength:{} mime:{} magic:{}",
                                 f.to_string_lossy(),
                                 magic.source().unwrap_or(&Cow::Borrowed("none")),
                                 magic.strength().unwrap_or_default(),
