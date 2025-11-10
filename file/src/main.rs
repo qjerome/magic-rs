@@ -106,12 +106,12 @@ impl<'m> SerMagicResult<'m> {
     fn from_path_and_magic<P: AsRef<Path>>(p: Option<P>, m: &'m Magic<'_>) -> Self {
         Self {
             path: p.map(|p| p.as_ref().to_path_buf()),
-            source: m.source().cloned(),
+            source: m.source().map(|s| s.into()),
             magic: m.message(),
             mime_type: m.mime_type(),
-            creator_code: m.creator_code().cloned(),
+            creator_code: m.creator_code().map(|s| s.into()),
             strength: m.strength(),
-            extensions: m.exts(),
+            extensions: m.extensions(),
         }
     }
 }

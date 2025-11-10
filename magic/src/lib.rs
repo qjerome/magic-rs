@@ -2844,8 +2844,8 @@ impl<'m> Magic<'m> {
     ///
     /// * `Option<&str>` - The source if available
     #[inline(always)]
-    pub fn source(&self) -> Option<&Cow<'m, str>> {
-        self.source.as_ref()
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
     }
 
     /// Gets the Apple creator code if available
@@ -2854,12 +2854,17 @@ impl<'m> Magic<'m> {
     ///
     /// * `Option<&str>` - The creator code if available
     #[inline(always)]
-    pub fn creator_code(&self) -> Option<&Cow<'m, str>> {
-        self.creator_code.as_ref()
+    pub fn creator_code(&self) -> Option<&str> {
+        self.creator_code.as_deref()
     }
 
+    /// Gets the possible file extensions for the detected [`Magic`]
+    ///
+    /// # Returns
+    ///
+    /// * `&HashSet<Cow<'m, str>>` - The set of possible extensions
     #[inline(always)]
-    pub fn exts(&self) -> &HashSet<Cow<'m, str>> {
+    pub fn extensions(&self) -> &HashSet<Cow<'m, str>> {
         &self.exts
     }
 }
