@@ -2900,11 +2900,7 @@ impl<'m> Magic<'m> {
     }
 }
 
-/// Gets the possible file extensions
-///
-/// # Returns
-///
-/// * `&HashSet<Cow<'m, str>>` - The set of possible extensions
+/// Represents a database of [`MagicRule`]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct MagicDb {
     rule_id: usize,
@@ -3191,11 +3187,11 @@ impl MagicDb {
         Ok(())
     }
 
-    /// Loads rules from a [`MagicFile`]
+    /// Loads rules from a [`MagicSource`]
     ///
     /// # Arguments
     ///
-    /// * `mf` - The [`MagicFile`] to load rules from
+    /// * `mf` - The [`MagicSource`] to load rules from
     ///
     /// # Returns
     ///
