@@ -11,7 +11,7 @@ use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
 use magic_embed::magic_embed;
-use magic_rs::{Magic, MagicDb, MagicFile};
+use magic_rs::{Magic, MagicDb, MagicSource};
 use serde_derive::Serialize;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
@@ -126,7 +126,7 @@ fn db_load_rules(db: &mut MagicDb, rules: &[PathBuf], silent: bool) -> Result<()
                 .walk(rule);
             for p in walker.flatten() {
                 info!("loading magic rule: {}", p.to_string_lossy());
-                let magic = MagicFile::open(&p).inspect_err(|e| {
+                let magic = MagicSource::open(&p).inspect_err(|e| {
                     if !silent {
                         error!("{} {e}", p.to_string_lossy())
                     }
@@ -139,7 +139,7 @@ fn db_load_rules(db: &mut MagicDb, rules: &[PathBuf], silent: bool) -> Result<()
             }
         } else {
             info!("loading magic rule: {}", rule.to_string_lossy());
-            db.load(MagicFile::open(rule)?)?;
+            db.load(MagicSource::open(rule)?)?;
         }
     }
 
@@ -202,7 +202,7 @@ fn main() -> Result<(), anyhow::Error> {
         Some(Command::Scan(o)) => {
             let db = if let Some(db) = o.db {
                 let start = Instant::now();
-                let db = MagicDb::deserialize_reader(&mut File::open(&db).map_err(|e| {
+                let db = MagicDb::deserialize(&mut File::open(&db).map_err(|e| {
                     anyhow!("failed to open database file {}: {e}", db.to_string_lossy())
                 })?)
                 .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
@@ -237,21 +237,18 @@ fn main() -> Result<(), anyhow::Error> {
                     };
 
                     if o.all {
-                        let Ok(mut magics) = db.magic_all(&mut file).inspect_err(|e| {
+                        let Ok(magics) = db.magic_all(&mut file).inspect_err(|e| {
                             error!("failed to get magic file={}: {e}", f.to_string_lossy())
                         }) else {
                             continue;
                         };
-
-                        // we sort only if needed
-                        magics.sort_by(|a, b| b.0.cmp(&a.0));
 
                         if o.json {
                             let amr = SerAllMagicResult {
                                 path: f,
                                 magics: magics
                                     .iter()
-                                    .map(|(_, m)| {
+                                    .map(|m| {
                                         SerMagicResult::from_path_and_magic(
                                             Option::<PathBuf>::None,
                                             m,
@@ -268,11 +265,12 @@ fn main() -> Result<(), anyhow::Error> {
 
                             println!("{json}")
                         } else {
-                            for (strength, magic) in magics {
+                            for magic in magics {
                                 println!(
-                                    "file:{} source:{} strength:{strength} mime:{} magic:{}",
+                                    "file:{} source:{} strength:{} mime:{} magic:{}",
                                     f.to_string_lossy(),
                                     magic.source().unwrap_or(&Cow::Borrowed("unknown")),
+                                    magic.strength().unwrap_or_default(),
                                     magic.mime_type(),
                                     magic.message()
                                 )
@@ -328,7 +326,7 @@ fn main() -> Result<(), anyhow::Error> {
                         .walk(rule);
                     for p in walker.flatten() {
                         info!("loading magic rule: {}", p.to_string_lossy());
-                        let magic = MagicFile::open(&p)
+                        let magic = MagicSource::open(&p)
                             .inspect_err(|e| error!("{} {e}", p.to_string_lossy()));
                         // FIXME: we ignore error for the moment
                         if magic.is_err() {
@@ -338,7 +336,7 @@ fn main() -> Result<(), anyhow::Error> {
                     }
                 } else {
                     info!("loading magic rule: {}", rule.to_string_lossy());
-                    db.load(MagicFile::open(rule)?)?;
+                    db.load(MagicSource::open(rule)?)?;
                 }
             }
 
@@ -348,8 +346,8 @@ fn main() -> Result<(), anyhow::Error> {
             let mut o = File::create(&o.output)
                 .map_err(|e| anyhow!("failed at creating {}: {e}", o.output.to_string_lossy()))?;
 
-            let bytes = db
-                .serialize()
+            let mut bytes = vec![];
+            db.serialize(&mut bytes)
                 .map_err(|e| anyhow!("failed to serialize database: {e}"))?;
 
             o.write_all(&bytes)

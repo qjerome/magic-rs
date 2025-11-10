@@ -14,7 +14,7 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
-    io::{self, Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
     str::Utf8Error,
@@ -2416,6 +2416,7 @@ impl EntryNode {
     }
 }
 
+/// Represents a parsed magic rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicRule {
     id: usize,
@@ -2585,28 +2586,32 @@ impl MagicRule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DependencyRule {
+struct DependencyRule {
     name: String,
     rule: MagicRule,
 }
 
-impl DependencyRule {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn rule(&self) -> &MagicRule {
-        &self.rule
-    }
-}
-
+/// A parsed source of magic rules
+///
+/// # Methods
+///
+/// * `open` - Opens a magic file from a path
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MagicFile {
+pub struct MagicSource {
     rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
 }
 
-impl MagicFile {
+impl MagicSource {
+    /// Opens and parses a magic file from a path
+    ///
+    /// # Arguments
+    ///
+    /// * `p` - The path to the magic file
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Self, Error>` - The parsed magic file or an error
     pub fn open<P: AsRef<Path>>(p: P) -> Result<Self, Error> {
         FileMagicParser::parse_file(p)
     }
@@ -2770,7 +2775,7 @@ impl<'m> Magic<'m> {
     }
 
     #[inline(always)]
-    pub fn update_strength(&mut self, value: u64) {
+    fn update_strength(&mut self, value: u64) {
         match self.strength.as_mut() {
             Some(s) => *s = (*s).saturating_add(value),
             None => self.strength = Some(value),
@@ -3170,7 +3175,16 @@ impl MagicDb {
         Ok(())
     }
 
-    pub fn load(&mut self, mf: MagicFile) -> Result<&mut Self, Error> {
+    /// Loads rules from a [`MagicFile`]
+    ///
+    /// # Arguments
+    ///
+    /// * `mf` - The [`MagicFile`] to load rules from
+    ///
+    /// # Returns
+    ///
+    /// * `Result<&mut Self, Error>` - Self for chaining or an error
+    pub fn load(&mut self, mf: MagicSource) -> Result<&mut Self, Error> {
         for rule in mf.rules.into_iter() {
             let mut rule = rule;
             rule.set_id(self.next_rule_id());
@@ -3271,17 +3285,17 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn magic_all_with_stream_kind<R: Read + Seek>(
+    fn magic_all_sort_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
-    ) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+    ) -> Result<Vec<Magic<'_>>, Error> {
         let mut out = Vec::new();
 
         let mut magic = Magic::default();
 
         if Self::try_hard_magic(haystack, stream_kind, &mut magic)? {
-            out.push((magic.strength.unwrap_or_default(), magic));
+            out.push(magic);
             magic = Magic::default();
         }
 
@@ -3292,7 +3306,7 @@ impl MagicDb {
             if !magic.message.is_empty() {
                 magic.set_stream_kind(stream_kind);
                 magic.set_source(rule.source.as_deref());
-                out.push((magic.strength.unwrap_or_default(), magic));
+                out.push(magic);
                 magic = Magic::default();
             }
 
@@ -3300,15 +3314,30 @@ impl MagicDb {
         }
 
         Self::magic_default(haystack, stream_kind, &mut magic)?;
-        out.push((magic.strength.unwrap_or_default(), magic));
+        out.push(magic);
+
+        out.sort_by(|a, b| {
+            b.strength()
+                .unwrap_or_default()
+                .cmp(&a.strength().unwrap_or_default())
+        });
 
         Ok(out)
     }
 
-    pub fn magic_all<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<(u64, Magic<'_>)>, Error> {
+    /// Detects all [`Magic`] matching a given content.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - A readable and seekable input
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Vec<Magic<'_>>, Error>` - All detection results sorted by strength or an error
+    pub fn magic_all<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
         let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_all_with_stream_kind(&mut haystack, stream_kind)
+        self.magic_all_sort_with_stream_kind(&mut haystack, stream_kind)
     }
 
     #[inline(always)]
@@ -3316,30 +3345,55 @@ impl MagicDb {
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
-    ) -> Result<Option<Magic<'_>>, Error> {
-        let mut magics = self.magic_all_with_stream_kind(haystack, stream_kind)?;
-        magics.sort_by(|a, b| b.0.cmp(&a.0));
-        return Ok(magics.into_iter().map(|(_, m)| m).next());
+    ) -> Result<Magic<'_>, Error> {
+        let magics = self.magic_all_sort_with_stream_kind(haystack, stream_kind)?;
+
+        // magics is guaranteed to contain at least the default magic
+        return Ok(magics
+            .into_iter()
+            .map(|m| m)
+            .next()
+            .expect("magics must at least contain default"));
     }
 
-    pub fn magic_best<R: Read + Seek>(&self, r: &mut R) -> Result<Option<Magic<'_>>, Error> {
+    /// Detects the best [`Magic`] matching a given content.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - A readable and seekable input
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Magic<'_>, Error>` - The best detection result or an error
+    pub fn magic_best<R: Read + Seek>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
         let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
         self.magic_best_with_stream_kind(&mut haystack, stream_kind)
     }
 
-    pub fn serialize(self) -> Result<Vec<u8>, Error> {
-        let mut encoder = GzEncoder::new(vec![], Compression::best());
+    /// Serializes the database to a byte vector
+    ///
+    /// # Returns
+    ///
+    /// * `Result<(), Error>` - The serialized database or an error
+    pub fn serialize<W: Write>(self, w: &mut W) -> Result<(), Error> {
+        let mut encoder = GzEncoder::new(w, Compression::best());
 
         bincode::serde::encode_into_std_write(&self, &mut encoder, bincode::config::standard())?;
-        Ok(encoder.finish()?)
+        encoder.finish()?;
+        Ok(())
     }
 
-    pub fn deserialize_slice<S: AsRef<[u8]>>(r: S) -> Result<Self, Error> {
-        Self::deserialize_reader(&mut r.as_ref())
-    }
-
-    pub fn deserialize_reader<R: Read>(r: &mut R) -> Result<Self, Error> {
+    /// Deserializes the database from a reader
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - The reader to deserialize from
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Self, Error>` - The deserialized database or an error
+    pub fn deserialize<R: Read>(r: &mut R) -> Result<Self, Error> {
         let mut buf = vec![];
         let mut gz = GzDecoder::new(r);
         gz.read_to_end(&mut buf).map_err(|e| {
@@ -3381,7 +3435,7 @@ mod tests {
         rule: &str,
         content: &[u8],
         stream_kind: StreamKind,
-    ) -> Result<Option<Magic<'static>>, Error> {
+    ) -> Result<Magic<'static>, Error> {
         let mut md = MagicDb::new();
         md.load(
             FileMagicParser::parse_str(rule, None)
@@ -3391,7 +3445,7 @@ mod tests {
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
         let v = md.magic_best_with_stream_kind(&mut reader, stream_kind)?;
-        Ok(v.map(|m| m.into_owned()))
+        Ok(v.into_owned())
     }
 
     /// helper macro to debug tests
@@ -3413,15 +3467,10 @@ mod tests {
     }
 
     macro_rules! assert_magic_match_bin {
-        ($rule: literal, $content:literal) => {{
-            first_magic($rule, $content, StreamKind::Binary)
-                .unwrap()
-                .unwrap();
-        }};
+        ($rule: literal, $content:literal) => {{ first_magic($rule, $content, StreamKind::Binary).unwrap() }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
                 first_magic($rule, $content, StreamKind::Binary)
-                    .unwrap()
                     .unwrap()
                     .message(),
                 $message
@@ -3430,15 +3479,10 @@ mod tests {
     }
 
     macro_rules! assert_magic_match_text {
-        ($rule: literal, $content:literal) => {{
-            first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
-                .unwrap()
-                .unwrap();
-        }};
+        ($rule: literal, $content:literal) => {{ first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8)).unwrap() }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
                 first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
-                    .unwrap()
                     .unwrap()
                     .message(),
                 $message
@@ -3451,7 +3495,6 @@ mod tests {
             assert!(
                 first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
                     .unwrap()
-                    .unwrap()
                     .is_default()
             );
         }};
@@ -3461,7 +3504,6 @@ mod tests {
         ($rule: literal, $content:literal) => {{
             assert!(
                 first_magic($rule, $content, StreamKind::Binary)
-                    .unwrap()
                     .unwrap()
                     .is_default()
             );

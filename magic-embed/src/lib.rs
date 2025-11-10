@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
 };
 
-use magic_rs::{MagicDb, MagicFile};
+use magic_rs::{MagicDb, MagicSource};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
@@ -218,7 +218,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 
         macro_rules! load_file {
             ($span: expr, $path: expr) => {
-                let f = MagicFile::open($path).map_err(|e| {
+                let f = MagicSource::open($path).map_err(|e| {
                     syn::Error::new(
                         $span.clone(),
                         format!(
@@ -255,7 +255,8 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
         }
 
         // Serialize and save database
-        let ser = db.serialize().map_err(|e| {
+        let mut ser = vec![];
+        db.serialize(&mut ser).map_err(|e| {
             syn::Error::new(
                 struct_name.span(),
                 format!("failed to serialize database: {e}"),
@@ -280,7 +281,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
             const DB: &[u8] = include_bytes!(#str_db_path);
 
             fn open() -> Result<MagicDb, magic_rs::Error> {
-                Ok(MagicDb::from(Self(magic_rs::MagicDb::deserialize_slice(Self::DB)?)))
+                Ok(MagicDb::from(Self(magic_rs::MagicDb::deserialize(&mut Self::DB.as_ref())?)))
             }
         }
 

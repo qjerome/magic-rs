@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::{
     CmpOp, DependencyRule, DirOffset, Entry, EntryNode, Error, Flag, FloatTest, FloatTransform,
-    IndOffset, IndirectMod, IndirectMods, MagicFile, MagicRule, Match, Message, Name, Offset,
+    IndOffset, IndirectMod, IndirectMods, MagicRule, MagicSource, Match, Message, Name, Offset,
     OffsetType, Op, PStringLen, PStringTest, ReMod, RegexTest, ScalarTest, ScalarTransform,
     SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod, StringTest, Test,
     TestValue, Use,
@@ -388,7 +388,7 @@ impl FileMagicParser {
     pub(crate) fn parse_str<S: AsRef<str>>(
         s: S,
         source: Option<String>,
-    ) -> Result<MagicFile, Error> {
+    ) -> Result<MagicSource, Error> {
         let pairs = FileMagicParser::parse(Rule::file, s.as_ref()).map_err(Box::new)?;
 
         let mut rules = vec![];
@@ -409,7 +409,7 @@ impl FileMagicParser {
             }
         }
 
-        Ok(MagicFile {
+        Ok(MagicSource {
             rules,
             dependencies,
         })
@@ -419,12 +419,12 @@ impl FileMagicParser {
     pub(crate) fn parse_reader<R: Read>(
         r: &mut R,
         source: Option<String>,
-    ) -> Result<MagicFile, Error> {
+    ) -> Result<MagicSource, Error> {
         let s = io::read_to_string(r)?;
         Self::parse_str(s, source)
     }
 
-    pub(crate) fn parse_file<P: AsRef<Path>>(p: P) -> Result<MagicFile, Error> {
+    pub(crate) fn parse_file<P: AsRef<Path>>(p: P) -> Result<MagicSource, Error> {
         let mut s = File::open(&p)?;
         Self::parse_reader(
             &mut s,
