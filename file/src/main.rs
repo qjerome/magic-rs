@@ -93,7 +93,7 @@ struct SerMagicResult<'m> {
     mime_type: &'m str,
     creator_code: Option<Cow<'m, str>>,
     strength: Option<u64>,
-    exts: &'m HashSet<Cow<'m, str>>,
+    extensions: &'m HashSet<Cow<'m, str>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,7 +111,7 @@ impl<'m> SerMagicResult<'m> {
             mime_type: m.mime_type(),
             creator_code: m.creator_code().cloned(),
             strength: m.strength(),
-            exts: m.exts(),
+            extensions: m.exts(),
         }
     }
 }
