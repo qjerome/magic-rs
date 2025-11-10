@@ -17,7 +17,6 @@ use std::{
     io::{self, Read, Seek, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
-    str::Utf8Error,
     usize,
 };
 use tar::Archive;
@@ -166,16 +165,6 @@ impl Error {
             Self::Localized(_, _, e) => e,
             _ => self,
         }
-    }
-}
-
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct ParserError(pest::error::Error<Rule>);
-
-impl From<pest::error::Error<Rule>> for ParserError {
-    fn from(value: pest::error::Error<Rule>) -> Self {
-        Self(value)
     }
 }
 
@@ -1831,7 +1820,7 @@ impl Default for DirOffset {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Match {
+struct Match {
     line: usize,
     depth: u8,
     offset: Offset,
@@ -2143,7 +2132,7 @@ impl Match {
 }
 
 #[derive(Debug, Clone)]
-pub struct Use {
+struct Use {
     line: usize,
     depth: u8,
     start_offset: Offset,
