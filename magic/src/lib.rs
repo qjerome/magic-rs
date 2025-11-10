@@ -3232,11 +3232,11 @@ impl MagicDb {
         self.magic_best_with_stream_kind(&mut haystack, stream_kind)
     }
 
-    pub fn serialize(self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    pub fn serialize(self) -> Result<Vec<u8>, Error> {
         let mut encoder = GzEncoder::new(vec![], Compression::best());
 
         bincode::serde::encode_into_std_write(&self, &mut encoder, bincode::config::standard())?;
-        Ok(encoder.finish().unwrap())
+        Ok(encoder.finish()?)
     }
 
     pub fn deserialize_slice<S: AsRef<[u8]>>(r: S) -> Result<Self, Error> {
