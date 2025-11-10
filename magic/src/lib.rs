@@ -2849,16 +2849,6 @@ impl<'m> Magic<'m> {
         }
     }
 
-    /// Checks if this is a default fallback detection
-    ///
-    /// # Returns
-    ///
-    /// * `bool` - True if this is a default detection
-    #[inline(always)]
-    pub fn is_default(&self) -> bool {
-        self.is_default
-    }
-
     /// Gets the confidence score of the detection
     ///
     /// # Returns
@@ -2897,6 +2887,16 @@ impl<'m> Magic<'m> {
     #[inline(always)]
     pub fn extensions(&self) -> &HashSet<Cow<'m, str>> {
         &self.exts
+    }
+
+    /// Checks if this is a default fallback detection
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if this is a default detection
+    #[inline(always)]
+    pub fn is_default(&self) -> bool {
+        self.is_default
     }
 }
 
