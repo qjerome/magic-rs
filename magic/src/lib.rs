@@ -2553,11 +2553,21 @@ impl MagicRule {
         self.score
     }
 
+    /// Gets the rule's filename if any
+    ///
+    /// # Returns
+    ///
+    /// * `Option<&str>` - The rule's source if available
     #[inline(always)]
     pub fn source(&self) -> Option<&str> {
-        self.source.as_ref().map(|s| s.as_ref())
+        self.source.as_deref()
     }
 
+    /// Gets the line number at which the rule is defined
+    ///
+    /// # Returns
+    ///
+    /// * `usize` - The rule's line number
     #[inline(always)]
     pub fn line(&self) -> usize {
         self.entries.entry.line
