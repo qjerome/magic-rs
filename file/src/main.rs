@@ -179,7 +179,8 @@ fn main() -> Result<(), anyhow::Error> {
                 db_load_rules(&mut db, &o.rules, false)?;
                 db
             } else {
-                EmbeddedMagicDb::open().unwrap()
+                EmbeddedMagicDb::open()
+                    .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
             };
 
             for r in db.rules() {
@@ -215,7 +216,8 @@ fn main() -> Result<(), anyhow::Error> {
                 info!("Time to parse rule files: {:?}", start.elapsed());
                 db
             } else {
-                EmbeddedMagicDb::open().unwrap()
+                EmbeddedMagicDb::open()
+                    .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
             };
 
             for item in o.files {

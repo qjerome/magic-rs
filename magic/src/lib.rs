@@ -126,10 +126,11 @@ pub enum Error {
 }
 
 impl Error {
-    fn parser<S: AsRef<str>>(msg: S, span: Span<'_>) -> Self {
+    #[inline]
+    fn parser<S: ToString>(msg: S, span: Span<'_>) -> Self {
         Self::Parse(Box::new(pest::error::Error::new_from_span(
             ErrorVariant::CustomError {
-                message: msg.as_ref().into(),
+                message: msg.to_string(),
             },
             span,
         )))

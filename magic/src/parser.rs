@@ -228,25 +228,30 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
 }
 
 #[inline]
-fn parse_pos_number(pair: Pair<'_, Rule>) -> i64 {
+fn parse_pos_number(pair: Pair<'_, Rule>) -> Result<i64, Error> {
     let number_token = pair.into_inner().next().expect("expect number kind pair");
     match number_token.as_rule() {
-        Rule::b10_number => number_token.as_str().parse::<i64>().unwrap(),
-        Rule::b16_number => u64::from_str_radix(
+        Rule::b10_number => number_token
+            .as_str()
+            .parse::<i64>()
+            .map_err(|e| Error::parser(e, number_token.as_span())),
+        Rule::b16_number => Ok(u64::from_str_radix(
             number_token
                 .as_str()
                 .to_lowercase()
                 .strip_prefix("0x")
+                // guarantee not to panic by parser
                 .unwrap(),
             16,
         )
-        .unwrap() as i64,
+        .map_err(|e| Error::parser(e, number_token.as_span()))?
+            as i64),
         _ => panic!("unexpected number"),
     }
 }
 
 #[inline]
-fn parse_number_pair(pair: Pair<'_, Rule>) -> i64 {
+fn parse_number_pair(pair: Pair<'_, Rule>) -> Result<i64, Error> {
     assert_eq!(pair.as_rule(), Rule::number);
     let inner = pair
         .into_inner()
@@ -255,12 +260,13 @@ fn parse_number_pair(pair: Pair<'_, Rule>) -> i64 {
 
     match inner.as_rule() {
         Rule::pos_number => parse_pos_number(inner),
-        Rule::neg_number => -parse_pos_number(
+        Rule::neg_number => parse_pos_number(
             inner
                 .into_inner()
                 .next()
                 .expect("expecting positive number"),
-        ),
+        )
+        .map(|i| -i),
         _ => panic!("unexpected number inner pair"),
     }
 }
@@ -453,7 +459,7 @@ impl Flag {
                 let number_pair = pairs.next().expect("strength entry must have a value");
 
                 let span = number_pair.as_span();
-                let by: u8 = parse_pos_number(number_pair)
+                let by: u8 = parse_pos_number(number_pair)?
                     .try_into()
                     .map_err(|_| Error::parser("value must be u8", span))?;
 
@@ -479,22 +485,22 @@ impl Flag {
 }
 
 impl Shift {
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         assert_eq!(pair.as_rule(), Rule::shift);
         let shift_variant = pair.into_inner().next().expect("shift cannot be empty");
         match shift_variant.as_rule() {
-            Rule::ind_shift => Self::Indirect(parse_number_pair(
+            Rule::ind_shift => Ok(Self::Indirect(parse_number_pair(
                 shift_variant
                     .into_inner()
                     .next()
                     .expect("indirect shift must contain number"),
-            )),
-            Rule::dir_shift => Self::Direct(parse_number_pair(
+            )?)),
+            Rule::dir_shift => Ok(Self::Direct(parse_number_pair(
                 shift_variant
                     .into_inner()
                     .next()
                     .expect("direct shift must contain number"),
-            ) as u64),
+            )? as u64)),
             _ => {
                 panic!("unknown shift pair")
             }
@@ -503,25 +509,25 @@ impl Shift {
 }
 
 impl DirOffset {
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         match pair.as_rule() {
             Rule::abs_offset => {
                 let number_pair = pair.into_inner().next().expect("number pair expected");
 
-                let offset = parse_number_pair(number_pair);
+                let offset = parse_number_pair(number_pair)?;
 
                 if offset.is_negative() {
-                    DirOffset::End(offset)
+                    Ok(DirOffset::End(offset))
                 } else {
-                    DirOffset::Start(offset as u64)
+                    Ok(DirOffset::Start(offset as u64))
                 }
             }
             Rule::rel_offset => {
                 let number_pair = pair.into_inner().next().expect("number pair expected");
 
-                let offset = parse_number_pair(number_pair);
+                let offset = parse_number_pair(number_pair)?;
 
-                DirOffset::LastUpper(offset)
+                Ok(DirOffset::LastUpper(offset))
             }
             _ => panic!("unexpected offset pair"),
         }
@@ -539,7 +545,7 @@ impl IndOffset {
 
         for pair in pair.into_inner() {
             match pair.as_rule() {
-                Rule::abs_offset | Rule::rel_offset => off_addr = Some(DirOffset::from_pair(pair)),
+                Rule::abs_offset | Rule::rel_offset => off_addr = Some(DirOffset::from_pair(pair)?),
                 Rule::ind_offset_sign => match pair.as_str() {
                     "," => signed = true,
                     "." => signed = false,
@@ -571,13 +577,14 @@ impl IndOffset {
                 | Rule::op_xor => op = Some(Op::from_pair(pair)?),
 
                 Rule::shift => {
-                    shift = Some(Shift::from_pair(pair));
+                    shift = Some(Shift::from_pair(pair)?);
                 }
                 _ => {}
             }
         }
 
         Ok(Self {
+            // guarantee not to panic by parser
             off_addr: off_addr.unwrap(),
             signed,
             ty: offset_type,
@@ -588,7 +595,7 @@ impl IndOffset {
 }
 
 impl Offset {
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let mut pairs = pair.into_inner();
         let pair = pairs.next().expect("offset must have token");
 
@@ -596,24 +603,23 @@ impl Offset {
             Rule::abs_offset => {
                 let number_pair = pair.into_inner().next().expect("number pair expected");
 
-                let offset = parse_number_pair(number_pair);
+                let offset = parse_number_pair(number_pair)?;
 
                 if offset.is_negative() {
-                    Self::Direct(DirOffset::End(offset))
+                    Ok(Self::Direct(DirOffset::End(offset)))
                 } else {
-                    Self::Direct(DirOffset::Start(offset as u64))
+                    Ok(Self::Direct(DirOffset::Start(offset as u64)))
                 }
             }
             Rule::rel_offset => {
                 let number_pair = pair.into_inner().next().expect("number pair expected");
 
-                let offset = parse_number_pair(number_pair);
+                let offset = parse_number_pair(number_pair)?;
 
-                Self::Direct(DirOffset::LastUpper(offset))
+                Ok(Self::Direct(DirOffset::LastUpper(offset)))
             }
 
-            // FIXME: remove unwrap, this function must return Result
-            Rule::indirect_offset => Self::Indirect(IndOffset::from_pair(pair).unwrap()),
+            Rule::indirect_offset => Ok(Self::Indirect(IndOffset::from_pair(pair)?)),
 
             _ => panic!("unexpected token"),
         }
@@ -643,7 +649,7 @@ impl Use {
             Rule::stream_offset,
             "expected offset rule"
         );
-        let offset = Offset::from_pair(offset);
+        let offset = Offset::from_pair(offset)?;
 
         // here token can be both endianness_switch or rule_name
         let token = pairs
@@ -717,7 +723,7 @@ impl StringTest {
         let mut mods = FlagSet::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
-                Rule::pos_number => length = Some(parse_pos_number(p) as usize),
+                Rule::pos_number => length = Some(parse_pos_number(p)? as usize),
                 Rule::string_mod => mods |= StringMod::from_pair(p)?,
                 // parser should guarantee this branch is never reached
                 _ => unimplemented!(),
@@ -767,7 +773,7 @@ impl PStringTest {
 }
 
 impl SearchTest {
-    fn from_pair(pair: Pair<'_, Rule>) -> Self {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let mut length = None;
         let mut str_mods: FlagSet<StringMod> = FlagSet::empty();
         let mut re_mods: FlagSet<ReMod> = FlagSet::empty();
@@ -780,7 +786,7 @@ impl SearchTest {
                 Rule::search => {
                     for p in pair.into_inner() {
                         match p.as_rule() {
-                            Rule::pos_number => length = Some(parse_pos_number(p) as usize),
+                            Rule::pos_number => length = Some(parse_pos_number(p)? as usize),
                             Rule::search_mod => {
                                 for m in p.as_str().chars() {
                                     match m {
@@ -813,7 +819,7 @@ impl SearchTest {
             }
         }
 
-        Self {
+        Ok(Self {
             // guarantee not to panic by parser
             str: value.unwrap(),
             n_pos: length,
@@ -821,7 +827,7 @@ impl SearchTest {
             re_mods,
             binary,
             cmp_op,
-        }
+        })
     }
 }
 
@@ -839,7 +845,7 @@ impl RegexTest {
                 Rule::regex => {
                     for p in pair.into_inner() {
                         match p.as_rule() {
-                            Rule::pos_number => length = Some(parse_pos_number(p) as usize),
+                            Rule::pos_number => length = Some(parse_pos_number(p)? as usize),
                             Rule::regex_mod => {
                                 for m in p.as_str().chars() {
                                     match m {
@@ -871,6 +877,7 @@ impl RegexTest {
             }
         }
 
+        // guarantee not to panic by parser
         let prep_re = prep_re.unwrap();
         let non_magic_len = nonmagic(&prep_re);
         let ascii_re = format!("(?-u){prep_re}");
@@ -919,7 +926,7 @@ impl Test {
                                         // parser implementation
                                         let num = ty
                                             .unwrap()
-                                            .scalar_from_number(parse_pos_number(number));
+                                            .scalar_from_number(parse_pos_number(number)?);
 
                                         // we check if we try to divide by zero
                                         if num.is_zero() {
@@ -951,8 +958,9 @@ impl Test {
                                 pair.into_inner().next().expect("number pair expected");
 
                             scalar = Some(TestValue::Value(
+                                // guarantee not to panic by parser
                                 ty.unwrap()
-                                    .scalar_from_number(parse_number_pair(number_pair)),
+                                    .scalar_from_number(parse_number_pair(number_pair)?),
                             ));
                         }
                         Rule::any_value => scalar = Some(TestValue::Any),
@@ -979,7 +987,7 @@ impl Test {
                     test_val: scalar,
                 })
             }
-            Rule::search_test => SearchTest::from_pair(pair).into(),
+            Rule::search_test => SearchTest::from_pair(pair)?.into(),
             Rule::regex_test => RegexTest::from_pair(pair)?.into(),
             Rule::string_test => {
                 let mut string_test = pair.into_inner();
@@ -1117,8 +1125,10 @@ impl Test {
                                     Rule::float_type => ty = Some(FloatDataType::from_pair(p)?),
                                     Rule::float_transform => {
                                         let mut pairs = p.into_inner();
+                                        // guarantee not to panic by parser
                                         let op = Op::from_pair(pairs.next().unwrap())?;
 
+                                        // guarantee not to panic by parser
                                         let float_pair = pairs.next().unwrap();
                                         let value: f64 =
                                             float_pair.as_str().parse().map_err(|_| {
@@ -1147,6 +1157,7 @@ impl Test {
                             float = Some(TestValue::Value(ty.float_from_f64(f)));
                         }
                         Rule::float_condition => {
+                            // guarantee not to panic by parser
                             cmp_op = CmpOp::from_pair(p.into_inner().next().unwrap())?
                         }
                         _ => {}
@@ -1252,9 +1263,11 @@ impl Message {
                 // Read the rest of the specifier
                 while let Some(&next_char) = chars.peek() {
                     if Self::PRINTF_CONVERSION_SPECIFIERS.contains(&next_char) {
+                        // cannot panic because of peek
                         full_specifier.push(chars.next().unwrap());
                         break;
                     } else {
+                        // cannot panic because of peek
                         full_specifier.push(chars.next().unwrap());
                     }
                 }
@@ -1298,45 +1311,30 @@ impl Message {
 impl Match {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let (line, _) = pair.line_col();
-        let mut pairs = pair.into_inner();
-
-        // first token might be a depth or an offset
-        let token = pairs.next().expect("expecting a depth or offset");
-
-        let (depth, offset) = if matches!(token.as_rule(), Rule::depth) {
-            (
-                token.as_str().len() as u8,
-                pairs.next().expect("offset token"),
-            )
-        } else {
-            (0, token)
-        };
-
-        assert_eq!(
-            offset.as_rule(),
-            Rule::stream_offset,
-            "expected offset rule"
-        );
-        let offset = Offset::from_pair(offset);
-
-        let test_pair = pairs.next().expect("test pair expected");
-        assert_eq!(test_pair.as_rule(), Rule::test, "wrong token");
-        let test = Test::from_pair(test_pair.into_inner().next().unwrap())?;
-
-        // parsing the message
+        let mut depth = None;
+        let mut stream_offset = None;
+        let mut test = None;
         let mut message = None;
-        if let Some(msg_pair) = pairs.next() {
-            if !msg_pair.as_str().is_empty() {
-                message = Some(Message::from_pair(msg_pair)?);
-            }
-        };
 
+        for pair in pair.into_inner() {
+            match pair.as_rule() {
+                Rule::depth => depth = Some(pair.as_str().len() as u8),
+                Rule::stream_offset => stream_offset = Some(Offset::from_pair(pair)?),
+                Rule::test => test = Some(Test::from_pair(pair.into_inner().next().unwrap())?),
+                Rule::message => message = Some(Message::from_pair(pair)?),
+                _ => return Err(Error::parser("unexpected pair", pair.as_span())),
+            }
+        }
+
+        // parser guarantee not to panic
+        let test = test.unwrap();
         let test_strength = test.strength();
 
         Ok(Self {
             line,
-            depth,
-            offset,
+            depth: depth.unwrap_or_default(),
+            // parser guarantee not to panic
+            offset: stream_offset.unwrap(),
             test,
             test_strength,
             message,
