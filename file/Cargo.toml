@@ -2,6 +2,11 @@
 name = "file-rs"
 version = "0.1.0"
 edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["cli", "magic", "file", "mime", "identification"]
+description = "Command line tool for file identification"
 
 [dependencies]
 anyhow = "1.0.98"
