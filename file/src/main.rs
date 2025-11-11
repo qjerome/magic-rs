@@ -23,16 +23,153 @@ struct EmbeddedMagicDb;
 struct Cli {
     #[clap(subcommand)]
     command: Option<Command>,
+    /// Hide log messages
+    #[arg(short, long)]
+    silent: bool,
+    /// Show all magic rules matching
+    /// not only the first one
+    #[arg(short, long)]
+    all: bool,
+    /// Disable file extension acceleration (matches first
+    /// rules where the file extension is defined)
+    #[arg(long)]
+    no_accel: bool,
+    /// Output the result as JSON instead of text
+    #[arg(short, long)]
+    json: bool,
+    /// Path to magic rule file or directory
+    /// containing rule files to compile
+    #[arg(short, long)]
+    rules: Vec<PathBuf>,
+    /// Walk directories recursively while scanning
+    #[arg(short = 'R', long)]
+    recursive: bool,
+    /// Path to compiled rules database
+    #[arg(short, long)]
+    db: Option<PathBuf>,
+    /// Files or directory to scan
+    paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Scan paths and attempt at classifying files
-    Scan(ScanOpt),
     /// Compile magic rules into binary format
     Compile(CompileOpt),
     /// Show rules' information
     Show(ShowOpt),
+}
+
+impl Command {
+    fn scan(o: ScanOpt) -> Result<(), anyhow::Error> {
+        let db = if let Some(db) = o.db {
+            let start = Instant::now();
+            let db = MagicDb::deserialize(&mut File::open(&db).map_err(|e| {
+                anyhow!("failed to open database file {}: {e}", db.to_string_lossy())
+            })?)
+            .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
+            info!("Time to deserialize database: {:?}", start.elapsed());
+            db
+        } else if !o.rules.is_empty() {
+            let mut db = MagicDb::new();
+
+            let start = Instant::now();
+            db_load_rules(&mut db, &o.rules, o.silent)?;
+            info!("Time to parse rule files: {:?}", start.elapsed());
+            db
+        } else {
+            EmbeddedMagicDb::open().map_err(|e| anyhow!("failed to open embedded database: {e}"))?
+        };
+
+        for item in o.paths {
+            let mut wo = WalkOptions::new();
+            wo.files().sort(true);
+
+            if !o.recursive {
+                wo.max_depth(0);
+            }
+
+            for f in wo.walk(item).flatten() {
+                debug!("scanning file: {}", f.to_string_lossy());
+                let Ok(mut file) = File::open(&f)
+                    .inspect_err(|e| error!("failed to open file={}: {e}", f.to_string_lossy()))
+                else {
+                    continue;
+                };
+
+                if o.all {
+                    let Ok(magics) = db.magic_all(&mut file).inspect_err(|e| {
+                        error!("failed to get magic file={}: {e}", f.to_string_lossy())
+                    }) else {
+                        continue;
+                    };
+
+                    if o.json {
+                        let amr = SerAllMagicResult {
+                            path: f,
+                            magics: magics
+                                .iter()
+                                .map(|m| {
+                                    SerMagicResult::from_path_and_magic(Option::<PathBuf>::None, m)
+                                })
+                                .collect(),
+                        };
+
+                        let Ok(json) = serde_json::to_string(&amr)
+                            .inspect_err(|e| error!("failed to serialize magic: {e}"))
+                        else {
+                            continue;
+                        };
+
+                        println!("{json}")
+                    } else {
+                        for magic in magics {
+                            println!(
+                                "{} source:{} strength:{} mime:{} magic:{}",
+                                f.to_string_lossy(),
+                                magic.source().unwrap_or(&Cow::Borrowed("unknown")),
+                                magic.strength().unwrap_or_default(),
+                                magic.mime_type(),
+                                magic.message()
+                            )
+                        }
+                    }
+                } else {
+                    let ext: Option<&str> = if o.no_accel {
+                        None
+                    } else {
+                        f.extension().and_then(|e| e.to_str())
+                    };
+
+                    let Ok(magic) = db.magic_first(&mut file, ext).inspect_err(|e| {
+                        error!("failed to get magic file={}: {e}", f.to_string_lossy())
+                    }) else {
+                        continue;
+                    };
+
+                    if !o.json {
+                        println!(
+                            "{} source:{} strength:{} mime:{} magic:{}",
+                            f.to_string_lossy(),
+                            magic.source().unwrap_or(&Cow::Borrowed("none")),
+                            magic.strength().unwrap_or_default(),
+                            magic.mime_type(),
+                            magic.message()
+                        )
+                    } else {
+                        let mr = SerMagicResult::from_path_and_magic(Some(f), &magic);
+                        let Ok(json) = serde_json::to_string(&mr)
+                            .inspect_err(|e| error!("failed to serialize magic: {e}"))
+                        else {
+                            continue;
+                        };
+
+                        println!("{json}");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -62,7 +199,7 @@ struct ScanOpt {
     #[arg(short, long)]
     db: Option<PathBuf>,
     /// Files or directory to scan
-    files: Vec<PathBuf>,
+    paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -199,119 +336,6 @@ fn main() -> Result<(), anyhow::Error> {
                 )
             }
         }
-        Some(Command::Scan(o)) => {
-            let db = if let Some(db) = o.db {
-                let start = Instant::now();
-                let db = MagicDb::deserialize(&mut File::open(&db).map_err(|e| {
-                    anyhow!("failed to open database file {}: {e}", db.to_string_lossy())
-                })?)
-                .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
-                info!("Time to deserialize database: {:?}", start.elapsed());
-                db
-            } else if !o.rules.is_empty() {
-                let mut db = MagicDb::new();
-
-                let start = Instant::now();
-                db_load_rules(&mut db, &o.rules, o.silent)?;
-                info!("Time to parse rule files: {:?}", start.elapsed());
-                db
-            } else {
-                EmbeddedMagicDb::open()
-                    .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
-            };
-
-            for item in o.files {
-                let mut wo = WalkOptions::new();
-                wo.files().sort(true);
-
-                if !o.recursive {
-                    wo.max_depth(0);
-                }
-
-                for f in wo.walk(item).flatten() {
-                    debug!("scanning file: {}", f.to_string_lossy());
-                    let Ok(mut file) = File::open(&f).inspect_err(|e| {
-                        error!("failed to open file={}: {e}", f.to_string_lossy())
-                    }) else {
-                        continue;
-                    };
-
-                    if o.all {
-                        let Ok(magics) = db.magic_all(&mut file).inspect_err(|e| {
-                            error!("failed to get magic file={}: {e}", f.to_string_lossy())
-                        }) else {
-                            continue;
-                        };
-
-                        if o.json {
-                            let amr = SerAllMagicResult {
-                                path: f,
-                                magics: magics
-                                    .iter()
-                                    .map(|m| {
-                                        SerMagicResult::from_path_and_magic(
-                                            Option::<PathBuf>::None,
-                                            m,
-                                        )
-                                    })
-                                    .collect(),
-                            };
-
-                            let Ok(json) = serde_json::to_string(&amr)
-                                .inspect_err(|e| error!("failed to serialize magic: {e}"))
-                            else {
-                                continue;
-                            };
-
-                            println!("{json}")
-                        } else {
-                            for magic in magics {
-                                println!(
-                                    "file:{} source:{} strength:{} mime:{} magic:{}",
-                                    f.to_string_lossy(),
-                                    magic.source().unwrap_or(&Cow::Borrowed("unknown")),
-                                    magic.strength().unwrap_or_default(),
-                                    magic.mime_type(),
-                                    magic.message()
-                                )
-                            }
-                        }
-                    } else {
-                        let ext: Option<&str> = if o.no_accel {
-                            None
-                        } else {
-                            f.extension().and_then(|e| e.to_str())
-                        };
-
-                        let Ok(magic) = db.magic_first(&mut file, ext).inspect_err(|e| {
-                            error!("failed to get magic file={}: {e}", f.to_string_lossy())
-                        }) else {
-                            continue;
-                        };
-
-                        if !o.json {
-                            println!(
-                                "file:{} source:{} strength:{} mime:{} magic:{}",
-                                f.to_string_lossy(),
-                                magic.source().unwrap_or(&Cow::Borrowed("none")),
-                                magic.strength().unwrap_or_default(),
-                                magic.mime_type(),
-                                magic.message()
-                            )
-                        } else {
-                            let mr = SerMagicResult::from_path_and_magic(Some(f), &magic);
-                            let Ok(json) = serde_json::to_string(&mr)
-                                .inspect_err(|e| error!("failed to serialize magic: {e}"))
-                            else {
-                                continue;
-                            };
-
-                            println!("{json}");
-                        }
-                    }
-                }
-            }
-        }
 
         Some(Command::Compile(o)) => {
             let mut db = MagicDb::new();
@@ -355,7 +379,17 @@ fn main() -> Result<(), anyhow::Error> {
 
             info!("Time to serialize and save database: {:?}", start.elapsed());
         }
-        None => {}
+
+        None => Command::scan(ScanOpt {
+            silent: cli.silent,
+            all: cli.all,
+            no_accel: cli.no_accel,
+            json: cli.json,
+            rules: cli.rules,
+            recursive: cli.recursive,
+            db: cli.db,
+            paths: cli.paths,
+        })?,
     }
 
     Ok(())
