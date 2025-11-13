@@ -1,14 +1,13 @@
 [package]
 name = "magic-rs"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.87.0"
+rust-version.workspace = true
+edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
 keywords = ["magic", "file", "mime", "identification", "libmagic"]
 description = "Safe Rust re-implementation of libmagic"
-include = ["src/magdir"]
 
 [dependencies]
 chrono = "0.4.41"
@@ -19,7 +18,7 @@ pest_derive = "2.7.14"
 regex = "1.11.1"
 thiserror = "2.0.12"
 tracing = "0.1.41"
-lazy-cache = { path = "../lazy-cache/" }
+lazy-cache = { path = "../lazy-cache/", version = "0.1" }
 uuid = "1.18.1"
 memchr = "2.7.6"
 serde_json = "1.0.145"
