@@ -122,6 +122,8 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
     // convert to proc-macro2 TokenStream for syn helpers
     let ts2: proc_macro2::TokenStream = attr.into();
 
+    let struct_vis = input_struct.vis;
+
     let metas = MetaParser::parse_meta(ts2)?;
 
     let exclude = if let Some(exclude) = metas.get_key_value("exclude")? {
@@ -187,7 +189,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
     for (s, p) in include.iter().chain(exclude.iter()) {
         if !p.exists() {
             return Err(syn::Error::new(
-                s.clone(),
+                *s,
                 format!("no such file or directory: {}", p.to_string_lossy()),
             ));
         }
@@ -240,7 +242,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
             if p.is_dir() {
                 for rule_file in wo.walk(p) {
                     let rule_file = rule_file.map_err(|e| {
-                        syn::Error::new(s.clone(), format!("failed to list rule file: {e}"))
+                        syn::Error::new(*s, format!("failed to list rule file: {e}"))
                     })?;
 
                     if exclude_set.contains(&rule_file) {
@@ -275,25 +277,15 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 
     // Generate the output: the original function + a print statement
     let output = quote! {
-        struct #struct_name(magic_rs::MagicDb);
+        /// This structure exposes an embedded compiled magic database.
+        #struct_vis struct #struct_name;
 
         impl #struct_name {
             const DB: &[u8] = include_bytes!(#str_db_path);
 
-            fn open() -> Result<MagicDb, magic_rs::Error> {
-                Ok(MagicDb::from(Self(magic_rs::MagicDb::deserialize(&mut Self::DB.as_ref())?)))
-            }
-        }
-
-        impl From<#struct_name> for magic_rs::MagicDb{
-            fn from(value: #struct_name) -> Self {
-                value.0
-            }
-        }
-
-        impl AsRef<magic_rs::MagicDb> for #struct_name {
-            fn as_ref(&self) -> &magic_rs::MagicDb {
-                &self.0
+            /// Opens the embedded magic database and returns a [`magic_rs::MagicDb`]
+            #struct_vis fn open() -> Result<magic_rs::MagicDb, magic_rs::Error> {
+                magic_rs::MagicDb::deserialize(&mut Self::DB.as_ref())
             }
         }
     };
@@ -319,7 +311,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 /// use magic_embed::magic_embed;
 /// use magic_rs::MagicDb;
 ///
-/// #[magic_embed(include=["magic/src/magdir"], exclude=["magic/src/magdir/der"])]
+/// #[magic_embed(include=["magic-db/src/magdir"], exclude=["magic-db/src/magdir/der"])]
 /// struct EmbeddedMagicDb;
 ///
 /// let db: MagicDb = EmbeddedMagicDb::open().unwrap();
@@ -340,14 +332,9 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 /// track these files directly because it embeds only the compiled database,
 /// not the rule files themselves. Add a `build.rs` file like this:
 ///
-/// ```rust
+/// ```ignore
+/// // build.rs
 /// fn main() {
-///     // We need to trigger a re-run if magdir changed
-///     // we cannot rely on proc-macro because we embed
-///     // only a compiled version of the rules within the
-///     // final binary. File tracking with include_bytes!
-///     // seems to work only when the file is not eliminated
-///     // by dead code elimination (DCE).
 ///     println!("cargo::rerun-if-changed=magdir/");
 /// }
 /// ```

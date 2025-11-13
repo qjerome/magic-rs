@@ -2,11 +2,11 @@
 name = "magic-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85.1"
+rust-version = "1.87.0"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-keywords = ["magic", "file", "mime", "identification"]
+keywords = ["magic", "file", "mime", "identification", "libmagic"]
 description = "Safe Rust re-implementation of libmagic"
 include = ["src/magdir"]
 

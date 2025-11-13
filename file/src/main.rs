@@ -10,14 +10,10 @@ use std::{
 use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
-use magic_embed::magic_embed;
 use magic_rs::{Magic, MagicDb, MagicSource};
 use serde_derive::Serialize;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
-
-#[magic_embed(include=["magic/src/magdir"], exclude=["magic/src/magdir/der"])]
-struct EmbeddedMagicDb;
 
 #[derive(Parser)]
 struct Cli {
@@ -77,7 +73,8 @@ impl Command {
             info!("Time to parse rule files: {:?}", start.elapsed());
             db
         } else {
-            EmbeddedMagicDb::open().map_err(|e| anyhow!("failed to open embedded database: {e}"))?
+            magic_db::CompiledDb::open()
+                .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
         };
 
         for item in o.paths {
@@ -127,7 +124,7 @@ impl Command {
                                 "{} source:{} strength:{} mime:{} magic:{}",
                                 f.to_string_lossy(),
                                 magic.source().unwrap_or(&Cow::Borrowed("unknown")),
-                                magic.strength().unwrap_or_default(),
+                                magic.strength(),
                                 magic.mime_type(),
                                 magic.message()
                             )
@@ -151,7 +148,7 @@ impl Command {
                             "{} source:{} strength:{} mime:{} magic:{}",
                             f.to_string_lossy(),
                             magic.source().unwrap_or(&Cow::Borrowed("none")),
-                            magic.strength().unwrap_or_default(),
+                            magic.strength(),
                             magic.mime_type(),
                             magic.message()
                         )
@@ -229,7 +226,7 @@ struct SerMagicResult<'m> {
     magic: String,
     mime_type: &'m str,
     creator_code: Option<Cow<'m, str>>,
-    strength: Option<u64>,
+    strength: u64,
     extensions: &'m HashSet<Cow<'m, str>>,
 }
 
@@ -316,7 +313,7 @@ fn main() -> Result<(), anyhow::Error> {
                 db_load_rules(&mut db, &o.rules, false)?;
                 db
             } else {
-                EmbeddedMagicDb::open()
+                magic_db::CompiledDb::open()
                     .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
             };
 
@@ -329,7 +326,7 @@ fn main() -> Result<(), anyhow::Error> {
                     r.is_text(),
                     {
                         let mut v: Vec<&str> =
-                            r.extensions().into_iter().map(|s| s.as_ref()).collect();
+                            r.extensions().iter().map(|s| s.as_ref()).collect();
                         v.sort();
                         v.join("/")
                     }

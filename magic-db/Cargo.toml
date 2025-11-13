@@ -1,0 +1,11 @@
+[package]
+name = "magic-db"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+magic-rs = { path = "../magic" }
+magic-embed = { path = "../magic-embed" }

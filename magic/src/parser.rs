@@ -76,7 +76,7 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
                                 .map(|c| c.is_ascii_hexdigit())
                                 .unwrap_or_default()
                             {
-                                hex_str.push(chars.next().unwrap() as char);
+                                hex_str.push(chars.next().unwrap());
                                 continue;
                             }
                             break;
@@ -97,7 +97,7 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
                                 .map(|c| matches!(c, '0'..='7'))
                                 .unwrap_or_default()
                             {
-                                octal_str.push(chars.next().unwrap() as char);
+                                octal_str.push(chars.next().unwrap());
                                 continue;
                             }
                             break;
@@ -106,7 +106,7 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
                             result.push(octal as char);
                         } else {
-                            result.push(c as char); // Push the backslash if the octal sequence is invalid
+                            result.push(c); // Push the backslash if the octal sequence is invalid
                         }
                     }
                     _ => {
@@ -114,7 +114,7 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
                     }
                 }
             } else {
-                result.push(c as char); // Push the backslash if no character follows
+                result.push(c); // Push the backslash if no character follows
             }
         } else {
             result.push(c);
@@ -183,7 +183,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                             binary = !is_printable_ascii(hex);
                             result.push(hex);
                         } else {
-                            result.push(c as u8); // Push the backslash if the hex sequence is invalid
+                            result.push(c); // Push the backslash if the hex sequence is invalid
                         }
                     }
                     // Handle octal escape sequences (e.g., \1 \23 \177)
@@ -209,7 +209,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                             binary = !is_printable_ascii(octal);
                             result.push(octal);
                         } else {
-                            result.push(c as u8); // Push the backslash if the octal sequence is invalid
+                            result.push(c); // Push the backslash if the octal sequence is invalid
                         }
                     }
                     _ => {
@@ -217,7 +217,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                     }
                 }
             } else {
-                result.push(c as u8); // Push the backslash if no character follows
+                result.push(c); // Push the backslash if no character follows
             }
         } else {
             result.push(c);
@@ -811,7 +811,7 @@ impl SearchTest {
                 Rule::op_neq => cmp_op = CmpOp::Neq,
                 Rule::op_eq => cmp_op = CmpOp::Eq,
                 Rule::string_value => {
-                    let (bin, v) = unescape_string_to_vec(&pair.as_str());
+                    let (bin, v) = unescape_string_to_vec(pair.as_str());
                     binary = bin;
                     value = Some(v.to_vec());
                 }
@@ -1177,29 +1177,26 @@ impl Test {
             Rule::indirect_test => {
                 let mut ind_mods = IndirectMods::empty();
                 for p in pair.into_inner() {
-                    match p.as_rule() {
-                        Rule::indirect => {
-                            for p in p.into_inner() {
-                                match p.as_rule() {
-                                    Rule::indirect_mod => match p.as_str() {
-                                        "r" => ind_mods |= IndirectMod::Relative,
-                                        _ => {
-                                            return Err(Error::parser(
-                                                "unsupported modifier",
-                                                p.as_span(),
-                                            ));
-                                        }
-                                    },
+                    if p.as_rule() == Rule::indirect {
+                        for p in p.into_inner() {
+                            match p.as_rule() {
+                                Rule::indirect_mod => match p.as_str() {
+                                    "r" => ind_mods |= IndirectMod::Relative,
                                     _ => {
                                         return Err(Error::parser(
-                                            "parsing rule not handled",
+                                            "unsupported modifier",
                                             p.as_span(),
                                         ));
                                     }
+                                },
+                                _ => {
+                                    return Err(Error::parser(
+                                        "parsing rule not handled",
+                                        p.as_span(),
+                                    ));
                                 }
                             }
                         }
-                        _ => {}
                     }
                 }
                 Self::Indirect(ind_mods)
@@ -1226,7 +1223,7 @@ impl Message {
             .last()
             .map(|c| match c {
                 'd' | 'i' | 'u' | 'c' | 'f' | 's' => "".into(),
-                'x' | 'X' | 'o' | 'e' | 'E' | 'p' => c.clone().into(),
+                'x' | 'X' | 'o' | 'e' | 'E' | 'p' => (*c).into(),
                 _ => {
                     warn!("default rust format for printf specifier: {full_specifier}");
                     "".into()

@@ -8,7 +8,6 @@ use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
 use serde::{Deserialize, Serialize};
-use serde_json;
 use std::{
     borrow::Cow,
     cmp::max,
@@ -17,7 +16,6 @@ use std::{
     io::{self, Read, Seek, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
-    usize,
 };
 use tar::Archive;
 use thiserror::Error;
@@ -45,7 +43,7 @@ const FILE_REGEX_MAX: usize = 8192;
 pub const DEFAULT_BIN_MIMETYPE: &str = "application/octet-stream";
 pub const DEFAULT_TEXT_MIMETYPE: &str = "text/plain";
 
-pub(crate) const TIMESTAMP_FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
+pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 macro_rules! debug_panic {
     ($($arg:tt)*) => {
@@ -78,13 +76,7 @@ macro_rules! read_me {
 #[inline(always)]
 fn read_octal_u64<R: Read + Seek>(haystack: &mut LazyCache<R>) -> Option<u64> {
     let s = haystack
-        .read_while_or_limit(
-            |b| match b {
-                b'0'..=b'7' => true,
-                _ => false,
-            },
-            22,
-        )
+        .read_while_or_limit(|b| matches!(b, b'0'..=b'7'), 22)
         .map(|buf| str::from_utf8(buf))
         .ok()?
         .ok()?;
@@ -180,7 +172,7 @@ enum Message {
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::String(s) => write!(f, "{}", s),
+            Self::String(s) => write!(f, "{s}"),
             Self::Format { printf_spec: _, fs } => write!(f, "{}", fs.to_string_lossy()),
         }
     }
@@ -498,7 +490,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let wrapper = String::deserialize(deserializer)?;
-    Ok(bytes::Regex::new(&wrapper).map_err(|e| serde::de::Error::custom(e))?)
+    bytes::Regex::new(&wrapper).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -544,7 +536,7 @@ impl RegexTest {
                         break;
                     }
 
-                    if let Some(re_match) = self.re.find(&line) {
+                    if let Some(re_match) = self.re.find(line) {
                         // the offset of the string is computed from the start of the buffer
                         let start_offset = off_txt + re_match.start() as u64;
 
@@ -572,17 +564,15 @@ impl RegexTest {
             }
 
             StreamKind::Binary => {
-                if let Some(re_match) = self.re.find(&buf) {
-                    Some(MatchRes::Bytes(
+                self.re.find(buf).map(|re_match| {
+                    MatchRes::Bytes(
                         // the offset of the string is computed from the start of the buffer
                         off_buf + re_match.start() as u64,
                         None,
                         re_match.as_bytes(),
                         Encoding::Utf8,
-                    ))
-                } else {
-                    None
-                }
+                    )
+                })
             }
         };
 
@@ -630,7 +620,7 @@ impl From<StringTest> for Test {
 }
 
 #[inline(always)]
-fn string_match<'str>(str: &'str [u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usize) {
+fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usize) {
     let mut consumed = 0;
     // we can do a simple string comparison
     if mods.is_disjoint(
@@ -693,12 +683,11 @@ fn string_match<'str>(str: &'str [u8], mods: FlagSet<StringMod>, buf: &[u8]) -> 
                 }
             }
 
-            if mods.contains(StringMod::LowerInsensitive) {
-                if ref_byte.is_ascii_lowercase() && ref_byte == b.to_ascii_lowercase()
-                    || ref_byte == b
-                {
-                    continue_next_iteration!()
-                }
+            if mods.contains(StringMod::LowerInsensitive)
+                && (ref_byte.is_ascii_lowercase() && ref_byte == b.to_ascii_lowercase()
+                    || ref_byte == b)
+            {
+                continue_next_iteration!()
             }
 
             if mods.contains(StringMod::CompactWhitespace) && ref_byte == b' ' {
@@ -801,9 +790,7 @@ impl SearchTest {
     fn match_buf<'buf>(&self, off_buf: u64, buf: &'buf [u8]) -> Option<MatchRes<'buf>> {
         let mut i = 0;
 
-        let Some(needle) = self.str.get(0) else {
-            return None;
-        };
+        let needle = self.str.first()?;
 
         while i < buf.len() {
             // we cannot match if the first character isn't the same
@@ -887,7 +874,7 @@ impl DynDisplay for ReadValue<'_> {
         match self {
             Self::Float(_, s) => DynDisplay::dyn_fmt(s, f),
             Self::Scalar(_, s) => DynDisplay::dyn_fmt(s, f),
-            Self::Bytes(_, b) => Ok(format!("{:?}", b)),
+            Self::Bytes(_, b) => Ok(format!("{b:?}")),
         }
     }
 }
@@ -1137,11 +1124,11 @@ impl Test {
                     TestValue::Value(str) => {
                         let buf = if let Some(length) = t.length {
                             // if there is a length specified
-                            let read = haystack.read_exact_count(length as u64)?;
-                            read
+                            haystack.read_exact_count(length as u64)?
                         } else {
                             // no length specified we read until end of string
-                            let read = match t.cmp_op {
+
+                            match t.cmp_op {
                                 CmpOp::Eq | CmpOp::Neq => {
                                     if !t.has_length_mod() {
                                         haystack.read_exact_count(str.len() as u64)?
@@ -1165,8 +1152,7 @@ impl Test {
                                         t.cmp_op
                                     )));
                                 }
-                            };
-                            read
+                            }
                         };
 
                         Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
@@ -1404,7 +1390,7 @@ impl Test {
                         Some(MatchRes::Bytes(
                             *o,
                             None,
-                            &t.orig.as_bytes(),
+                            t.orig.as_bytes(),
                             Encoding::Utf16(t.encoding),
                         ))
                     }
@@ -1417,7 +1403,7 @@ impl Test {
 
             (Self::Regex(r), ReadValue::Bytes(o, buf)) => r.match_buf(*o, stream_kind, buf),
 
-            (Self::Search(t), ReadValue::Bytes(o, buf)) => t.match_buf(*o, &buf),
+            (Self::Search(t), ReadValue::Bytes(o, buf)) => t.match_buf(*o, buf),
 
             _ => None,
         }
@@ -1431,17 +1417,13 @@ impl Test {
 
         // FIXME: octal is missing but it is not used in practice ...
         match self {
-            Test::Scalar(s) => match s.ty {
-                _ => {
-                    out += s.ty.type_size() * MULT;
-                }
-            },
+            Test::Scalar(s) => {
+                out += s.ty.type_size() * MULT;
+            }
 
-            Test::Float(t) => match t.ty {
-                _ => {
-                    out += t.ty.type_size() * MULT;
-                }
-            },
+            Test::Float(t) => {
+                out += t.ty.type_size() * MULT;
+            }
 
             Test::String(t) => out += t.test_value_len().saturating_mul(MULT),
 
@@ -1664,7 +1646,7 @@ impl IndOffset {
             DirOffset::LastUpper(c) => haystack.seek(SeekFrom::Start(
                 (last_upper_match_offset.unwrap_or_default() as i64 + c) as u64,
             ))?,
-            DirOffset::End(e) => haystack.seek(SeekFrom::End(e as i64))?,
+            DirOffset::End(e) => haystack.seek(SeekFrom::End(e))?,
         };
 
         macro_rules! read_value {
@@ -1862,7 +1844,7 @@ impl From<Name> for Match {
 impl Match {
     /// Turns the `Match`'s offset into an absolute offset from the start of the stream
     #[inline(always)]
-    fn offset_from_start<'a, R: Read + Seek>(
+    fn offset_from_start<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         rule_base_offset: Option<u64>,
@@ -1907,6 +1889,7 @@ impl Match {
     /// the function returns an error if the maximum recursion
     /// has been reached or if a dependency rule is missing.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn matches<'a: 'h, 'h, R: Read + Seek>(
         &'a self,
         source: Option<&str>,
@@ -2089,29 +2072,30 @@ impl Match {
                         debug!("source={source} line={line} error while reading test value @{offset}: {e}",)
                     })
                 {
-                    trace_msg
-                        .as_mut()
-                        .map(|v| v.push(format!("test={:?}", self.test)));
+                    if let Some(v) = trace_msg
+                        .as_mut() { v.push(format!("test={:?}", self.test)) }
 
                     let match_res =
                         opt_test_value.and_then(|tv| self.test.match_value(&tv, stream_kind));
 
-                    trace_msg.as_mut().map(|v| {
-                        v.push(format!(
+                    if let Some(v) = trace_msg.as_mut() { v.push(format!(
                             "message=\"{}\" match={}",
                             self.message
                                 .as_ref()
                                 .map(|fs| fs.to_string_lossy())
                                 .unwrap_or_default(),
                             match_res.is_some()
-                        ))
-                    });
+                        )) }
 
                     // trace message
                     if enabled!(Level::DEBUG) && !enabled!(Level::TRACE) && match_res.is_some() {
-                        trace_msg.map(|m| debug!("{}", m.join(" ")));
+                        if let Some(m) = trace_msg{
+                            debug!("{}", m.join(" "));
+                        }
                     } else if enabled!(Level::TRACE) {
-                        trace_msg.map(|m| trace!("{}", m.join(" ")));
+                        if let Some(m) = trace_msg{
+                            trace!("{}", m.join(" "));
+                        }
                     }
 
                     if let Some(mr) = match_res {
@@ -2273,6 +2257,7 @@ impl EntryNode {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn matches<'r, R: Read + Seek>(
         &'r self,
         opt_source: Option<&str>,
@@ -2480,7 +2465,7 @@ impl MagicRule {
 
         self.extensions.extend(exts);
 
-        // children_exts_recursive walks through all the dependencies
+        // fetch_all_extensions walks through all the dependencies
         // so there is no reason for compute_score to fail as it is walking
         // only some of them
         self.score = self.compute_score(0, deps, &mut HashSet::new());
@@ -2498,7 +2483,7 @@ impl MagicRule {
         depth: usize,
     ) -> Result<(), Error> {
         self.entries.matches(
-            self.source.as_ref().map(|s| s.as_str()),
+            self.source.as_deref(),
             magic,
             &mut MatchState::empty(),
             stream_kind,
@@ -2513,6 +2498,7 @@ impl MagicRule {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn magic<'r, R: Read + Seek>(
         &'r self,
         magic: &mut Magic<'r>,
@@ -2525,7 +2511,7 @@ impl MagicRule {
         depth: usize,
     ) -> Result<(), Error> {
         self.entries.matches(
-            self.source.as_ref().map(|s| s.as_str()),
+            self.source.as_deref(),
             magic,
             &mut MatchState::empty(),
             stream_kind,
@@ -2678,16 +2664,16 @@ impl MatchState {
 
     #[inline(always)]
     fn set_continuation_level(&mut self, level: ContinuationLevel) {
-        self.continuation_levels
-            .get_mut(level.0 as usize)
-            .map(|b| *b = true);
+        if let Some(b) = self.continuation_levels.get_mut(level.0 as usize) {
+            *b = true
+        }
     }
 
     #[inline(always)]
     fn clear_continuation_level(&mut self, level: &ContinuationLevel) {
-        self.continuation_levels
-            .get_mut(level.0 as usize)
-            .map(|b| *b = false);
+        if let Some(b) = self.continuation_levels.get_mut(level.0 as usize) {
+            *b = false;
+        }
     }
 }
 
@@ -2699,7 +2685,7 @@ pub struct Magic<'m> {
     message: Vec<Cow<'m, str>>,
     mime_type: Option<Cow<'m, str>>,
     creator_code: Option<Cow<'m, str>>,
-    strength: Option<u64>,
+    strength: u64,
     exts: HashSet<Cow<'m, str>>,
     is_default: bool,
 }
@@ -2707,7 +2693,7 @@ pub struct Magic<'m> {
 impl<'m> Magic<'m> {
     #[inline(always)]
     fn set_source(&mut self, source: Option<&'m str>) {
-        self.source = source.map(|s| Cow::Borrowed(s));
+        self.source = source.map(Cow::Borrowed);
     }
 
     #[inline(always)]
@@ -2722,7 +2708,7 @@ impl<'m> Magic<'m> {
         self.message.clear();
         self.mime_type = None;
         self.creator_code = None;
-        self.strength = None;
+        self.strength = 0;
         self.exts.clear();
         self.is_default = false;
     }
@@ -2733,7 +2719,7 @@ impl<'m> Magic<'m> {
     ///
     /// # Returns
     ///
-    /// * [`Magic<'owned>`] - A new [`Magic`] with owned data
+    /// * `Magic<'owned>` - A new [`Magic`] with owned data
     #[inline]
     pub fn into_owned<'owned>(self) -> Magic<'owned> {
         Magic {
@@ -2781,10 +2767,7 @@ impl<'m> Magic<'m> {
 
     #[inline(always)]
     fn update_strength(&mut self, value: u64) {
-        match self.strength.as_mut() {
-            Some(s) => *s = (*s).saturating_add(value),
-            None => self.strength = Some(value),
-        }
+        self.strength = self.strength.saturating_add(value);
         debug!("updated strength = {:?}", self.strength)
     }
 
@@ -2838,13 +2821,15 @@ impl<'m> Magic<'m> {
         }
     }
 
-    /// Gets the confidence score of the detection
+    /// Gets the confidence score of the detection. This
+    /// value is used to sort [`Magic`] in [`MagicDb::magic_best`]
+    /// and [`MagicDb::magic_all`].
     ///
     /// # Returns
     ///
-    /// * `Option<u64>` - The confidence score if available
+    /// * `u64` - The confidence score attributed to that [`Magic`]
     #[inline(always)]
-    pub fn strength(&self) -> Option<u64> {
+    pub fn strength(&self) -> u64 {
         self.strength
     }
 
@@ -3032,7 +3017,7 @@ impl MagicDb {
         magic.push_message(Cow::Borrowed("JSON text data"));
         magic.set_source(Some(HARDCODED_SOURCE));
         magic.update_strength(HARDCODED_MAGIC_STRENGTH);
-        return Ok(true);
+        Ok(true)
     }
 
     #[inline(always)]
@@ -3134,15 +3119,9 @@ impl MagicDb {
         stream_kind: StreamKind,
         magic: &mut Magic,
     ) -> Result<bool, Error> {
-        if Self::try_json(haystack, stream_kind, magic)? {
-            return Ok(true);
-        } else if Self::try_csv(haystack, stream_kind, magic)? {
-            return Ok(true);
-        } else if Self::try_tar(haystack, stream_kind, magic)? {
-            return Ok(true);
-        }
-
-        Ok(false)
+        Ok(Self::try_json(haystack, stream_kind, magic)?
+            || Self::try_csv(haystack, stream_kind, magic)?
+            || Self::try_tar(haystack, stream_kind, magic)?)
     }
 
     #[inline(always)]
@@ -3157,7 +3136,7 @@ impl MagicDb {
         magic.set_stream_kind(stream_kind);
         magic.is_default = true;
 
-        if buf.len() == 0 {
+        if buf.is_empty() {
             magic.push_message(Cow::Borrowed("empty"));
             magic.set_mime_type(Cow::Borrowed(DEFAULT_BIN_MIMETYPE));
             return Ok(());
@@ -3208,7 +3187,7 @@ impl MagicDb {
     }
 
     #[inline]
-    fn magic_first_with_stream_kind<'m, R: Read + Seek>(
+    fn magic_first_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
@@ -3301,7 +3280,7 @@ impl MagicDb {
         }
 
         for rule in self.rules.iter() {
-            rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
+            rule.magic_entrypoint(&mut magic, stream_kind, haystack, self, false, 0)?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
@@ -3317,11 +3296,7 @@ impl MagicDb {
         Self::magic_default(haystack, stream_kind, &mut magic)?;
         out.push(magic);
 
-        out.sort_by(|a, b| {
-            b.strength()
-                .unwrap_or_default()
-                .cmp(&a.strength().unwrap_or_default())
-        });
+        out.sort_by_key(|b| std::cmp::Reverse(b.strength()));
 
         Ok(out)
     }
@@ -3352,7 +3327,6 @@ impl MagicDb {
         // magics is guaranteed to contain at least the default magic
         return Ok(magics
             .into_iter()
-            .map(|m| m)
             .next()
             .expect("magics must at least contain default"));
     }
@@ -3372,7 +3346,7 @@ impl MagicDb {
         self.magic_best_with_stream_kind(&mut haystack, stream_kind)
     }
 
-    /// Serializes the database to a byte vector
+    /// Serializes the database to a generic writer implementing [`io::Write`]
     ///
     /// # Returns
     ///
@@ -3385,7 +3359,7 @@ impl MagicDb {
         Ok(())
     }
 
-    /// Deserializes the database from a reader
+    /// Deserializes the database from a generic reader implementing [`io::Read`]
     ///
     /// # Arguments
     ///
@@ -3402,7 +3376,7 @@ impl MagicDb {
         })?;
         let (sdb, _): (MagicDb, usize) =
             bincode::serde::decode_from_slice(&buf, bincode::config::standard())?;
-        Ok(sdb.into())
+        Ok(sdb)
     }
 
     #[inline(always)]

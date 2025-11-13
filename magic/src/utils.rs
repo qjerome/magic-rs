@@ -5,7 +5,7 @@ use crate::TIMESTAMP_FORMAT;
 
 #[inline(always)]
 pub(crate) const fn decode_id3(v: u32) -> u32 {
-    (((v >> 0) & 0x7f) << 0)
+    (v & 0x7f)
         | (((v >> 8) & 0x7f) << 7)
         | (((v >> 16) & 0x7f) << 14)
         | (((v >> 24) & 0x7f) << 21)
@@ -119,9 +119,7 @@ pub(crate) fn find_json_boundaries<S: AsRef<[u8]>>(buf: S) -> Option<(usize, usi
     let mut in_string = false;
     let mut prev_char = 0u8;
 
-    let Some(i_open) = memchr2(b'[', b'{', buf) else {
-        return None;
-    };
+    let i_open = memchr2(b'[', b'{', buf)?;
 
     let (opening, closing) = if buf[i_open] == b'[' {
         (b'[', b']')
@@ -144,7 +142,7 @@ pub(crate) fn find_json_boundaries<S: AsRef<[u8]>>(buf: S) -> Option<(usize, usi
         prev_char = *c;
     }
 
-    return None;
+    None
 }
 
 #[cfg(test)]

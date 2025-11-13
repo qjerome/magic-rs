@@ -90,7 +90,7 @@ where
 
         if self.pos_end > size as u64 {
             self.hot_head = vec![0u8; head_tail_size];
-            self.source.read_exact(&mut self.hot_head.as_mut_slice())?;
+            self.source.read_exact(self.hot_head.as_mut_slice())?;
 
             self.source.seek(SeekFrom::End(-(size as i64)))?;
             self.hot_tail = vec![0u8; head_tail_size];
