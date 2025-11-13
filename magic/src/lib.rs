@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![deny(unused_imports)]
 
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
@@ -19,7 +20,7 @@ use std::{
 };
 use tar::Archive;
 use thiserror::Error;
-use tracing::{Level, debug, enabled, error, trace};
+use tracing::{Level, debug, enabled, trace};
 
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},

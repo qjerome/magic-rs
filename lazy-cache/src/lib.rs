@@ -314,7 +314,7 @@ where
         let start = self.stream_pos;
         let mut end = 0;
 
-        let even_bs = if self.block_size % 2 == 0 {
+        let even_bs = if self.block_size.is_multiple_of(2) {
             self.block_size
         } else {
             self.block_size.saturating_add(1)
