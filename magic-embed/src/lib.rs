@@ -77,7 +77,7 @@
 //!
 //! To ensure your database is rebuilt when rule files change, create a `build.rs` file:
 //!
-//! ```rust,ignore
+//! ```ignore
 //! // build.rs
 //! fn main() {
 //!     println!("cargo\:rerun-if-changed=magic/rules/");
