@@ -18,6 +18,17 @@ jobs:
     - uses: actions/checkout@v4
     - name: Clippy
       run: cargo clippy -- -D warnings
+    - name: Cargo Readme
+      run: |
+        set -eux
+        cargo install cargo-rdme
+
+        members=(wiza magic-rs magic-embed)
+        for member in ${members[@]}
+        do
+            echo "Cargo rdme check: $member"
+            cargo rdme --check -w $member
+        done
     - name: Build
       run: cargo build --verbose
     - name: Run tests
