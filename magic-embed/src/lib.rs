@@ -93,7 +93,7 @@
 //! 3. **Runtime**: The `open()` method deserializes the embedded database
 //!
 //! The compiled database is stored in `target/magic-db/db.bin` and will be automatically
-//! rebuilt when any included rule file is modified.
+//! rebuilt when any included rule file is modified (considering you've added a `build.rs` script).
 //!
 //! ## Performance Considerations
 //!
