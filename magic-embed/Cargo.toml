@@ -10,7 +10,7 @@ description = "Proc-macro to embed a compiled magic database"
 keywords = ["proc-macro", "magic", "mime", "libmagic", "embedded"]
 
 [dependencies]
-magic-rs = { path = "../magic" }
+magic-rs = { path = "../magic", version = "0.1" }
 proc-macro2 = "1.0"
 syn = { version = "2.0", features = ["full"] }
 quote = "1.0"
