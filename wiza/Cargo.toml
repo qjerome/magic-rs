@@ -1,5 +1,5 @@
 [package]
-name = "file-rs"
+name = "wiza"
 version = "0.1.0"
 rust-version.workspace = true
 edition.workspace = true
@@ -22,5 +22,5 @@ magic-rs = { path = "../magic", version = "0.1" }
 magic-db = { path = "../magic-db", version = "0.1" }
 
 [[bin]]
-name = "file"
+name = "wiza"
 path = "src/main.rs"
