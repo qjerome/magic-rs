@@ -1,0 +1,198 @@
+// libmagic.pest
+
+// The main rule parses multiple lines in a magic file.
+file = { SOI ~ (rule_dependency | rule | NEWLINE)* ~ EOI }
+
+rule_dependency = { name_entry ~ NEWLINE ~ ((match_depth | use | flag) ~ (NEWLINE+ | EOI))+ }
+name_entry      = { stream_offset ~ "name" ~ rule_name ~ message? }
+
+// A rule consists of an offset, type, test, and optional message or continuation
+rule = { match_no_depth ~ (NEWLINE+ | EOI) ~ ((match_depth | use | flag) ~ (NEWLINE+ | EOI))* }
+
+// we need the both to be able to match
+match_no_depth = { stream_offset ~ test ~ message? }
+match_depth    = { depth+ ~ stream_offset ~ test ~ message? }
+
+test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | regex_test | indirect_test | guid_test | float_test }
+
+rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
+endianness_switch = @{ "\\^" }
+// use must be defined completely as it doesn't expect a message
+use = { depth+ ~ stream_offset ~ "use" ~ endianness_switch? ~ rule_name ~ message? }
+
+// operators
+op_add = ${ "+" }
+op_mul = ${ "*" }
+op_sub = ${ "-" }
+op_div = ${ "/" }
+op_and = ${ "&" }
+op_mod = ${ "%" }
+op_or  = ${ "|" }
+op_xor = ${ "^" }
+op_not = ${ "~" }
+op_neq = ${ "!" }
+op_gt  = ${ ">" }
+op_eq  = ${ "=" }
+op_lt  = ${ "<" }
+
+// flags
+printable_no_ws =  { '\u{21}'..'\u{7E}' }
+mime_type       = @{ (!NEWLINE ~ ANY)+ }
+mime_flag       =  { "mime" ~ mime_type }
+exts            = @{ printable_no_ws+ }
+ext_flag        =  { "ext" ~ exts }
+
+apple_ty      = ${ (printable_no_ws | " "){8} }
+apple_flag    = ${ "apple" ~ WHITESPACE+ ~ apple_ty }
+strength_flag =  { "strength" ~ (op_add | op_mul | op_sub | op_div | op_sub) ~ pos_number }
+flag          =  { "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) }
+
+neg_number = ${ "-" ~ pos_number }
+// hex must be checked first as 0 is also b10 number
+pos_number = ${ "+"? ~ (b16_number | b10_number) }
+number     =  { pos_number | neg_number }
+b10_number = @{ ASCII_DIGIT+ }
+b16_number = @{ ("0x" | "0X") ~ ASCII_HEX_DIGIT+ }
+
+// Parses offset as an integer at the start of a rule
+abs_offset = ${ number }
+rel_offset = ${ "&" ~ number }
+
+ind_offset_sign = @{ "." | "," }
+ind_offset_type = @{ "b" | "c" | "B" | "C" | "e" | "f" | "g" | "E" | "F" | "G" | "h" | "s" | "H" | "S" | "i" | "I" | "l" | "L" | "m" | "o" | "q" | "Q" }
+dir_shift       =  { number }
+ind_shift       =  { "(" ~ number ~ ")" }
+shift           =  { dir_shift | ind_shift }
+indirect_offset = ${ "&"? ~ "(" ~ (abs_offset | rel_offset) ~ ind_offset_sign? ~ ind_offset_type? ~ ((op_add | op_sub | op_mul | op_div | op_mod | op_and | op_or | op_xor) ~ shift)? ~ ")" }
+
+stream_offset = ${ rel_offset | abs_offset | indirect_offset }
+
+/// All test types
+date        = @{ "date" }
+bedate      = @{ "bedate" }
+bedouble    = @{ "bedouble" }
+befloat     = @{ "befloat" }
+beldate     = @{ "beldate" }
+belong      = @{ "belong" }
+beqdate     = @{ "beqdate" }
+bequad      = @{ "bequad" }
+beshort     = @{ "beshort" }
+byte        = @{ ("byte" | "dC" | "d1") }
+der         = @{ "der" }
+ldate       = @{ "ldate" }
+ledate      = @{ "ledate" }
+ledouble    = @{ "ledouble" }
+lefloat     = @{ "lefloat" }
+leldate     = @{ "leldate" }
+lelong      = @{ "lelong" }
+lemsdosdate = @{ "lemsdosdate" }
+lemsdostime = @{ "lemsdostime" }
+leqdate     = @{ "leqdate" }
+leqldate    = @{ "leqldate" }
+lequad      = @{ "lequad" }
+leqwdate    = @{ "leqwdate" }
+leshort     = @{ "leshort" }
+long        = @{ ("long" | "dI" | "dL" | "d4") }
+medate      = @{ "medate" }
+meldate     = @{ "meldate" }
+melong      = @{ "melong" }
+quad        = @{ ("quad" | "d8" | "dQ") }
+qwdate      = @{ "qwdate" }
+short       = @{ ("short" | "dS" | "d2") }
+ubelong     = @{ "ubelong" }
+ubequad     = @{ "ubequad" }
+ubeshort    = @{ "ubeshort" }
+ubeqdate    = @{ "ubeqdate" }
+ubyte       = @{ ("ubyte" | "uC" | "u1") }
+uledate     = @{ "uledate" }
+ulelong     = @{ "ulelong" }
+ulequad     = @{ "ulequad" }
+uleshort    = @{ "uleshort" }
+ulong       = @{ ("ulong" | "u4" | "uI" | "uL") }
+uquad       = @{ ("uquad" | "u8" | "uQ") }
+ushort      = @{ ("ushort" | "uS" | "u2") }
+
+guid = { ASCII_HEX_DIGIT{8} ~ ("-" ~ ASCII_HEX_DIGIT{4}){3} ~ "-" ~ ASCII_HEX_DIGIT{12} }
+// this could have been done in scalar test yet guid does not
+// seem to implement transform operation and other compairison
+// operators than eq
+guid_test = { "guid" ~ (any_value | guid) }
+
+/// string related test types
+string_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }
+string     =  { ("string" | "s") ~ ("/" ~ pos_number)? ~ ("/" ~ string_mod+)? }
+
+pstring_mod = @{ "B" | "H" | "h" | "L" | "l" | "J" }
+pstring     =  { "pstring" ~ ("/" ~ pstring_mod{,2})? }
+
+search_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" | "s" }
+search     =  { "search" ~ ("/" ~ (pos_number | search_mod+){,2}){,2} }
+
+regex_mod = @{ "c" | "s" | "l" | "b" | "t" | "T" }
+regex     =  { "regex" ~ ("/" ~ (pos_number | regex_mod+){,2}){,2} }
+
+bestring16 = { "bestring16" }
+lestring16 = { "lestring16" }
+
+/// special tests types
+default = { "default" }
+clear   = { "clear" }
+
+indirect_mod = { "r" }
+indirect     = { "indirect" ~ ("/" ~ indirect_mod+)? }
+offset       = { "offset" }
+
+any_value = { "x" }
+
+// tests on scalar data types
+scalar_type      = ${ ldate | date | bedate | beldate | belong | beqdate | bequad | beshort | byte | leldate | lelong | ledate | leqdate | leshort | lemsdosdate | lemsdostime | long | short | quad | ubelong | lequad | ubequad | ubeshort | ubyte | ulelong | ulequad | uleshort | ushort | ulong | uledate | offset | medate | melong | meldate | uquad | uquad | leqldate | ubeqdate | qwdate | leqwdate }
+scalar_value     = ${ number }
+scalar_transform = ${ (op_and | op_or | op_div | op_add | op_sub | op_mod | op_xor | op_mul) ~ pos_number }
+scalar_condition = ${ op_eq | op_gt | op_lt | op_neq | op_xor | op_and | op_not }
+// there must be no whitespace for transform operations
+scalar_type_transform = ${ scalar_type ~ scalar_transform? }
+scalar_test           =  { scalar_type_transform ~ (any_value | (scalar_condition? ~ scalar_value)) }
+
+sign                 = @{ "+" | "-" }
+float_number         = ${ sign? ~ ((ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* | (ASCII_DIGIT* ~ "." ~ ASCII_DIGIT+) | ASCII_DIGIT+) ~ (("e" | "E") ~ sign? ~ ASCII_DIGIT+)?) }
+float_type           = ${ bedouble | ledouble | lefloat | befloat }
+float_transform      = ${ (op_div | op_add | op_sub | op_mod | op_mul) ~ float_number }
+float_type_transform = ${ float_type ~ float_transform? }
+float_condition      = ${ op_eq | op_gt | op_lt | op_neq }
+float_test           =  { float_type_transform ~ (any_value | (float_condition? ~ float_number)) }
+
+// corresponds to `clear x` test
+clear_test = ${ clear ~ WHITESPACE+ ~ any_value }
+
+// corresponds to `default x` test
+default_test = ${ default ~ WHITESPACE+ ~ any_value }
+
+// `indirect x` test
+indirect_test = ${ indirect ~ WHITESPACE+ ~ any_value }
+
+// regex / search test
+search_test = ${ search ~ WHITESPACE+ ~ (op_eq | op_neq)? ~ string_value }
+
+regex_test = ${ regex ~ WHITESPACE+ ~ (op_eq | op_neq)? ~ string_value }
+
+// string test
+string_value = ${ (!(WHITESPACE | NEWLINE) ~ ("\\ " | ANY))+ }
+string_test  = ${ (string | pstring) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | ((op_eq | op_neq | op_lt | op_gt)? ~ string_value)) }
+
+// string16 test
+string16_test = ${ (lestring16 | bestring16) ~ WHITESPACE+ ~ ((any_value ~ WHITESPACE) | string_value) }
+
+// Parses the optional message that describes the file type
+message = @{ (!NEWLINE ~ ANY)* }
+
+depth = @{ ">"+ }
+
+// Parses comments
+// see pest doc to define COMMENT
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ (NEWLINE+ | EOI) }
+
+// Special characters
+NEWLINE = _{ "\n" | "\r\n" }
+// "\ " must not be treated as a whitespace as it is the
+// way to encode spaces into string/regex match
+WHITESPACE = _{ !("\\ ") ~ (" " | "\t") }

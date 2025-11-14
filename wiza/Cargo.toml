@@ -1,0 +1,26 @@
+[package]
+name = "wiza"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["cli", "magic", "file", "mime", "identification"]
+description = "Command line tool for file identification"
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.42", features = ["derive"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing = "0.1.41"
+fs-walk = "0.2.0"
+serde_json = "1.0.145"
+serde_derive = "1.0.228"
+serde = "1.0.228"
+magic-rs = { path = "../magic", version = "0.1" }
+magic-db = { path = "../magic-db", version = "0.1" }
+
+[[bin]]
+name = "wiza"
+path = "src/main.rs"
