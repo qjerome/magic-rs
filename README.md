@@ -2,7 +2,7 @@
 
 **A safe Rust implementation of file type detection with 99% compatibility with libmagic rule format**
 
-This ecosystem provides a complete, memory-safe alternative to the traditional Unix `file` command implementation, while maintaining near-full compatibility with existing `libmagic` rule files.
+This ecosystem provides a complete, memory-safe alternative to the traditional `libmagic` implementation, while maintaining near-full compatibility with existing rule files.
 
 ## 🔥 Key Advantages
 
