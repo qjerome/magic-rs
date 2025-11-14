@@ -83,15 +83,3 @@ This project is licensed under the **GPL-3.0 License**.
 - [`magic`](https://www.man7.org/linux/man-pages/man4/magic.4.html): Expected magic rule format
 
 <!-- cargo-rdme end -->
-
-## Contributing
-
-To suggest rule improvements or report issues with file type detection:
-1. Open an issue with a description of the problem
-2. Include sample files that demonstrate the issue
-3. Suggest specific rule modifications if possible
-
-You can also contribute by:
-- Improving existing rules in the [`src/magdir`](https://github.com/qjerome/magic-rs/magic-db/src/magdir) directory
-- Adding support for new file formats
-- Helping optimize rule performance or accuracy

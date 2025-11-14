@@ -83,10 +83,14 @@ relying on ternary formatting.
 
 We welcome contributions to improve libmagic compatibility:
 
-1. **Port missing features** from libmagic
-2. **Optimize existing rules** in [magdir](magic-db/src/magdir/)
-3. **Add support** for new file formats
-4. **Improve documentation** of rule syntax
+1. Open an issue with a description of the problem
+2. Include sample files that demonstrate the issue
+3. Suggest specific rule modifications if possible
+
+You can also contribute by:
+- Improving existing rules in the [`src/magdir`](https://github.com/qjerome/magic-rs/magic-db/src/magdir) directory
+- Adding support for new file formats
+- Helping optimize rule performance or accuracy
 
 ## 📄 License
 
