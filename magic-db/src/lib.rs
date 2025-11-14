@@ -82,7 +82,7 @@
 
 use magic_embed::magic_embed;
 
-#[magic_embed(include=["magic-db/src/magdir"], exclude=["magic-db/src/magdir/der"])]
+#[magic_embed(include=["magdir"], exclude=["magdir/der"])]
 pub struct CompiledDb;
 
 #[cfg(test)]

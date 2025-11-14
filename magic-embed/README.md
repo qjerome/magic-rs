@@ -31,7 +31,7 @@ Apply the `#[magic_embed]` attribute to a struct to embed a compiled magic datab
 use magic_embed::magic_embed;
 use magic_rs::MagicDb;
 
-#[magic_embed(include=["magic-db/src/magdir"], exclude=["magic-db/src/magdir/der"])]
+#[magic_embed(include=["../../magic-db/src/magdir"], exclude=["../../magic-db/src/magdir/der"])]
 struct MyMagicDb;
 
 fn main() -> Result<(), magic_rs::Error> {
@@ -57,8 +57,8 @@ use std::fs::File;
 use std::env::current_exe;
 
 #[magic_embed(
-    include=["magic-db/src/magdir"],
-    exclude=["magic-db/src/magdir/der"]
+    include=["../../magic-db/src/magdir"],
+    exclude=["../../magic-db/src/magdir/der"]
 )]
 struct AppMagicDb;
 

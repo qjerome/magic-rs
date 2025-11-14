@@ -29,7 +29,7 @@
 //! use magic_embed::magic_embed;
 //! use magic_rs::MagicDb;
 //!
-//! #[magic_embed(include=["magic-db/src/magdir"], exclude=["magic-db/src/magdir/der"])]
+//! #[magic_embed(include=["../../magic-db/src/magdir"], exclude=["../../magic-db/src/magdir/der"])]
 //! struct MyMagicDb;
 //!
 //! fn main() -> Result<(), magic_rs::Error> {
@@ -55,8 +55,8 @@
 //! use std::env::current_exe;
 //!
 //! #[magic_embed(
-//!     include=["magic-db/src/magdir"],
-//!     exclude=["magic-db/src/magdir/der"]
+//!     include=["../../magic-db/src/magdir"],
+//!     exclude=["../../magic-db/src/magdir/der"]
 //! )]
 //! struct AppMagicDb;
 //!
@@ -225,6 +225,13 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
     // Parse the input function
     let input_struct: ItemStruct = syn::parse2(item.into())?;
     let struct_name = &input_struct.ident;
+    let cs = proc_macro::Span::call_site();
+
+    let Some(source_file) = cs.local_file() else {
+        return Ok(quote! {}.into());
+    };
+
+    let source_dir = source_file.parent().unwrap();
 
     // convert to proc-macro2 TokenStream for syn helpers
     let ts2: proc_macro2::TokenStream = attr.into();
@@ -236,7 +243,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
     let exclude = if let Some(exclude) = metas.get_key_value("exclude")? {
         meta_name_value_to_string_vec(exclude)?
             .into_iter()
-            .map(|(s, p)| (s, PathBuf::from(p)))
+            .map(|(s, p)| (s, source_dir.join(p)))
             .collect()
     } else {
         vec![]
@@ -249,7 +256,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 
     let include: Vec<(proc_macro2::Span, PathBuf)> = meta_name_value_to_string_vec(include_nv)?
         .into_iter()
-        .map(|(s, p)| (s, PathBuf::from(p)))
+        .map(|(s, p)| (s, source_dir.join(p)))
         .collect();
 
     let database_dir = {
@@ -418,7 +425,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 /// use magic_embed::magic_embed;
 /// use magic_rs::MagicDb;
 ///
-/// #[magic_embed(include=["magic-db/src/magdir"], exclude=["magic-db/src/magdir/der"])]
+/// #[magic_embed(include=["../../magic-db/src/magdir"], exclude=["../../magic-db/src/magdir/der"])]
 /// struct EmbeddedMagicDb;
 ///
 /// let db: MagicDb = EmbeddedMagicDb::open().unwrap();
