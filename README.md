@@ -98,4 +98,6 @@ All components are licensed under **GPL-3.0**.
 
 ## 🙌 Acknowledgments
 
-Thanks to all the people behind [file](https://github.com/file/file), project which served as a foundation for this work.
+- Thanks to all the people behind [file](https://github.com/file/file), project which served as a foundation for this work.
+- Thanks to [@adulau](https://github.com/adulau) for supporting this work.
+- Thanks to all my colleagues at [CIRCL](https://circl.lu/) who listened to me (without complaining) talking about `magic-rs` almost every single day since I started this project.
