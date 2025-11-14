@@ -48,7 +48,7 @@ fn main() -> Result<(), magic_rs::Error> {
 ## About the Rules
 
 This database contains slightly modified versions of the original `libmagic` rules that are available
-in the [`src/magdir`](https://github.com/qjerome/magic-rs/magic-db/src/magdir) directory of this repository.
+in the [`src/magdir`](https://github.com/qjerome/magic-rs/tree/main/magic-db/src/magdir) directory of this repository.
 
 Some of the rules have been:
 - **Adapted**: Modified to work with the [`magic-rs`](https://crates.io/crates/magic-rs) parser
