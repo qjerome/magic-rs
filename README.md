@@ -57,7 +57,7 @@ $ wiza /bin/file
 
 This project has been built to provide the maximum level of compatibility
 with existing `libmagic` rules. So most of the rules you will find in
-the [`file`](https://github.com/file/file) repository will directly 
+the [`file`](https://github.com/file/file) repository will directly be 
 compatible with this project. You just need to be aware of the current f
 few incompatibilities:
 
