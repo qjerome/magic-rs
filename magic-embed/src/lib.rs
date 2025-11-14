@@ -104,10 +104,6 @@
 //! ## License
 //!
 //! This project is licensed under the **GPL-3.0 License**.
-//!
-//! ## See Also
-//!
-//! - [`magic_rs`](https://crates.io/crates/magic-rs): The core file type detection library
 
 use std::{
     collections::{HashMap, HashSet},
