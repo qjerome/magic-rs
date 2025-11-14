@@ -53,7 +53,7 @@ $ wiza /bin/file
 /bin/file source:elf strength:431 mime:application/x-pie-executable magic:ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV)
 ```
 
-## 📁 Rule Compatibility
+## 📜 Rule Compatibility
 
 This project has been built to provide the maximum level of compatibility
 with existing `libmagic` rules. So most of the rules you will find in
