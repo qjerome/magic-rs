@@ -8,10 +8,10 @@ eliminating the need for external rule files at runtime.
 
 ## Features
 
-**Compile-time Embedding**: Magic rule files are compiled and embedded during build
-**Zero Runtime Dependencies**: No need to distribute separate rule files
-**Flexible Configuration**: Include/exclude specific rule files or directories
-**Seamless Integration**: Works with the [`magic_rs`](https://crates.io/crates/magic-rs)
+* **Compile-time Embedding**: Magic rule files are compiled and embedded during build
+* **Zero Runtime Dependencies**: No need to distribute separate rule files
+* **Flexible Configuration**: Include/exclude specific rule files or directories
+* **Seamless Integration**: Works with the [`magic_rs`](https://crates.io/crates/magic-rs)
 
 ## Installation
 
@@ -82,7 +82,7 @@ To ensure your database is rebuilt when rule files change, create a `build.rs` f
 ```rust
 // build.rs
 fn main() {
-    println!("cargo\:rerun-if-changed=magic/rules/");
+    println!("cargo:rerun-if-changed=magic/rules/");
 }
 ```
 
