@@ -88,7 +88,7 @@ We welcome contributions to improve libmagic compatibility:
 3. Suggest specific rule modifications if possible
 
 You can also contribute by:
-- Improving existing rules in the [`src/magdir`](https://github.com/qjerome/magic-rs/magic-db/src/magdir) directory
+- Improving existing rules in the [`src/magdir`](./magic-db/src/magdir/) directory
 - Adding support for new file formats
 - Helping optimize rule performance or accuracy
 
