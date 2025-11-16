@@ -850,12 +850,11 @@ fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usiz
             }
         }
 
-        if mods.contains(StringMod::FullWordMatch) {
-            if let Some(b) = iter.peek() {
-                if !b.is_ascii_whitespace() {
-                    return (false, consumed);
-                }
-            }
+        if mods.contains(StringMod::FullWordMatch)
+            && let Some(b) = iter.peek()
+            && !b.is_ascii_whitespace()
+        {
+            return (false, consumed);
         }
 
         (consumed > 0 && consumed < buf.len(), consumed)
@@ -947,11 +946,10 @@ impl SearchTest {
                 }
             }
 
-            if let Some(npos) = self.n_pos {
-                if i > npos {
+            if let Some(npos) = self.n_pos
+                && i > npos {
                     break;
                 }
-            }
 
             let pos = i;
             let (ok, consumed) = string_match(&self.str, self.str_mods, &buf[i..]);
@@ -1193,11 +1191,10 @@ impl PStringTest {
             len = len.saturating_sub(self.len.size_of_len())
         }
 
-        if let TestValue::Value(s) = self.test_val.as_ref() {
-            if len != s.len() {
+        if let TestValue::Value(s) = self.test_val.as_ref()
+            && len != s.len() {
                 return Ok(None);
             }
-        }
 
         let read = haystack.read_exact_count(len as u64)?;
 
@@ -2225,11 +2222,10 @@ impl Match {
                         if let Some(m) = trace_msg{
                             debug!("{}", m.join(" "));
                         }
-                    } else if enabled!(Level::TRACE) {
-                        if let Some(m) = trace_msg{
+                    } else if enabled!(Level::TRACE)
+                        && let Some(m) = trace_msg{
                             trace!("{}", m.join(" "));
                         }
-                    }
 
                     if let Some(mr) = match_res {
                         state.set_continuation_level(self.continuation_level());
@@ -2424,13 +2420,12 @@ impl EntryNode {
 
         if ok {
             // update magic with message if match is successful
-            if let Some(msg) = self.entry.message.as_ref() {
-                if let Ok(msg) = msg.format_with(opt_match_res.as_ref()).inspect_err(|e| {
+            if let Some(msg) = self.entry.message.as_ref()
+                && let Ok(msg) = msg.format_with(opt_match_res.as_ref()).inspect_err(|e| {
                     debug!("source={source} line={line} failed to format message: {e}")
                 }) {
                     magic.push_message(msg);
                 }
-            }
 
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
@@ -3349,8 +3344,8 @@ impl MagicDb {
             }};
         }
 
-        if let Some(ext) = extension.map(|e| e.to_lowercase()) {
-            if !ext.is_empty() {
+        if let Some(ext) = extension.map(|e| e.to_lowercase())
+            && !ext.is_empty() {
                 for rule in self.rules.iter().filter(|r| r.extensions.contains(&ext)) {
                     do_magic!(rule);
                     if let Some(f) = marked.get_mut(rule.id) {
@@ -3358,7 +3353,6 @@ impl MagicDb {
                     }
                 }
             }
-        }
 
         for rule in self
             .rules

@@ -671,11 +671,10 @@ impl Use {
         );
 
         let mut message = None;
-        if let Some(msg_pair) = pairs.next() {
-            if !msg_pair.as_str().is_empty() {
+        if let Some(msg_pair) = pairs.next()
+            && !msg_pair.as_str().is_empty() {
                 message = Some(Message::from_pair(msg_pair)?);
-            }
-        };
+            };
 
         Ok(Self {
             line,
@@ -1443,11 +1442,10 @@ impl MagicRule {
                     assert_eq!(Rule::rule_name, name.as_rule());
 
                     let mut message = None;
-                    if let Some(msg) = pairs.next() {
-                        if !msg.as_str().is_empty() {
+                    if let Some(msg) = pairs.next()
+                        && !msg.as_str().is_empty() {
                             message = Some(Message::from_pair(msg)?)
                         }
-                    }
 
                     items.push(Entry::Match(
                         span,
