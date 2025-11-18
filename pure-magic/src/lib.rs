@@ -2953,8 +2953,8 @@ impl<'m> Magic<'m> {
     }
 
     /// Gets the confidence score of the detection. This
-    /// value is used to sort [`Magic`] in [`MagicDb::magic_best`]
-    /// and [`MagicDb::magic_all`].
+    /// value is used to sort [`Magic`] in [`MagicDb::best_magic`]
+    /// and [`MagicDb::all_magics`].
     ///
     /// # Returns
     ///
@@ -3375,7 +3375,7 @@ impl MagicDb {
     /// Detects file [`Magic`] stopping at the first matching magic. Magic
     /// rules are evaluated from the best to the least relevant, so this method
     /// returns most of the time the best magic. For the rare cases where
-    /// it doesn't or if the best result is always required, use [`MagicDb::magic_best`]
+    /// it doesn't or if the best result is always required, use [`MagicDb::best_magic`]
     ///
     /// # Arguments
     ///
