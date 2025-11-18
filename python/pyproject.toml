@@ -11,5 +11,9 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+authors = [{ name = "Quentin JEROME", email = "quentin.jerome@circl.lu" }]
+maintainers = [{ name = "Quentin JEROME", email = "quentin.jerome@circl.lu" }]
+description = "Python bindings for magic-rs, a pure Rust libmagic alternative"
+readme = "README.md"
 [tool.maturin]
 features = ["pyo3/extension-module"]

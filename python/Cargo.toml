@@ -2,13 +2,18 @@
 name = "pymagic-rs"
 version = "0.1.0"
 edition = "2021"
+description = "Python bindings for magic-rs crate"
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
 name = "pymagic"
 crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.27.0"
-magic-db = { path = "../magic-db", version = "0.1" }
-magic-rs = { path = "../magic", version = "0.1" }
+magic-db = { path = "../magic-db" }
+magic-rs = { path = "../magic" }
