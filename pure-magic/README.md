@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Open a file and detect its type
     let mut file = File::open("src/lib.rs")?;
-    let magic = db.magic_first(&mut file, None)?;
+    let magic = db.first_magic(&mut file, None)?;
 
     println!(
         "File type: {} (MIME: {}, strength: {})",
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::open("src/lib.rs")?;
 
     // Get all matching rules, sorted by strength
-    let magics = db.magic_all(&mut file)?;
+    let magics = db.all_magics(&mut file)?;
 
     // Must contain rust file magic and default text magic
     assert!(magics.len() > 1);

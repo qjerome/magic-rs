@@ -66,7 +66,7 @@
 //!
 //!     // Use it to detect file types
 //!     let mut file = File::open(current_exe()?)?;
-//!     let magic = db.magic_first(&mut file, None)?;
+//!     let magic = db.first_magic(&mut file, None)?;
 //!
 //!     println!("Detected: {} (MIME: {})", magic.message(), magic.mime_type());
 //!     Ok(())

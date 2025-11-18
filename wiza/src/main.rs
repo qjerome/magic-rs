@@ -198,7 +198,7 @@ impl Command {
                 };
 
                 if o.all {
-                    let Ok(magics) = db.magic_all(&mut file).inspect_err(|e| {
+                    let Ok(magics) = db.all_magics(&mut file).inspect_err(|e| {
                         error!("failed to get magic file={}: {e}", f.to_string_lossy())
                     }) else {
                         continue;
@@ -241,7 +241,7 @@ impl Command {
                         f.extension().and_then(|e| e.to_str())
                     };
 
-                    let Ok(magic) = db.magic_first(&mut file, ext).inspect_err(|e| {
+                    let Ok(magic) = db.first_magic(&mut file, ext).inspect_err(|e| {
                         error!("failed to get magic file={}: {e}", f.to_string_lossy())
                     }) else {
                         continue;
