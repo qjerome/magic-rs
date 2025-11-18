@@ -2896,6 +2896,21 @@ impl<'m> Magic<'m> {
         out
     }
 
+    /// Returns an iterator over the individual parts of the magic message
+    ///
+    /// A magic message is typically composed of multiple parts, each appended
+    /// during successful magic tests. This method provides an efficient way to
+    /// iterate over these parts without concatenating them into a new string,
+    /// as done when calling [`Magic::message`].
+    ///
+    /// # Returns
+    ///
+    /// * `impl Iterator<Item = &str>` - An iterator yielding string slices of each message part
+    #[inline]
+    pub fn message_parts(&self) -> impl Iterator<Item = &str> {
+        self.message.iter().map(|p| p.as_ref())
+    }
+
     #[inline(always)]
     fn update_strength(&mut self, value: u64) {
         self.strength = self.strength.saturating_add(value);
@@ -4462,5 +4477,17 @@ HelloWorld
             b"\x00TEST\x06twice\x00\x08",
             "Bread is Toasted twice"
         )
+    }
+
+    #[test]
+    fn test_message_parts() {
+        let m = first_magic(
+            r#"0	string/W	#!/usr/bin/env\ python  PYTHON"#,
+            b"#!/usr/bin/env    python",
+            StreamKind::Text(TextEncoding::Ascii),
+        )
+        .unwrap();
+
+        assert!(m.message_parts().any(|p| p.eq_ignore_ascii_case("python")))
     }
 }
