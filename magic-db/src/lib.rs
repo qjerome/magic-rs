@@ -34,7 +34,7 @@
 //!
 //!     // Use it to detect file types
 //!     let mut file = File::open(current_exe()?)?;
-//!     let magic = db.magic_first(&mut file, None)?;
+//!     let magic = db.first_magic(&mut file, None)?;
 //!     assert!(!magic.is_default());
 //!
 //!     println!("File type: {}", magic.message());
@@ -94,7 +94,7 @@ mod test {
     fn test_compiled_db() {
         let db = CompiledDb::open().unwrap();
         let mut exe = File::open(env::current_exe().unwrap()).unwrap();
-        let magic = db.magic_first(&mut exe, None).unwrap();
+        let magic = db.first_magic(&mut exe, None).unwrap();
         println!("{}", magic.message());
         assert!(!magic.is_default())
     }

@@ -35,7 +35,7 @@
 //!
 //!     // Open a file and detect its type
 //!     let mut file = File::open("src/lib.rs")?;
-//!     let magic = db.magic_first(&mut file, None)?;
+//!     let magic = db.first_magic(&mut file, None)?;
 //!
 //!     println!(
 //!         "File type: {} (MIME: {}, strength: {})",
@@ -62,7 +62,7 @@
 //!     let mut file = File::open("src/lib.rs")?;
 //!
 //!     // Get all matching rules, sorted by strength
-//!     let magics = db.magic_all(&mut file)?;
+//!     let magics = db.all_magics(&mut file)?;
 //!
 //!     // Must contain rust file magic and default text magic
 //!     assert!(magics.len() > 1);
@@ -857,7 +857,7 @@ fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usiz
             return (false, consumed);
         }
 
-        (consumed > 0 && consumed < buf.len(), consumed)
+        (consumed > 0 && consumed <= buf.len(), consumed)
     }
 }
 
@@ -2896,6 +2896,21 @@ impl<'m> Magic<'m> {
         out
     }
 
+    /// Returns an iterator over the individual parts of the magic message
+    ///
+    /// A magic message is typically composed of multiple parts, each appended
+    /// during successful magic tests. This method provides an efficient way to
+    /// iterate over these parts without concatenating them into a new string,
+    /// as done when calling [`Magic::message`].
+    ///
+    /// # Returns
+    ///
+    /// * `impl Iterator<Item = &str>` - An iterator yielding string slices of each message part
+    #[inline]
+    pub fn message_parts(&self) -> impl Iterator<Item = &str> {
+        self.message.iter().map(|p| p.as_ref())
+    }
+
     #[inline(always)]
     fn update_strength(&mut self, value: u64) {
         self.strength = self.strength.saturating_add(value);
@@ -2953,8 +2968,8 @@ impl<'m> Magic<'m> {
     }
 
     /// Gets the confidence score of the detection. This
-    /// value is used to sort [`Magic`] in [`MagicDb::magic_best`]
-    /// and [`MagicDb::magic_all`].
+    /// value is used to sort [`Magic`] in [`MagicDb::best_magic`]
+    /// and [`MagicDb::all_magics`].
     ///
     /// # Returns
     ///
@@ -3318,7 +3333,7 @@ impl MagicDb {
     }
 
     #[inline]
-    fn magic_first_with_stream_kind<R: Read + Seek>(
+    fn first_magic_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
@@ -3375,7 +3390,7 @@ impl MagicDb {
     /// Detects file [`Magic`] stopping at the first matching magic. Magic
     /// rules are evaluated from the best to the least relevant, so this method
     /// returns most of the time the best magic. For the rare cases where
-    /// it doesn't or if the best result is always required, use [`MagicDb::magic_best`]
+    /// it doesn't or if the best result is always required, use [`MagicDb::best_magic`]
     ///
     /// # Arguments
     ///
@@ -3385,18 +3400,18 @@ impl MagicDb {
     /// # Returns
     ///
     /// * `Result<Magic<'_>, Error>` - The detection result or an error
-    pub fn magic_first<R: Read + Seek>(
+    pub fn first_magic<R: Read + Seek>(
         &self,
         r: &mut R,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
         let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_first_with_stream_kind(&mut haystack, stream_kind, extension)
+        self.first_magic_with_stream_kind(&mut haystack, stream_kind, extension)
     }
 
     #[inline(always)]
-    fn magic_all_sort_with_stream_kind<R: Read + Seek>(
+    fn all_magics_sort_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
@@ -3441,19 +3456,19 @@ impl MagicDb {
     /// # Returns
     ///
     /// * `Result<Vec<Magic<'_>>, Error>` - All detection results sorted by strength or an error
-    pub fn magic_all<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
+    pub fn all_magics<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
         let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_all_sort_with_stream_kind(&mut haystack, stream_kind)
+        self.all_magics_sort_with_stream_kind(&mut haystack, stream_kind)
     }
 
     #[inline(always)]
-    fn magic_best_with_stream_kind<R: Read + Seek>(
+    fn best_magic_with_stream_kind<R: Read + Seek>(
         &self,
         haystack: &mut LazyCache<R>,
         stream_kind: StreamKind,
     ) -> Result<Magic<'_>, Error> {
-        let magics = self.magic_all_sort_with_stream_kind(haystack, stream_kind)?;
+        let magics = self.all_magics_sort_with_stream_kind(haystack, stream_kind)?;
 
         // magics is guaranteed to contain at least the default magic
         return Ok(magics
@@ -3471,10 +3486,10 @@ impl MagicDb {
     /// # Returns
     ///
     /// * `Result<Magic<'_>, Error>` - The best detection result or an error
-    pub fn magic_best<R: Read + Seek>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
+    pub fn best_magic<R: Read + Seek>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
         let mut haystack = Self::open_reader(r)?;
         let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.magic_best_with_stream_kind(&mut haystack, stream_kind)
+        self.best_magic_with_stream_kind(&mut haystack, stream_kind)
     }
 
     /// Serializes the database to a generic writer implementing [`io::Write`]
@@ -3550,7 +3565,7 @@ mod tests {
         )
         .unwrap();
         let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
-        let v = md.magic_best_with_stream_kind(&mut reader, stream_kind)?;
+        let v = md.best_magic_with_stream_kind(&mut reader, stream_kind)?;
         Ok(v.into_owned())
     }
 
@@ -4462,5 +4477,17 @@ HelloWorld
             b"\x00TEST\x06twice\x00\x08",
             "Bread is Toasted twice"
         )
+    }
+
+    #[test]
+    fn test_message_parts() {
+        let m = first_magic(
+            r#"0	string/W	#!/usr/bin/env\ python  PYTHON"#,
+            b"#!/usr/bin/env    python",
+            StreamKind::Text(TextEncoding::Ascii),
+        )
+        .unwrap();
+
+        assert!(m.message_parts().any(|p| p.eq_ignore_ascii_case("python")))
     }
 }
