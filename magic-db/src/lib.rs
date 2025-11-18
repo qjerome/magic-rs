@@ -1,7 +1,7 @@
 //! # `magic-db`: Precompiled Magic Rules Database
 //!
 //! A precompiled database of file type detection rules based on the original `libmagic` project,
-//! optimized and adapted for use with [`magic-rs`](https://crates.io/crates/magic-rs).
+//! optimized and adapted for use with [`pure-magic`](https://crates.io/crates/pure-magic).
 //! This crate provides ready-to-use file type detection capabilities without requiring external rule files.
 //!
 //! ## Features
@@ -18,7 +18,7 @@
 //! ```toml
 //! [dependencies]
 //! magic-db = "0.1"  # Replace with the latest version
-//! magic-rs = "0.1"  # Required peer dependency
+//! pure-magic = "0.1"  # Required peer dependency
 //! ```
 //!
 //! ## Usage
@@ -28,7 +28,7 @@
 //! use std::fs::File;
 //! use std::env::current_exe;
 //!
-//! fn main() -> Result<(), magic_rs::Error> {
+//! fn main() -> Result<(), pure_magic::Error> {
 //!     // Open the precompiled database
 //!     let db = CompiledDb::open()?;
 //!
@@ -49,7 +49,7 @@
 //! in the [`src/magdir`](https://github.com/qjerome/magic-rs/tree/main/magic-db/src/magdir) directory of this repository.
 //!
 //! Some of the rules have been:
-//! - **Adapted**: Modified to work with the [`magic-rs`](https://crates.io/crates/magic-rs) parser
+//! - **Adapted**: Modified to work with the [`pure-magic`](https://crates.io/crates/pure-magic) parser
 //! - **Optimized**: Performance improvements for common file types
 //! - **Extended**: Additional rules were created
 //! - **Fixed**: Corrections to inaccurate or problematic original rules
@@ -57,13 +57,13 @@
 //! ## Rule Exclusions
 //!
 //! The database intentionally excludes the `der` rules (ASN.1/DER encoding rules) because:
-//! - The [`magic-rs`](https://crates.io/crates/magic-rs) parser doesn't support (yet) the specific DER test types
+//! - The [`pure-magic`](https://crates.io/crates/pure-magic) parser doesn't support (yet) the specific DER test types
 //!   implemented in the original `libmagic`
 //!
 //! ## Source Rules
 //!
 //! The source magic rules are available in the repository at:
-//! [`src/magdir`](https://github.com/qjerome/magic-rs/tree/main/magic-db/src/magdir)
+//! [`src/magdir`](https://github.com/qjerome/pure-magic/tree/main/magic-db/src/magdir)
 //!
 //! You can:
 //! 1. Browse the rules to understand how file types are detected
@@ -76,7 +76,7 @@
 //!
 //! ## See Also
 //!
-//! - [`magic-rs`](https://crates.io/crates/magic-rs): The core file type detection library
+//! - [`pure-magic`](https://crates.io/crates/pure-magic): The core file type detection library
 //! - [`magic-embed`](https://crates.io/crates/magic-embed): The macro used to create this database
 //! - [`magic`](https://www.man7.org/linux/man-pages/man4/magic.4.html): Expected magic rule format
 

@@ -2,7 +2,7 @@
 
 # `magic-embed`: Compile-time Magic Database Embedding
 
-A procedural macro crate for embedding compiled [`magic_rs`](https://crates.io/crates/magic-rs) databases directly into your Rust binary.
+A procedural macro crate for embedding compiled [`pure_magic`](https://crates.io/crates/pure-magic) databases directly into your Rust binary.
 This crate provides a convenient way to bundle file type detection rules with your application,
 eliminating the need for external rule files at runtime.
 
@@ -11,7 +11,7 @@ eliminating the need for external rule files at runtime.
 * **Compile-time Embedding**: Magic rule files are compiled and embedded during build
 * **Zero Runtime Dependencies**: No need to distribute separate rule files
 * **Flexible Configuration**: Include/exclude specific rule files or directories
-* **Seamless Integration**: Works with the [`magic_rs`](https://crates.io/crates/magic-rs)
+* **Seamless Integration**: Works with the [`pure_magic`](https://crates.io/crates/pure-magic)
 
 ## Installation
 
@@ -20,7 +20,7 @@ Add `magic-embed` to your `Cargo.toml`:
 ```toml
 [dependencies]
 magic-embed = "0.1"  # Replace with the latest version
-magic-rs = "0.1"     # Required peer dependency
+pure-magic = "0.1"     # Required peer dependency
 ```
 
 ## Usage
@@ -29,14 +29,14 @@ Apply the `#[magic_embed]` attribute to a struct to embed a compiled magic datab
 
 ```rust
 use magic_embed::magic_embed;
-use magic_rs::MagicDb;
+use pure_magic::MagicDb;
 
 #[magic_embed(include=["../../magic-db/src/magdir"], exclude=["../../magic-db/src/magdir/der"])]
 struct MyMagicDb;
 
-fn main() -> Result<(), magic_rs::Error> {
+fn main() -> Result<(), pure_magic::Error> {
     let db = MyMagicDb::open()?;
-    // Use the database as you would with magic_rs
+    // Use the database as you would with pure_magic
     Ok(())
 }
 ```
@@ -52,7 +52,7 @@ fn main() -> Result<(), magic_rs::Error> {
 
 ```rust
 use magic_embed::magic_embed;
-use magic_rs::MagicDb;
+use pure_magic::MagicDb;
 use std::fs::File;
 use std::env::current_exe;
 

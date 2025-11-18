@@ -14,7 +14,7 @@ This ecosystem provides a complete, memory-safe alternative to the traditional `
 
 ## 📦 Crates Overview
 
-### 1. [`magic-rs`](magic/)
+### 1. [`pure-magic`](pure-magic/)
 **Core libmagic-compatible detection engine**
 
 - **99% compatible** with original libmagic rule syntax
@@ -70,11 +70,11 @@ relying on ternary formatting.
 >16	leshort		3		${x?pie executable:shared object},
 !:mime	application/x-${x?pie-executable:sharedlib}
 ```
-- **DER Rule Limitation**: The only major incompatibility is with ASN.1/DER encoding rules, which require specialized test operations not yet implemented in `magic-rs`. All other rule types work identically to libmagic.
+- **DER Rule Limitation**: The only major incompatibility is with ASN.1/DER encoding rules, which require specialized test operations not yet implemented in `pure-magic`. All other rule types work identically to libmagic.
 
 ## 📚 Documentation
 
-- [magic-rs API Docs](https://docs.rs/magic-rs) - Core detection library
+- [pure-magic API Docs](https://docs.rs/pure-magic) - Core detection library
 - [magic-embed Docs](https://docs.rs/magic-embed) - Embedding macro
 - [magic-db Docs](https://docs.rs/magic-db) - Precompiled database
 - [Rule Syntax Guide](https://www.man7.org/linux/man-pages/man4/magic.4.html) - libmagic-compatible rule format
@@ -100,4 +100,4 @@ All components are licensed under **GPL-3.0**.
 
 - Thanks to all the people behind [file](https://github.com/file/file), project which served as a foundation for this work.
 - Thanks to [@adulau](https://github.com/adulau) for supporting this work.
-- Thanks to all my colleagues at [CIRCL](https://circl.lu/) who listened to me (without complaining) talking about `magic-rs` almost every single day since I started this project.
+- Thanks to all my colleagues at [CIRCL](https://circl.lu/) who listened to me (without complaining) talking about `pure-magic` almost every single day since I started this project.

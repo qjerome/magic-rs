@@ -626,7 +626,7 @@ name = "magic-db"
 version = "0.1.2"
 dependencies = [
  "magic-embed",
- "magic-rs",
+ "pure-magic",
 ]
 
 [[package]]
@@ -634,34 +634,10 @@ name = "magic-embed"
 version = "0.1.1"
 dependencies = [
  "fs-walk",
- "magic-rs",
  "proc-macro2",
+ "pure-magic",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "magic-rs"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "chrono",
- "csv",
- "dyf",
- "flagset",
- "flate2",
- "lazy-cache",
- "memchr",
- "pest",
- "pest_derive",
- "regex",
- "serde",
- "serde_json",
- "tar",
- "thiserror",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -835,6 +811,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02b3e5e68a3a1a02aad3ec490a98007cbc13c37cbe84a3cd7b8e406d76e7f778"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "pure-magic"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "chrono",
+ "csv",
+ "dyf",
+ "flagset",
+ "flate2",
+ "lazy-cache",
+ "memchr",
+ "pest",
+ "pest_derive",
+ "regex",
+ "serde",
+ "serde_json",
+ "tar",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -1542,7 +1542,7 @@ dependencies = [
  "clap",
  "fs-walk",
  "magic-db",
- "magic-rs",
+ "pure-magic",
  "serde",
  "serde_derive",
  "serde_json",

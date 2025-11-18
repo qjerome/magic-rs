@@ -10,5 +10,5 @@ description = "This crate provides a precompiled magic database for file type id
 keywords = ["magic", "mime", "libmagic", "embedded", "database"]
 
 [dependencies]
-magic-rs = { path = "../magic", version = "0.1" }
+pure-magic = { path = "../pure-magic", version = "0.1" }
 magic-embed = { path = "../magic-embed", version = "0.1" }

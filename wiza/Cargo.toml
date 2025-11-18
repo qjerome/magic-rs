@@ -18,7 +18,7 @@ fs-walk = "0.2.0"
 serde_json = "1.0.145"
 serde_derive = "1.0.228"
 serde = "1.0.228"
-magic-rs = { path = "../magic", version = "0.1" }
+pure-magic = { path = "../pure-magic", version = "0.1" }
 magic-db = { path = "../magic-db", version = "0.1" }
 
 [[bin]]
