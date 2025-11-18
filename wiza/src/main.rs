@@ -114,7 +114,7 @@ use std::{
 use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
-use magic_rs::{Magic, MagicDb, MagicSource};
+use pure_magic::{Magic, MagicDb, MagicSource};
 use serde_derive::Serialize;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
@@ -354,7 +354,11 @@ impl<'m> SerMagicResult<'m> {
     }
 }
 
-fn db_load_rules(db: &mut MagicDb, rules: &[PathBuf], silent: bool) -> Result<(), magic_rs::Error> {
+fn db_load_rules(
+    db: &mut MagicDb,
+    rules: &[PathBuf],
+    silent: bool,
+) -> Result<(), pure_magic::Error> {
     for rule in rules {
         if rule.is_dir() {
             let walker = WalkOptions::new()

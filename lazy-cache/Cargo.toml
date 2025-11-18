@@ -6,7 +6,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Lazy file cache optimizing read operations for magic-rs"
+description = "Lazy file cache optimizing read operations for pure-magic crate"
 
 [dependencies]
 memmap2 = "0.9.8"

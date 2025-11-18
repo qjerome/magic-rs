@@ -29,7 +29,7 @@ jobs:
         set -eux
         cargo install cargo-rdme
 
-        members=(wiza magic-rs magic-embed)
+        members=(wiza pure-magic magic-embed)
         for member in ${members[@]}
         do
             echo "Cargo rdme check: $member"

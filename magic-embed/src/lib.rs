@@ -1,6 +1,6 @@
 //! # `magic-embed`: Compile-time Magic Database Embedding
 //!
-//! A procedural macro crate for embedding compiled [`magic_rs`](https://crates.io/crates/magic-rs) databases directly into your Rust binary.
+//! A procedural macro crate for embedding compiled [`pure_magic`](https://crates.io/crates/pure-magic) databases directly into your Rust binary.
 //! This crate provides a convenient way to bundle file type detection rules with your application,
 //! eliminating the need for external rule files at runtime.
 //!
@@ -9,7 +9,7 @@
 //! * **Compile-time Embedding**: Magic rule files are compiled and embedded during build
 //! * **Zero Runtime Dependencies**: No need to distribute separate rule files
 //! * **Flexible Configuration**: Include/exclude specific rule files or directories
-//! * **Seamless Integration**: Works with the [`magic_rs`](https://crates.io/crates/magic-rs)
+//! * **Seamless Integration**: Works with the [`pure_magic`](https://crates.io/crates/pure-magic)
 //!
 //! ## Installation
 //!
@@ -18,7 +18,7 @@
 //! ```toml
 //! [dependencies]
 //! magic-embed = "0.1"  # Replace with the latest version
-//! magic-rs = "0.1"     # Required peer dependency
+//! pure-magic = "0.1"     # Required peer dependency
 //! ```
 //!
 //! ## Usage
@@ -27,14 +27,14 @@
 //!
 //! ```rust
 //! use magic_embed::magic_embed;
-//! use magic_rs::MagicDb;
+//! use pure_magic::MagicDb;
 //!
 //! #[magic_embed(include=["../../magic-db/src/magdir"], exclude=["../../magic-db/src/magdir/der"])]
 //! struct MyMagicDb;
 //!
-//! fn main() -> Result<(), magic_rs::Error> {
+//! fn main() -> Result<(), pure_magic::Error> {
 //!     let db = MyMagicDb::open()?;
-//!     // Use the database as you would with magic_rs
+//!     // Use the database as you would with pure_magic
 //!     Ok(())
 //! }
 //! ```
@@ -50,7 +50,7 @@
 //!
 //! ```rust
 //! use magic_embed::magic_embed;
-//! use magic_rs::MagicDb;
+//! use pure_magic::MagicDb;
 //! use std::fs::File;
 //! use std::env::current_exe;
 //!
@@ -111,8 +111,8 @@ use std::{
     path::PathBuf,
 };
 
-use magic_rs::{MagicDb, MagicSource};
 use proc_macro::TokenStream;
+use pure_magic::{MagicDb, MagicSource};
 use quote::quote;
 use syn::{
     Expr, ExprArray, ItemStruct, Meta, MetaNameValue, Token, parse::Parser, punctuated::Punctuated,
@@ -397,9 +397,9 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
         impl #struct_name {
             const DB: &[u8] = include_bytes!(#str_db_path);
 
-            /// Opens the embedded magic database and returns a [`magic_rs::MagicDb`]
-            #struct_vis fn open() -> Result<magic_rs::MagicDb, magic_rs::Error> {
-                magic_rs::MagicDb::deserialize(&mut Self::DB.as_ref())
+            /// Opens the embedded magic database and returns a [`pure_magic::MagicDb`]
+            #struct_vis fn open() -> Result<pure_magic::MagicDb, pure_magic::Error> {
+                pure_magic::MagicDb::deserialize(&mut Self::DB.as_ref())
             }
         }
     };
@@ -407,7 +407,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
     Ok(output.into())
 }
 
-/// Procedural macro to embed a compiled [`magic_rs::MagicDb`]
+/// Procedural macro to embed a compiled [`pure_magic::MagicDb`]
 ///
 /// This attribute macro compiles magic rule files at program
 /// compile time and embeds them in the binary. The database
@@ -423,7 +423,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 ///
 /// ```
 /// use magic_embed::magic_embed;
-/// use magic_rs::MagicDb;
+/// use pure_magic::MagicDb;
 ///
 /// #[magic_embed(include=["../../magic-db/src/magdir"], exclude=["../../magic-db/src/magdir/der"])]
 /// struct EmbeddedMagicDb;

@@ -1,30 +1,30 @@
 <!-- cargo-rdme start -->
 
-# `magic-rs`: A Safe Rust Reimplementation of `libmagic`
+# `pure-magic`: A Safe Rust Reimplementation of `libmagic`
 
 This crate provides a high-performance, memory-safe alternative to the traditional
 `libmagic` (used by the `file` command). It supports **file type detection**,
 **MIME type inference**, and **custom magic rule parsing**.
 
 ## Installation
-Add `magic-rs` to your `Cargo.toml`:
+Add `pure-magic` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-magic-rs = "0.1"  # Replace with the latest version
+pure-magic = "0.1"  # Replace with the latest version
 ```
 
 Or add the latest version with cargo:
 
 ```sh
-cargo add magic-rs
+cargo add pure-magic
 ```
 
 ## Quick Start
 
 ### Detect File Types Programmatically
 ```rust
-use magic_rs::{MagicDb, MagicSource};
+use pure_magic::{MagicDb, MagicSource};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Get All Matching Rules
 ```rust
-use magic_rs::{MagicDb, MagicSource};
+use pure_magic::{MagicDb, MagicSource};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Serialize a Database to Disk
 ```rust
-use magic_rs::{MagicDb, MagicSource};
+use pure_magic::{MagicDb, MagicSource};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Deserialize a Database
 ```rust
-use magic_rs::{MagicDb, MagicSource};
+use pure_magic::{MagicDb, MagicSource};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

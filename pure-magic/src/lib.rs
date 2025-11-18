@@ -1,30 +1,30 @@
 #![forbid(unsafe_code)]
 #![deny(unused_imports)]
-//! # `magic-rs`: A Safe Rust Reimplementation of `libmagic`
+//! # `pure-magic`: A Safe Rust Reimplementation of `libmagic`
 //!
 //! This crate provides a high-performance, memory-safe alternative to the traditional
 //! `libmagic` (used by the `file` command). It supports **file type detection**,
 //! **MIME type inference**, and **custom magic rule parsing**.
 //!
 //! ## Installation
-//! Add `magic-rs` to your `Cargo.toml`:
+//! Add `pure-magic` to your `Cargo.toml`:
 //!
 //! ```toml
 //! [dependencies]
-//! magic-rs = "0.1"  # Replace with the latest version
+//! pure-magic = "0.1"  # Replace with the latest version
 //! ```
 //!
 //! Or add the latest version with cargo:
 //!
 //! ```sh
-//! cargo add magic-rs
+//! cargo add pure-magic
 //! ```
 //!
 //! ## Quick Start
 //!
 //! ### Detect File Types Programmatically
 //! ```rust
-//! use magic_rs::{MagicDb, MagicSource};
+//! use pure_magic::{MagicDb, MagicSource};
 //! use std::fs::File;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,7 +49,7 @@
 //!
 //! ### Get All Matching Rules
 //! ```rust
-//! use magic_rs::{MagicDb, MagicSource};
+//! use pure_magic::{MagicDb, MagicSource};
 //! use std::fs::File;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -81,7 +81,7 @@
 //!
 //! ### Serialize a Database to Disk
 //! ```rust
-//! use magic_rs::{MagicDb, MagicSource};
+//! use pure_magic::{MagicDb, MagicSource};
 //! use std::fs::File;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -101,7 +101,7 @@
 //!
 //! ### Deserialize a Database
 //! ```rust
-//! use magic_rs::{MagicDb, MagicSource};
+//! use pure_magic::{MagicDb, MagicSource};
 //! use std::fs::File;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -947,9 +947,10 @@ impl SearchTest {
             }
 
             if let Some(npos) = self.n_pos
-                && i > npos {
-                    break;
-                }
+                && i > npos
+            {
+                break;
+            }
 
             let pos = i;
             let (ok, consumed) = string_match(&self.str, self.str_mods, &buf[i..]);
@@ -1192,9 +1193,10 @@ impl PStringTest {
         }
 
         if let TestValue::Value(s) = self.test_val.as_ref()
-            && len != s.len() {
-                return Ok(None);
-            }
+            && len != s.len()
+        {
+            return Ok(None);
+        }
 
         let read = haystack.read_exact_count(len as u64)?;
 
@@ -2423,9 +2425,10 @@ impl EntryNode {
             if let Some(msg) = self.entry.message.as_ref()
                 && let Ok(msg) = msg.format_with(opt_match_res.as_ref()).inspect_err(|e| {
                     debug!("source={source} line={line} failed to format message: {e}")
-                }) {
-                    magic.push_message(msg);
-                }
+                })
+            {
+                magic.push_message(msg);
+            }
 
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
@@ -3345,14 +3348,15 @@ impl MagicDb {
         }
 
         if let Some(ext) = extension.map(|e| e.to_lowercase())
-            && !ext.is_empty() {
-                for rule in self.rules.iter().filter(|r| r.extensions.contains(&ext)) {
-                    do_magic!(rule);
-                    if let Some(f) = marked.get_mut(rule.id) {
-                        *f = true
-                    }
+            && !ext.is_empty()
+        {
+            for rule in self.rules.iter().filter(|r| r.extensions.contains(&ext)) {
+                do_magic!(rule);
+                if let Some(f) = marked.get_mut(rule.id) {
+                    *f = true
                 }
             }
+        }
 
         for rule in self
             .rules
