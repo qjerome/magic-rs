@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "magic-embed"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "fs-walk",
  "proc-macro2",

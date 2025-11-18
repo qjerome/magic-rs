@@ -11,4 +11,4 @@ keywords = ["magic", "mime", "libmagic", "embedded", "database"]
 
 [dependencies]
 pure-magic = { path = "../pure-magic", version = "0.1" }
-magic-embed = { path = "../magic-embed", version = "0.1" }
+magic-embed = { path = "../magic-embed", version = "0.2" }
