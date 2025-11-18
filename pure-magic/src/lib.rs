@@ -857,7 +857,7 @@ fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usiz
             return (false, consumed);
         }
 
-        (consumed > 0 && consumed < buf.len(), consumed)
+        (consumed > 0 && consumed <= buf.len(), consumed)
     }
 }
 
