@@ -9,6 +9,6 @@ name = "pymagic"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.25.0"
+pyo3 = "0.27.0"
 magic-db = { path = "../magic-db", version = "0.1" }
 magic-rs = { path = "../magic", version = "0.1" }
