@@ -92,9 +92,6 @@
 //! 2. **Embedding**: The compiled database is embedded in your binary as a byte array
 //! 3. **Runtime**: The `open()` method deserializes the embedded database
 //!
-//! The compiled database is stored in `target/magic-db/db.bin` and will be automatically
-//! rebuilt when any included rule file is modified (considering you've added a `build.rs` script).
-//!
 //! ## Performance Considerations
 //!
 //! - The database is compiled only when source files change
@@ -107,7 +104,6 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     path::PathBuf,
 };
 
@@ -259,135 +255,59 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
         .map(|(s, p)| (s, source_dir.join(p)))
         .collect();
 
-    let database_dir = {
-        let p = PathBuf::from("target").join("magic-db");
-        fs::create_dir_all(&p).map_err(|e| {
-            syn::Error::new(
-                struct_name.span(),
-                format!("failed to create directory: {e}"),
-            )
-        })?;
-
-        p.canonicalize().map_err(|e| {
-            syn::Error::new(
-                struct_name.span(),
-                format!("failed to canonicalize path: {e}"),
-            )
-        })?
-    };
-
-    let database_path = database_dir.join("db.bin");
-
-    let database_path_mod = if database_path.exists() {
-        Some(
-            database_path
-                .metadata()
-                .and_then(|m| m.modified())
-                .map_err(|e| {
-                    syn::Error::new(
-                        struct_name.span(),
-                        format!("failed to get database file metadata: {e}"),
-                    )
-                })?,
-        )
-    } else {
-        None
-    };
-
     // we don't walk rules recursively
     let mut wo = fs_walk::WalkOptions::new();
     wo.files().max_depth(0).sort(true);
 
     let mut db = MagicDb::new();
 
-    for (s, p) in include.iter().chain(exclude.iter()) {
-        if !p.exists() {
-            return Err(syn::Error::new(
-                *s,
-                format!("no such file or directory: {}", p.to_string_lossy()),
-            ));
-        }
+    let exclude_set: HashSet<PathBuf> = exclude.into_iter().map(|(_, p)| p).collect();
+
+    macro_rules! load_file {
+        ($span: expr, $path: expr) => {
+            let f = MagicSource::open($path).map_err(|e| {
+                syn::Error::new(
+                    $span.clone(),
+                    format!(
+                        "failed to parse magic file={}: {e}",
+                        $path.to_string_lossy()
+                    ),
+                )
+            })?;
+            db.load(f).map_err(|e| {
+                syn::Error::new(
+                    $span.clone(),
+                    format!("database failed to load magic file: {e}"),
+                )
+            })?;
+        };
     }
 
-    let mut must_compile_db = false;
-    for (_, p) in include.iter() {
+    for (s, p) in include.iter() {
         if p.is_dir() {
-            for f in wo.walk(p).flatten() {
-                let metadata = f.metadata().and_then(|m| m.modified()).map_err(|e| {
-                    syn::Error::new(
-                        struct_name.span(),
-                        format!("failed to get database file metadata: {e}"),
-                    )
-                })?;
+            for rule_file in wo.walk(p) {
+                let rule_file = rule_file
+                    .map_err(|e| syn::Error::new(*s, format!("failed to list rule file: {e}")))?;
 
-                if Some(metadata) > database_path_mod {
-                    must_compile_db = true;
-                    break;
+                if exclude_set.contains(&rule_file) {
+                    continue;
                 }
+
+                load_file!(s, &rule_file);
             }
         } else if p.is_file() {
+            load_file!(s, p);
         }
     }
 
-    if must_compile_db {
-        let exclude_set: HashSet<PathBuf> = exclude.into_iter().map(|(_, p)| p).collect();
-
-        macro_rules! load_file {
-            ($span: expr, $path: expr) => {
-                let f = MagicSource::open($path).map_err(|e| {
-                    syn::Error::new(
-                        $span.clone(),
-                        format!(
-                            "failed to parse magic file={}: {e}",
-                            $path.to_string_lossy()
-                        ),
-                    )
-                })?;
-                db.load(f).map_err(|e| {
-                    syn::Error::new(
-                        $span.clone(),
-                        format!("database failed to load magic file: {e}"),
-                    )
-                })?;
-            };
-        }
-
-        for (s, p) in include.iter() {
-            if p.is_dir() {
-                for rule_file in wo.walk(p) {
-                    let rule_file = rule_file.map_err(|e| {
-                        syn::Error::new(*s, format!("failed to list rule file: {e}"))
-                    })?;
-
-                    if exclude_set.contains(&rule_file) {
-                        continue;
-                    }
-
-                    load_file!(s, &rule_file);
-                }
-            } else if p.is_file() {
-                load_file!(s, p);
-            }
-        }
-
-        // Serialize and save database
-        let mut ser = vec![];
-        db.serialize(&mut ser).map_err(|e| {
-            syn::Error::new(
-                struct_name.span(),
-                format!("failed to serialize database: {e}"),
-            )
-        })?;
-
-        fs::write(&database_path, ser).map_err(|e| {
-            syn::Error::new(
-                struct_name.span(),
-                format!("failed to save database file: {e}"),
-            )
-        })?;
-    }
-
-    let str_db_path = database_path.to_string_lossy().to_string();
+    // Serialize and save database
+    let mut ser = vec![];
+    db.serialize(&mut ser).map_err(|e| {
+        syn::Error::new(
+            struct_name.span(),
+            format!("failed to serialize database: {e}"),
+        )
+    })?;
 
     // Generate the output: the original function + a print statement
     let output = quote! {
@@ -395,7 +315,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
         #struct_vis struct #struct_name;
 
         impl #struct_name {
-            const DB: &[u8] = include_bytes!(#str_db_path);
+            const DB: &[u8] = &[ #( #ser ),* ];
 
             /// Opens the embedded magic database and returns a [`pure_magic::MagicDb`]
             #struct_vis fn open() -> Result<pure_magic::MagicDb, pure_magic::Error> {
