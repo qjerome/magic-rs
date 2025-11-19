@@ -1,8 +1,8 @@
 <!-- cargo-rdme start -->
 
-# Pymagic-rs: Pure Rust Python Bindings for File Type Detection
+# Pure Rust Python Bindings for File Type Detection
 
-`pymagic-rs` is a Python module that provides bindings to the [`magic-rs`](https://crates.io/crates/magic-rs) crate, allowing you to detect file types, MIME types, and other metadata using a pure Rust alternative to the C `libmagic` library. This module uses an **embedded magic database**, so everything works out-of-the-box with **no need** of a compiled database or magic rule files.
+`pure-magic-rs` is a Python module that provides bindings to the [`pure-magic`](https://crates.io/crates/pure-magic) crate, allowing you to detect file types, MIME types, and other metadata using a pure Rust alternative to the C `libmagic` library. This module uses an **embedded magic database**, so everything works out-of-the-box with **no need** of a compiled database or magic rule files.
 
 ## Features
 - **Pure Rust implementation**: No C dependencies, easily cross-compilable for great compatibility
@@ -14,14 +14,14 @@
 
 ## Installation
 ```bash
-pip install pymagic-rs
+pip install pure-magic-rs
 ```
 
 ## Usage
 
 ### Initializing the Database
 ```python
-from pymagic import MagicDb
+from magic import MagicDb
 # Initialize the Magic database (uses embedded database)
 db = MagicDb()
 ```
