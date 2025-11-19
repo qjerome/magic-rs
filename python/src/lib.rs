@@ -316,7 +316,7 @@ impl MagicDb {
 }
 
 #[pymodule]
-fn pymagic(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn magic(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Magic>()?;
     m.add_class::<MagicDb>()?;
 

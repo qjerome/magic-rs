@@ -10,7 +10,7 @@ repository.workspace = true
 publish = false
 
 [lib]
-name = "pymagic"
+name = "magic"
 crate-type = ["cdylib"]
 
 [dependencies]
