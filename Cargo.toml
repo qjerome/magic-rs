@@ -1,5 +1,12 @@
 [workspace]
-members = ["wiza", "pure-magic", "lazy-cache", "magic-embed", "magic-db"]
+members = [
+    "wiza",
+    "pure-magic",
+    "lazy-cache",
+    "magic-embed",
+    "magic-db",
+    "python",
+]
 resolver = "3"
 
 [workspace.package]

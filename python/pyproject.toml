@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "pure-magic-rs"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+authors = [{ name = "Quentin JEROME", email = "quentin.jerome@circl.lu" }]
+maintainers = [{ name = "Quentin JEROME", email = "quentin.jerome@circl.lu" }]
+description = "Python bindings for pure-magic crate, a pure Rust re-implementation of libmagic"
+keywords = ["magic", "file", "mime", "identification", "libmagic"]
+readme = "README.md"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
