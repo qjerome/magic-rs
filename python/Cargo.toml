@@ -1,8 +1,8 @@
 [package]
-name = "pymagic-rs"
+name = "pure-magic-py"
 version = "0.1.0"
 edition = "2021"
-description = "Python bindings for magic-rs crate"
+description = "Python bindings for pure-magic crate"
 authors.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -16,4 +16,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = "0.27.0"
 magic-db = { path = "../magic-db" }
-magic-rs = { path = "../magic" }
+pure-magic = { path = "../pure-magic" }
