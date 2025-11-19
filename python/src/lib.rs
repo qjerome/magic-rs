@@ -92,7 +92,7 @@ use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-fn py_value_err(from: magic_rs::Error) -> PyErr {
+fn py_value_err(from: pure_magic::Error) -> PyErr {
     PyValueError::new_err(from.to_string())
 }
 
@@ -112,8 +112,8 @@ pub struct Magic {
     extensions: Vec<String>,
 }
 
-impl From<magic_rs::Magic<'_>> for Magic {
-    fn from(value: magic_rs::Magic<'_>) -> Self {
+impl From<pure_magic::Magic<'_>> for Magic {
+    fn from(value: pure_magic::Magic<'_>) -> Self {
         Self {
             source: value.source().map(|s| s.to_string()),
             message: value.message(),
@@ -140,7 +140,7 @@ impl Magic {
 }
 
 #[pyclass]
-struct MagicDb(magic_rs::MagicDb);
+struct MagicDb(pure_magic::MagicDb);
 
 #[pymethods]
 impl MagicDb {
@@ -152,7 +152,7 @@ impl MagicDb {
     pub fn first_magic_buffer(&self, input: &[u8], extension: Option<&str>) -> PyResult<Magic> {
         let mut cursor = io::Cursor::new(input);
         self.0
-            .magic_first(&mut cursor, extension)
+            .first_magic(&mut cursor, extension)
             .map(Magic::from)
             .map_err(py_value_err)
     }
@@ -161,7 +161,7 @@ impl MagicDb {
         let mut file = File::open(&path).map_err(|e| PyIOError::new_err(e.to_string()))?;
         let ext = path.extension();
         self.0
-            .magic_first(&mut file, ext.and_then(|e| e.to_str()))
+            .first_magic(&mut file, ext.and_then(|e| e.to_str()))
             .map(Magic::from)
             .map_err(py_value_err)
     }
@@ -169,7 +169,7 @@ impl MagicDb {
     pub fn best_magic_buffer(&self, input: &[u8]) -> PyResult<Magic> {
         let mut cursor = io::Cursor::new(input);
         self.0
-            .magic_best(&mut cursor)
+            .best_magic(&mut cursor)
             .map(Magic::from)
             .map_err(py_value_err)
     }
@@ -177,7 +177,7 @@ impl MagicDb {
     pub fn best_magic_file(&self, path: PathBuf) -> PyResult<Magic> {
         let mut file = File::open(&path).map_err(|e| PyIOError::new_err(e.to_string()))?;
         self.0
-            .magic_best(&mut file)
+            .best_magic(&mut file)
             .map(Magic::from)
             .map_err(py_value_err)
     }
@@ -185,7 +185,7 @@ impl MagicDb {
     pub fn all_magics_buffer(&self, input: &[u8]) -> PyResult<Vec<Magic>> {
         let mut cursor = io::Cursor::new(input);
         self.0
-            .magic_all(&mut cursor)
+            .all_magics(&mut cursor)
             .map(|magics| magics.into_iter().map(Magic::from).collect())
             .map_err(py_value_err)
     }
@@ -193,7 +193,7 @@ impl MagicDb {
     pub fn all_magics_file(&self, path: PathBuf) -> PyResult<Vec<Magic>> {
         let mut file = File::open(&path).map_err(|e| PyIOError::new_err(e.to_string()))?;
         self.0
-            .magic_all(&mut file)
+            .all_magics(&mut file)
             .map(|magics| magics.into_iter().map(Magic::from).collect())
             .map_err(py_value_err)
     }
