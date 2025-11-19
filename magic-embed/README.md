@@ -94,9 +94,6 @@ Replace `magic/rules/` with the path to your actual rule files.
 2. **Embedding**: The compiled database is embedded in your binary as a byte array
 3. **Runtime**: The `open()` method deserializes the embedded database
 
-The compiled database is stored in `target/magic-db/db.bin` and will be automatically
-rebuilt when any included rule file is modified (considering you've added a `build.rs` script).
-
 ## Performance Considerations
 
 - The database is compiled only when source files change
