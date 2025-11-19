@@ -28,7 +28,7 @@
 //! ```python
 //! # Detect the first match for a buffer (e.g., PNG data)
 //! png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-//! result = db.first_magic_buffer(png_data)
+//! result = db.first_magic_buffer(png_data, None)
 //! print(f"Detected: {result.message} (MIME: {result.mime_type})")
 //! ```
 //!
@@ -67,7 +67,7 @@
 //!
 //! ### Converting Results to Dictionaries
 //! ```python
-//! result = db.first_magic_buffer(png_data)
+//! result = db.first_magic_buffer(png_data, None)
 //! result_dict = result.to_dict()
 //! print(result_dict)
 //! # Output: {'source': None, 'message': 'PNG image data', 'mime_type': 'image/png', ...}

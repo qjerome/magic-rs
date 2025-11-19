@@ -1,3 +1,7 @@
+[![PyPI - Version](https://img.shields.io/pypi/v/pure-magic-rs?style=for-the-badge)](https://pypi.org/project/pure-magic-rs/)
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/qjerome/magic-rs/maturin.yml?style=for-the-badge)](https://github.com/qjerome/magic-rs/actions/workflows/maturin.yml)
+![Static Badge](https://img.shields.io/badge/license-GPL--3-blue?style=for-the-badge)
+
 <!-- cargo-rdme start -->
 
 # Pure Rust Python Bindings for File Type Detection
@@ -30,7 +34,7 @@ db = MagicDb()
 ```python
 # Detect the first match for a buffer (e.g., PNG data)
 png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-result = db.first_magic_buffer(png_data)
+result = db.first_magic_buffer(png_data, None)
 print(f"Detected: {result.message} (MIME: {result.mime_type})")
 ```
 
@@ -69,7 +73,7 @@ for r in results:
 
 ### Converting Results to Dictionaries
 ```python
-result = db.first_magic_buffer(png_data)
+result = db.first_magic_buffer(png_data, None)
 result_dict = result.to_dict()
 print(result_dict)
 # Output: {'source': None, 'message': 'PNG image data', 'mime_type': 'image/png', ...}
