@@ -1,6 +1,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/pure-magic-rs?style=for-the-badge)](https://pypi.org/project/pure-magic-rs/)
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/qjerome/magic-rs/maturin.yml?style=for-the-badge)](https://github.com/qjerome/magic-rs/actions/workflows/maturin.yml)
-![Static Badge](https://img.shields.io/badge/license-GPL--3-blue?style=for-the-badge)
+![GitHub License](https://img.shields.io/github/license/qjerome/magic-rs?style=for-the-badge&color=blue)
+
 
 <!-- cargo-rdme start -->
 
