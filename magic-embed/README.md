@@ -1,3 +1,6 @@
+[![Crates.io Version](https://img.shields.io/crates/v/magic-embed?style=for-the-badge)](https://crates.io/crates/magic-embed)
+[![docs.rs](https://img.shields.io/docsrs/magic-embed?style=for-the-badge)](https://docs.rs/magic-embed)
+
 <!-- cargo-rdme start -->
 
 # `magic-embed`: Compile-time Magic Database Embedding
