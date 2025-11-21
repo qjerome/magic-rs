@@ -63,7 +63,7 @@
 //! ## Source Rules
 //!
 //! The source magic rules are available in the repository at:
-//! [`src/magdir`](https://github.com/qjerome/pure-magic/tree/main/magic-db/src/magdir)
+//! [`src/magdir`](https://github.com/qjerome/magic-rs/tree/main/magic-db/src/magdir)
 //!
 //! You can:
 //! 1. Browse the rules to understand how file types are detected
