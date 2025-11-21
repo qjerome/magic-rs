@@ -1,3 +1,4 @@
+[![Crates.io Version](https://img.shields.io/crates/v/wiza?style=for-the-badge)](https://crates.io/crates/wiza)
 
 <!-- cargo-rdme start -->
 
