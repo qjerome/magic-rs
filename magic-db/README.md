@@ -1,3 +1,7 @@
+[![Crates.io Version](https://img.shields.io/crates/v/magic-db?style=for-the-badge)](https://crates.io/crates/magic-db)
+[![docs.rs](https://img.shields.io/docsrs/magic-db?style=for-the-badge)
+](https://docs.rs/magic-db)
+
 <!-- cargo-rdme start -->
 
 # `magic-db`: Precompiled Magic Rules Database
