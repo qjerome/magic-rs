@@ -1,3 +1,6 @@
+[![Crates.io Version](https://img.shields.io/crates/v/pure-magic?style=for-the-badge)](https://crates.io/crates/pure-magic)
+[![docs.rs](https://img.shields.io/docsrs/pure-magic?style=for-the-badge)](https://docs.rs/pure-magic)
+
 <!-- cargo-rdme start -->
 
 # `pure-magic`: A Safe Rust Reimplementation of `libmagic`
