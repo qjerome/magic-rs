@@ -1988,11 +1988,7 @@ impl Match {
                 DirOffset::LastUpper(shift) => {
                     let o = last_level_offset.unwrap_or_default() as i64 + shift;
 
-                    if o.is_positive() {
-                        Ok(Some(o as u64))
-                    } else {
-                        Ok(None)
-                    }
+                    if o >= 0 { Ok(Some(o as u64)) } else { Ok(None) }
                 }
                 DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
