@@ -18,8 +18,8 @@ fs-walk = "0.2.0"
 serde_json = "1.0.145"
 serde_derive = "1.0.228"
 serde = "1.0.228"
-pure-magic = { path = "../pure-magic", version = "0.1" }
-magic-db = { path = "../magic-db", version = "0.2" }
+pure-magic = { path = "../pure-magic", version = "0.1.1" }
+magic-db = { path = "../magic-db", version = "0.2.2" }
 
 [[bin]]
 name = "wiza"
