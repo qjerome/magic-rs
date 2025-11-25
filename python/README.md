@@ -26,7 +26,7 @@ pip install pure-magic-rs
 
 ### Initializing the Database
 ```python
-from magic import MagicDb
+from pure_magic_rs import MagicDb
 # Initialize the Magic database (uses embedded database)
 db = MagicDb()
 ```
