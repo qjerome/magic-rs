@@ -10,7 +10,7 @@ repository.workspace = true
 publish = false
 
 [lib]
-name = "magic"
+name = "pure_magic_rs"
 crate-type = ["cdylib"]
 
 [dependencies]

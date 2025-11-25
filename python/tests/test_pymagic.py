@@ -1,7 +1,7 @@
 import pytest
 import os
 import tempfile
-from magic import MagicDb, Magic
+from pure_magic_rs import MagicDb, Magic
 
 
 @pytest.fixture
