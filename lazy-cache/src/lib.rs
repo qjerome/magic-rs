@@ -607,4 +607,19 @@ mod tests {
             b"\x62\x00\x63\x00\x64\x00\x00"
         );
     }
+
+    #[test]
+    fn test_io_read() {
+        let mut f = File::open("./src/lib.rs").unwrap();
+        let mut lr = LazyCache::from_read_seek(File::open("./src/lib.rs").unwrap()).unwrap();
+
+        let mut fb = vec![];
+        let file_n = f.read_to_end(&mut fb).unwrap();
+
+        let mut lcb = vec![];
+        let lcn = lr.read_to_end(&mut lcb).unwrap();
+
+        assert_eq!(lcb, fb);
+        assert_eq!(file_n, lcn);
+    }
 }
