@@ -3,11 +3,17 @@
 
 <!-- cargo-rdme start -->
 
-# `pure-magic`: A Safe Rust Reimplementation of `libmagic`
+# `pure-magic`: A pure and safe Rust Reimplementation of `libmagic`
 
-This crate provides a high-performance, memory-safe alternative to the traditional
-`libmagic` (used by the `file` command). It supports **file type detection**,
-**MIME type inference**, and **custom magic rule parsing**.
+Unlike many file identification crates, `pure-magic` is highly compatible with the standard
+`magic` rule format, allowing seamless reuse of existing
+[rules](https://github.com/qjerome/magic-rs/tree/main/magic-db/src/magdir). This makes it an ideal
+drop-in replacement for crates relying on **`libmagic` C bindings**, where memory safety is critical.
+
+**Key Features:**
+- File type detection
+- MIME type inference
+- Custom magic rule parsing
 
 ## Installation
 Add `pure-magic` to your `Cargo.toml`:
