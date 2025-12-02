@@ -145,6 +145,134 @@ pub(crate) fn find_json_boundaries<S: AsRef<[u8]>>(buf: S) -> Option<(usize, usi
     None
 }
 
+/// Copy of rust standard library Utf8Error, to be returned
+/// by run_utf8_validation
+#[derive(Copy, Eq, PartialEq, Clone, Debug)]
+pub(crate) struct Utf8Error {
+    pub(crate) valid_up_to: usize,
+    pub(crate) error_len: Option<u8>,
+}
+
+// https://tools.ietf.org/html/rfc3629
+const UTF8_CHAR_WIDTH: &[u8; 256] = &[
+    // 1  2  3  4  5  6  7  8  9  A  B  C  D  E  F
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 1
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 2
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 3
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 4
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 5
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 6
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 7
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 8
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 9
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // A
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // B
+    0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // C
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // D
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, // E
+    4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // F
+];
+
+#[inline]
+const fn utf8_char_width(b: u8) -> usize {
+    UTF8_CHAR_WIDTH[b as usize] as usize
+}
+
+/// This is a pale, modified and simplified copy of the Rust std method
+/// to do UTF8 validation. It has been changed to return a boolean flag
+/// if buffer is full of ascii characters.
+#[inline(always)]
+pub(crate) fn run_utf8_validation(v: &[u8]) -> Result<bool, Utf8Error> {
+    let mut index = 0;
+    let len = v.len();
+    let mut ascii_only = len > 0;
+
+    while index < len {
+        let old_offset = index;
+        macro_rules! err {
+            ($error_len: expr) => {
+                return Err(Utf8Error {
+                    valid_up_to: old_offset,
+                    error_len: $error_len,
+                })
+            };
+        }
+
+        macro_rules! next {
+            () => {{
+                index += 1;
+                // we needed data, but there was none: error!
+                if index >= len {
+                    err!(None)
+                }
+                v[index]
+            }};
+        }
+
+        let first = v[index];
+        if first >= 128 {
+            let w = utf8_char_width(first);
+            // 2-byte encoding is for codepoints  \u{0080} to  \u{07ff}
+            //        first  C2 80        last DF BF
+            // 3-byte encoding is for codepoints  \u{0800} to  \u{ffff}
+            //        first  E0 A0 80     last EF BF BF
+            //   excluding surrogates codepoints  \u{d800} to  \u{dfff}
+            //               ED A0 80 to       ED BF BF
+            // 4-byte encoding is for codepoints \u{10000} to \u{10ffff}
+            //        first  F0 90 80 80  last F4 8F BF BF
+            //
+            // Use the UTF-8 syntax from the RFC
+            //
+            // https://tools.ietf.org/html/rfc3629
+            // UTF8-1      = %x00-7F
+            // UTF8-2      = %xC2-DF UTF8-tail
+            // UTF8-3      = %xE0 %xA0-BF UTF8-tail / %xE1-EC 2( UTF8-tail ) /
+            //               %xED %x80-9F UTF8-tail / %xEE-EF 2( UTF8-tail )
+            // UTF8-4      = %xF0 %x90-BF 2( UTF8-tail ) / %xF1-F3 3( UTF8-tail ) /
+            //               %xF4 %x80-8F 2( UTF8-tail )
+            match w {
+                2 => {
+                    if next!() as i8 >= -64 {
+                        err!(Some(1))
+                    }
+                }
+                3 => {
+                    match (first, next!()) {
+                        (0xE0, 0xA0..=0xBF)
+                        | (0xE1..=0xEC, 0x80..=0xBF)
+                        | (0xED, 0x80..=0x9F)
+                        | (0xEE..=0xEF, 0x80..=0xBF) => {}
+                        _ => err!(Some(1)),
+                    }
+                    if next!() as i8 >= -64 {
+                        err!(Some(2))
+                    }
+                }
+                4 => {
+                    match (first, next!()) {
+                        (0xF0, 0x90..=0xBF) | (0xF1..=0xF3, 0x80..=0xBF) | (0xF4, 0x80..=0x8F) => {}
+                        _ => err!(Some(1)),
+                    }
+                    if next!() as i8 >= -64 {
+                        err!(Some(2))
+                    }
+                    if next!() as i8 >= -64 {
+                        err!(Some(3))
+                    }
+                }
+                _ => err!(Some(1)),
+            }
+            index += 1;
+            ascii_only = false;
+        } else {
+            index += 1;
+        }
+    }
+
+    Ok(ascii_only)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
