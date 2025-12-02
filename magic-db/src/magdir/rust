@@ -39,10 +39,16 @@
 >&0 regex/1l  \\w+\\s?.*?\\]$
 >>0 use rust-src
 
-# we search for a function definition in the 4096
-# first bytes of the file
-0   search/4096fs fn
->&0 regex/1l fn\\s+[a-zA-Z0-9_]+\\(.*?\\).*?\\{$
+# we search for rust keywords in the first 4096 bytes
+# don't put the question mark on macro_rules otherwise we don't match \b
+0   regex/4096s \\b(impl|fn|macro_rules)\\b
+# sometimes impl lines are quite long, searching on 3 lines increases
+# the number of bytes read in the tested value to 240 bytes
+>&0 regex/3l impl(<.*?>)?(\\s+[a-zA-Z0-9_:]+\\s+for)?\\s+[a-zA-Z0-9_]+.*?
+>>0 use rust-src
+>&0 regex/1l fn\\s+[a-zA-Z0-9_]+(<.*?>)?\\(
+>>0 use rust-src
+>&0 string macro_rules!
 >>0 use rust-src
 
 0 name rust-src Rust source code text
