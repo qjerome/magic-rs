@@ -163,7 +163,7 @@ use tracing::{Level, debug, enabled, trace};
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},
     parser::{FileMagicParser, Rule},
-    utils::{decode_id3, find_json_boundaries},
+    utils::{decode_id3, find_json_boundaries, run_utf8_validation},
 };
 
 mod numeric;
@@ -3033,6 +3033,8 @@ pub struct MagicDb {
 #[inline(always)]
 /// Returns `true` if the byte stream is likely text.
 fn is_likely_text(bytes: &[u8]) -> bool {
+    const CHUNK_SIZE: usize = std::mem::size_of::<usize>();
+
     if bytes.is_empty() {
         return false;
     }
@@ -3040,13 +3042,27 @@ fn is_likely_text(bytes: &[u8]) -> bool {
     let mut printable = 0f64;
     let mut high_bytes = 0f64; // Bytes > 0x7F (non-ASCII)
 
-    for byte in bytes.iter() {
-        match byte {
-            0x00 => return false,
-            0x09 | 0x0A | 0x0D => printable += 1.0, // Whitespace
-            0x20..=0x7E => printable += 1.0,        // Printable ASCII
-            _ => high_bytes += 1.0,
+    let (chunks, remainder) = bytes.as_chunks::<CHUNK_SIZE>();
+
+    macro_rules! handle_byte {
+        ($byte: expr) => {
+            match $byte {
+                0x00 => return false,
+                0x09 | 0x0A | 0x0D => printable += 1.0, // Whitespace
+                0x20..=0x7E => printable += 1.0,        // Printable ASCII
+                _ => high_bytes += 1.0,
+            }
+        };
+    }
+
+    for bytes in chunks {
+        for b in bytes {
+            handle_byte!(b)
         }
+    }
+
+    for b in remainder {
+        handle_byte!(b)
     }
 
     let total = bytes.len() as f64;
@@ -3059,25 +3075,23 @@ fn is_likely_text(bytes: &[u8]) -> bool {
 
 #[inline(always)]
 fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
-    let Ok(s) = str::from_utf8(stream.as_ref()) else {
-        if is_likely_text(stream.as_ref()) {
-            return StreamKind::Text(TextEncoding::Unknown);
-        } else {
-            return StreamKind::Binary;
+    let buf = stream.as_ref();
+
+    match run_utf8_validation(buf) {
+        Ok(is_ascii) => {
+            if is_ascii {
+                StreamKind::Text(TextEncoding::Ascii)
+            } else {
+                StreamKind::Text(TextEncoding::Utf8)
+            }
         }
-    };
-
-    let count = s.chars().count();
-    let mut is_ascii = true;
-
-    for c in s.chars().take(count.saturating_sub(1)) {
-        is_ascii &= c.is_ascii()
-    }
-
-    if is_ascii {
-        StreamKind::Text(TextEncoding::Ascii)
-    } else {
-        StreamKind::Text(TextEncoding::Utf8)
+        Err(e) => {
+            if is_likely_text(&buf[e.valid_up_to..]) {
+                StreamKind::Text(TextEncoding::Unknown)
+            } else {
+                StreamKind::Binary
+            }
+        }
     }
 }
 
