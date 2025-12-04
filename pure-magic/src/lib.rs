@@ -781,8 +781,9 @@ fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usiz
 
         macro_rules! consume_target {
             () => {{
-                iter.next();
-                consumed += 1;
+                if iter.next().is_some() {
+                    consumed += 1;
+                }
             }};
         }
 
@@ -863,7 +864,10 @@ fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usiz
             return (false, consumed);
         }
 
-        (consumed > 0 && consumed <= buf.len(), consumed)
+        (
+            consumed > 0 && str.get(i_src).is_none() && consumed <= buf.len(),
+            consumed,
+        )
     }
 }
 
