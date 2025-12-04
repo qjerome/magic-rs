@@ -5,10 +5,7 @@ use crate::TIMESTAMP_FORMAT;
 
 #[inline(always)]
 pub(crate) const fn decode_id3(v: u32) -> u32 {
-    (v & 0x7f)
-        | (((v >> 8) & 0x7f) << 7)
-        | (((v >> 16) & 0x7f) << 14)
-        | (((v >> 24) & 0x7f) << 21)
+    (v & 0x7f) | (((v >> 8) & 0x7f) << 7) | (((v >> 16) & 0x7f) << 14) | (((v >> 24) & 0x7f) << 21)
 }
 
 // test this properly
