@@ -1,6 +1,6 @@
 [package]
 name = "magic-db"
-version = "0.2.3"
+version = "0.2.4"
 rust-version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,5 +10,5 @@ description = "This crate provides a precompiled magic database for file type id
 keywords = ["magic", "mime", "libmagic", "embedded", "database"]
 
 [dependencies]
-pure-magic = { path = "../pure-magic", version = "0.1.2" }
-magic-embed = { path = "../magic-embed", version = "0.2.2" }
+pure-magic = { path = "../pure-magic", version = "0.1.3" }
+magic-embed = { path = "../magic-embed", version = "0.2.3" }
