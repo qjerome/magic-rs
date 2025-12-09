@@ -92,7 +92,7 @@ where
             self.hot_head = vec![0u8; head_tail_size];
             self.source.read_exact(self.hot_head.as_mut_slice())?;
 
-            self.source.seek(SeekFrom::End(-(size as i64)))?;
+            self.source.seek(SeekFrom::End(-(head_tail_size as i64)))?;
             self.hot_tail = vec![0u8; head_tail_size];
             self.source.read_exact(self.hot_tail.as_mut_slice())?;
         } else {
@@ -177,29 +177,38 @@ where
         let range_len = range.end.saturating_sub(range.start);
 
         if range.start > self.pos_end || range_len == 0 {
-            return Ok(EMPTY_RANGE);
+            Ok(EMPTY_RANGE)
         } else if range.start < self.hot_head.len() as u64
             && range.end <= self.hot_head.len() as u64
         {
             self.seek(SeekFrom::Start(range.end))?;
-            return Ok(&self.hot_head[range.start as usize..range.end as usize]);
-        } else if range.start > (self.pos_end - self.hot_tail.len() as u64) {
-            let start_from_end = self.pos_end.saturating_sub(1).saturating_sub(range.start);
+
+            Ok(&self.hot_head[range.start as usize..range.end as usize])
+        } else if range.start >= (self.pos_end.saturating_sub(self.hot_tail.len() as u64)) {
+            let tail_base = self.pos_end.saturating_sub(self.hot_tail.len() as u64);
+
+            let start = range.start - tail_base;
+            let end = range.end - tail_base;
+
             self.seek(SeekFrom::Start(range.end))?;
-            return Ok(&self.hot_tail
-                [start_from_end as usize..start_from_end.saturating_add(range_len) as usize]);
+
+            Ok(&self.hot_tail[start as usize..end as usize])
         } else if range.end < self.warm_size.unwrap_or_default() {
             self.range_warmup(range.clone())?;
             self.seek(SeekFrom::Start(range.end))?;
-            return Ok(&self.warm()?[range.start as usize..range.end as usize]);
-        } else if range_len > self.cold.len() as u64 {
-            self.cold.resize(range_len as usize, 0);
-        }
 
-        self.source.seek(SeekFrom::Start(range.start))?;
-        let n = self.source.read(self.cold[..range_len as usize].as_mut())?;
-        self.seek(SeekFrom::Start(range.end))?;
-        Ok(&self.cold[..n])
+            Ok(&self.warm()?[range.start as usize..range.end as usize])
+        } else {
+            if range_len > self.cold.len() as u64 {
+                self.cold.resize(range_len as usize, 0);
+            }
+
+            self.source.seek(SeekFrom::Start(range.start))?;
+            let n = self.source.read(self.cold[..range_len as usize].as_mut())?;
+            self.seek(SeekFrom::Start(range.end))?;
+
+            Ok(&self.cold[..n])
+        }
     }
 
     pub fn read_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
@@ -375,6 +384,21 @@ mod tests {
         ($content: literal) => {
             LazyCache::from_read_seek(std::io::Cursor::new($content)).unwrap()
         };
+    }
+
+    /// reads io::Reader `r` by chunks of size `cs` until the end
+    macro_rules! read_to_end {
+        ($r: expr, $cs: literal) => {{
+            let mut buf = [0u8; $cs];
+            let mut out: Vec<u8> = vec![];
+            while let Ok(n) = $r.read(&mut buf[..]) {
+                if n == 0 {
+                    break;
+                }
+                out.extend(&buf[..n]);
+            }
+            out
+        }};
     }
 
     #[test]
@@ -613,16 +637,17 @@ mod tests {
 
     #[test]
     fn test_io_read() {
-        let mut f = File::open("./src/lib.rs").unwrap();
-        let mut lr = LazyCache::from_read_seek(File::open("./src/lib.rs").unwrap()).unwrap();
+        let p = "./src/lib.rs";
+        let mut f = File::open(p).unwrap();
+        let mut lr = LazyCache::from_read_seek(File::open(p).unwrap())
+            .unwrap()
+            .with_hot_cache(512)
+            .unwrap()
+            .with_warm_cache(1024);
 
-        let mut fb = vec![];
-        let file_n = f.read_to_end(&mut fb).unwrap();
-
-        let mut lcb = vec![];
-        let lcn = lr.read_to_end(&mut lcb).unwrap();
+        let fb = read_to_end!(f, 32);
+        let lcb = read_to_end!(lr, 16);
 
         assert_eq!(lcb, fb);
-        assert_eq!(file_n, lcn);
     }
 }
