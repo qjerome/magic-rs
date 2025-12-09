@@ -103,7 +103,10 @@ where
         Ok(self)
     }
 
-    pub fn with_warm_cache(mut self, warm_size: u64) -> Self {
+    pub fn with_warm_cache(mut self, mut warm_size: u64) -> Self {
+        // if warm_size is smaller than block_size we will not
+        // be able to write chunks into the warm cache
+        warm_size = max(warm_size, self.block_size);
         self.warm_size = Some(warm_size);
         self
     }
