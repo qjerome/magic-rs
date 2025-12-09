@@ -365,10 +365,20 @@ where
 
         self.read_exact_range(start..start + end)
     }
+
+    /// Returns the size of the whole data. If the `LazyCache` is
+    /// used with a [`std::fs::File`] reader, this method will return
+    /// the file size.
+    #[inline(always)]
+    pub fn data_size(&self) -> u64 {
+        self.pos_end
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
+
     use super::*;
 
     macro_rules! lazy_cache {
@@ -624,5 +634,21 @@ mod tests {
 
         assert_eq!(lcb, fb);
         assert_eq!(file_n, lcn);
+    }
+
+    #[test]
+    fn test_data_size() {
+        let f = File::open("./src/lib.rs").unwrap();
+        let size = f.metadata().unwrap().size();
+
+        let c = LazyCache::from_read_seek(f).unwrap();
+        assert_eq!(size, c.data_size());
+
+        assert_eq!(
+            LazyCache::from_read_seek(io::Cursor::new(&[]))
+                .unwrap()
+                .data_size(),
+            0
+        );
     }
 }
