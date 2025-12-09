@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 
 use std::{
-    cmp::min,
+    cmp::{max, min},
     fs::File,
     io::{self, Read, Seek, SeekFrom, Write},
     ops::Range,
