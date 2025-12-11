@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![deny(unused_imports)]
+#![deny(missing_docs)]
 //! # `pure-magic`: A pure and safe Rust Reimplementation of `libmagic`
 //!
 //! Unlike many file identification crates, `pure-magic` is highly compatible with the standard
@@ -175,11 +176,13 @@ const HARDCODED_SOURCE: &str = "hardcoded";
 // corresponds to FILE_INDIR_MAX constant defined in libmagic
 const MAX_RECURSION: usize = 50;
 // constant found in libmagic. It is used to limit for search tests
-pub const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
+const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
 
+/// Default mimetype for un-identified binary data
 pub const DEFAULT_BIN_MIMETYPE: &str = "application/octet-stream";
+/// Default mimetype for un-identified text data
 pub const DEFAULT_TEXT_MIMETYPE: &str = "text/plain";
 
 pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
