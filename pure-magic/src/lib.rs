@@ -3292,20 +3292,17 @@ impl MagicDb {
 
     #[inline(always)]
     fn magic_default<'m, R: Read + Seek>(
-        haystack: &mut LazyCache<R>,
+        cache: &mut LazyCache<R>,
         stream_kind: StreamKind,
         magic: &mut Magic<'m>,
-    ) -> Result<(), Error> {
-        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
-
+    ) {
         magic.set_source(Some(HARDCODED_SOURCE));
         magic.set_stream_kind(stream_kind);
         magic.is_default = true;
 
-        if buf.is_empty() {
+        if cache.data_size() == 0 {
             magic.push_message(Cow::Borrowed("empty"));
             magic.set_mime_type(Cow::Borrowed(DEFAULT_BIN_MIMETYPE));
-            return Ok(());
         }
 
         match stream_kind {
@@ -3317,8 +3314,6 @@ impl MagicDb {
                 magic.push_message(Cow::Borrowed("text"));
             }
         }
-
-        Ok(())
     }
 
     /// Loads rules from a [`MagicSource`]
@@ -3402,7 +3397,7 @@ impl MagicDb {
             do_magic!(rule)
         }
 
-        Self::magic_default(haystack, stream_kind, &mut magic)?;
+        Self::magic_default(haystack, stream_kind, &mut magic);
 
         Ok(magic)
     }
@@ -3459,7 +3454,7 @@ impl MagicDb {
             magic.reset();
         }
 
-        Self::magic_default(haystack, stream_kind, &mut magic)?;
+        Self::magic_default(haystack, stream_kind, &mut magic);
         out.push(magic);
 
         out.sort_by_key(|b| std::cmp::Reverse(b.strength()));
