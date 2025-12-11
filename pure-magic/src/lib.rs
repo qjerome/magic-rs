@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 #![deny(unused_imports)]
+#![deny(missing_docs)]
 //! # `pure-magic`: A pure and safe Rust Reimplementation of `libmagic`
 //!
 //! Unlike many file identification crates, `pure-magic` is highly compatible with the standard
@@ -175,11 +176,13 @@ const HARDCODED_SOURCE: &str = "hardcoded";
 // corresponds to FILE_INDIR_MAX constant defined in libmagic
 const MAX_RECURSION: usize = 50;
 // constant found in libmagic. It is used to limit for search tests
-pub const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
+const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
 
+/// Default mimetype for un-identified binary data
 pub const DEFAULT_BIN_MIMETYPE: &str = "application/octet-stream";
+/// Default mimetype for un-identified text data
 pub const DEFAULT_TEXT_MIMETYPE: &str = "text/plain";
 
 pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
@@ -3100,7 +3103,9 @@ fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
 }
 
 impl MagicDb {
-    fn open_reader<R: Read + Seek>(f: R) -> Result<LazyCache<R>, Error> {
+    /// Prepares an [`LazyCache`] configured with optimal parameters for
+    /// **read** operations done during file identification
+    pub fn optimal_lazy_cache<R: Read + Seek>(f: R) -> Result<LazyCache<R>, io::Error> {
         Ok(LazyCache::<R>::from_read_seek(f)
             .and_then(|lc| lc.with_hot_cache(2 * FILE_BYTES_MAX))?)
         .map(|lc| lc.with_warm_cache(100 << 20))
@@ -3292,20 +3297,17 @@ impl MagicDb {
 
     #[inline(always)]
     fn magic_default<'m, R: Read + Seek>(
-        haystack: &mut LazyCache<R>,
+        cache: &mut LazyCache<R>,
         stream_kind: StreamKind,
         magic: &mut Magic<'m>,
-    ) -> Result<(), Error> {
-        let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
-
+    ) {
         magic.set_source(Some(HARDCODED_SOURCE));
         magic.set_stream_kind(stream_kind);
         magic.is_default = true;
 
-        if buf.is_empty() {
+        if cache.data_size() == 0 {
             magic.push_message(Cow::Borrowed("empty"));
             magic.set_mime_type(Cow::Borrowed(DEFAULT_BIN_MIMETYPE));
-            return Ok(());
         }
 
         match stream_kind {
@@ -3317,8 +3319,6 @@ impl MagicDb {
                 magic.push_message(Cow::Borrowed("text"));
             }
         }
-
-        Ok(())
     }
 
     /// Loads rules from a [`MagicSource`]
@@ -3402,7 +3402,7 @@ impl MagicDb {
             do_magic!(rule)
         }
 
-        Self::magic_default(haystack, stream_kind, &mut magic)?;
+        Self::magic_default(haystack, stream_kind, &mut magic);
 
         Ok(magic)
     }
@@ -3425,9 +3425,37 @@ impl MagicDb {
         r: &mut R,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
-        let mut haystack = Self::open_reader(r)?;
-        let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.first_magic_with_stream_kind(&mut haystack, stream_kind, extension)
+        let mut cache = Self::optimal_lazy_cache(r)?;
+        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.first_magic_with_stream_kind(&mut cache, stream_kind, extension)
+    }
+
+    /// An alternative to [`Self::first_magic`] using a [`LazyCache`]
+    /// to detects file [`Magic`] stopping at the first matching magic. Magic
+    /// rules are evaluated from the best to the least relevant, so this method
+    /// returns most of the time the best magic. For the rare cases where
+    /// it doesn't or if the best result is always required, use [`MagicDb::best_magic`]
+    ///
+    /// # Arguments
+    ///
+    /// * `cache` - A [`LazyCache`] used for read operations
+    /// * `extension` - Optional file extension to use for acceleration
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Magic<'_>, Error>` - The detection result or an error
+    ///
+    /// # Notes
+    ///
+    /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
+    /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
+    pub fn first_magic_with_lazy_cache<R: Read + Seek>(
+        &self,
+        cache: &mut LazyCache<R>,
+        extension: Option<&str>,
+    ) -> Result<Magic<'_>, Error> {
+        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.first_magic_with_stream_kind(cache, stream_kind, extension)
     }
 
     #[inline(always)]
@@ -3459,7 +3487,7 @@ impl MagicDb {
             magic.reset();
         }
 
-        Self::magic_default(haystack, stream_kind, &mut magic)?;
+        Self::magic_default(haystack, stream_kind, &mut magic);
         out.push(magic);
 
         out.sort_by_key(|b| std::cmp::Reverse(b.strength()));
@@ -3477,9 +3505,32 @@ impl MagicDb {
     ///
     /// * `Result<Vec<Magic<'_>>, Error>` - All detection results sorted by strength or an error
     pub fn all_magics<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
-        let mut haystack = Self::open_reader(r)?;
-        let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.all_magics_sort_with_stream_kind(&mut haystack, stream_kind)
+        let mut cache = Self::optimal_lazy_cache(r)?;
+        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.all_magics_sort_with_stream_kind(&mut cache, stream_kind)
+    }
+
+    /// An alternative to [`Self::all_magics`] using a [`LazyCache`]
+    /// to detects all [`Magic`] matching a given content.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - A readable and seekable input
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Vec<Magic<'_>>, Error>` - All detection results sorted by strength or an error
+    ///
+    /// # Notes
+    ///
+    /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
+    /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
+    pub fn all_magics_with_lazy_cache<R: Read + Seek>(
+        &self,
+        cache: &mut LazyCache<R>,
+    ) -> Result<Vec<Magic<'_>>, Error> {
+        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.all_magics_sort_with_stream_kind(cache, stream_kind)
     }
 
     #[inline(always)]
@@ -3490,11 +3541,13 @@ impl MagicDb {
     ) -> Result<Magic<'_>, Error> {
         let magics = self.all_magics_sort_with_stream_kind(haystack, stream_kind)?;
 
-        // magics is guaranteed to contain at least the default magic
-        return Ok(magics
-            .into_iter()
-            .next()
-            .expect("magics must at least contain default"));
+        // magics is guaranteed to contain at least the
+        // default magic but we unwrap to avoid any panic
+        Ok(magics.into_iter().next().unwrap_or_else(|| {
+            let mut magic = Magic::default();
+            Self::magic_default(haystack, stream_kind, &mut magic);
+            magic
+        }))
     }
 
     /// Detects the best [`Magic`] matching a given content.
@@ -3507,9 +3560,32 @@ impl MagicDb {
     ///
     /// * `Result<Magic<'_>, Error>` - The best detection result or an error
     pub fn best_magic<R: Read + Seek>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
-        let mut haystack = Self::open_reader(r)?;
-        let stream_kind = guess_stream_kind(haystack.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.best_magic_with_stream_kind(&mut haystack, stream_kind)
+        let mut cache = Self::optimal_lazy_cache(r)?;
+        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.best_magic_with_stream_kind(&mut cache, stream_kind)
+    }
+
+    /// An alternative to [`Self::best_magic`] using a [`LazyCache`]
+    /// to detect the best [`Magic`] matching a given content.
+    ///
+    /// # Arguments
+    ///
+    /// * `r` - A readable and seekable input
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Magic<'_>, Error>` - The best detection result or an error
+    ///
+    /// # Notes
+    ///
+    /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
+    /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
+    pub fn best_magic_with_lazy_cache<R: Read + Seek>(
+        &self,
+        cache: &mut LazyCache<R>,
+    ) -> Result<Magic<'_>, Error> {
+        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.best_magic_with_stream_kind(cache, stream_kind)
     }
 
     /// Serializes the database to a generic writer implementing [`io::Write`]
