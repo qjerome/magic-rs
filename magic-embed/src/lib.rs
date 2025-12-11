@@ -1,3 +1,6 @@
+#![forbid(unsafe_code)]
+#![deny(unused_imports)]
+#![deny(missing_docs)]
 //! # `magic-embed`: Compile-time Magic Database Embedding
 //!
 //! A procedural macro crate for embedding compiled [`pure_magic`](https://crates.io/crates/pure-magic) databases directly into your Rust binary.

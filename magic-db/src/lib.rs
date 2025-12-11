@@ -1,3 +1,6 @@
+#![forbid(unsafe_code)]
+#![deny(unused_imports)]
+#![deny(missing_docs)]
 //! # `magic-db`: Precompiled Magic Rules Database
 //!
 //! A precompiled database of file type detection rules based on the original `libmagic` project,
