@@ -1,6 +1,6 @@
 [package]
 name = "magic-embed"
-version = "0.2.3"
+version = "0.2.4"
 rust-version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -10,7 +10,7 @@ description = "Proc-macro to embed a compiled magic database"
 keywords = ["proc-macro", "magic", "mime", "libmagic", "embedded"]
 
 [dependencies]
-pure-magic = { path = "../pure-magic", version = "0.1.3" }
+pure-magic = { path = "../pure-magic", version = "0.1.4" }
 proc-macro2 = "1.0"
 syn = { version = "2.0", features = ["full"] }
 quote = "1.0"
