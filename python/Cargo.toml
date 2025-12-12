@@ -1,6 +1,6 @@
 [package]
 name = "pure-magic-rs"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 description = "Python bindings for pure-magic crate"
 authors.workspace = true
