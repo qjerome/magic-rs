@@ -17,5 +17,9 @@ description = "Python bindings for pure-magic crate, a pure Rust re-implementati
 keywords = ["magic", "file", "mime", "identification", "libmagic"]
 readme = "README.md"
 
+[project.urls]
+Repository = "https://github.com/qjerome/magic-rs"
+Issues = "https://github.com/qjerome/magic-rs/issues"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
