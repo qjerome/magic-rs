@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(unused_imports)]
 #![deny(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! # `magic-db`: Precompiled Magic Rules Database
 //!
 //! A precompiled database of file type detection rules based on the original `libmagic` project,
@@ -14,6 +15,12 @@
 //! - **Enhanced Rules**: Improved and extended versions of the original `libmagic` rules
 //! - **Easy Integration**: Simple one-line access to the compiled database
 //!
+//! ### Optional Cargo Features
+//!
+//! - **global**: Enables `magic_db::global()`, a lazily-initialized, process-wide `MagicDb`.
+//!   This provides a convenient singleton but is optional. If you need explicit lifetime
+//!   control or multiple independent instances, use `CompiledDb::open()` instead.
+//!
 //! ## Installation
 //!
 //! Add `magic-db` to your `Cargo.toml`:
@@ -25,6 +32,8 @@
 //! ```
 //!
 //! ## Usage
+//!
+//! ### Manual lifecycle (default)
 //!
 //! ```rust
 //! use magic_db::CompiledDb;
@@ -45,6 +54,30 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ### Global singleton (optional)
+//!
+//! The crate provides a **convenience global database** via the
+//! `global` feature. This is process-wide, lazily initialized, and
+//! kept alive until program termination.
+//!
+//! Enable it in `Cargo.toml`:
+//!
+//! ```toml
+//! magic_db = { version = "0.1", features = ["global"] }
+//! ```
+//!
+//! Then use it like this:
+//!
+//! ```rust
+//! use magic_db::global;
+//!
+//! let db = global().unwrap();
+//! ```
+//!
+//! **Note:** Use the global feature only if you want a single, shared
+//! database. For multiple independent instances or explicit lifetime
+//! management, use `CompiledDb::open()`.
 //!
 //! ## About the Rules
 //!
@@ -85,8 +118,37 @@
 
 use magic_embed::magic_embed;
 
+#[cfg(feature = "global")]
+use pure_magic::MagicDb;
+#[cfg(feature = "global")]
+use std::sync::OnceLock;
+
+#[cfg(feature = "global")]
+static DB: OnceLock<MagicDb> = OnceLock::new();
+
 #[magic_embed(include=["magdir"], exclude=["magdir/der"])]
 pub struct CompiledDb;
+
+#[cfg(feature = "global")]
+#[cfg_attr(docsrs, doc(cfg(feature = "global")))]
+/// Returns a process-wide read-only `MagicDb` initialized on first use.
+///
+/// This function is provided as a convenience for applications that
+/// want a shared database without managing its lifetime explicitly.
+/// The database is created using [`CompiledDb::open`] and is kept
+/// alive until program termination.
+///
+/// If you need explicit control over the database lifetime or want
+/// multiple independent instances, use [`CompiledDb::open`] instead.
+pub fn global() -> Result<&'static MagicDb, pure_magic::Error> {
+    match DB.get() {
+        Some(db) => Ok(db),
+        None => {
+            let _ = DB.set(CompiledDb::open()?);
+            Ok(DB.wait())
+        }
+    }
+}
 
 #[cfg(test)]
 mod test {
@@ -96,6 +158,16 @@ mod test {
     #[test]
     fn test_compiled_db() {
         let db = CompiledDb::open().unwrap();
+        let mut exe = File::open(env::current_exe().unwrap()).unwrap();
+        let magic = db.first_magic(&mut exe, None).unwrap();
+        println!("{}", magic.message());
+        assert!(!magic.is_default())
+    }
+
+    #[test]
+    #[cfg(feature = "global")]
+    fn test_compiled_db_static() {
+        let db = crate::global().unwrap();
         let mut exe = File::open(env::current_exe().unwrap()).unwrap();
         let magic = db.first_magic(&mut exe, None).unwrap();
         println!("{}", magic.message());

@@ -9,6 +9,9 @@ license.workspace = true
 description = "This crate provides a precompiled magic database for file type identification. It allows any program to perform magic file detection without the burden of compiling rules from source."
 keywords = ["magic", "mime", "libmagic", "embedded", "database"]
 
+[features]
+global = []
+
 [dependencies]
 pure-magic = { path = "../pure-magic", version = "0.1.4" }
 magic-embed = { path = "../magic-embed", version = "0.2.4" }
