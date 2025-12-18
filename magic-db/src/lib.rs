@@ -19,7 +19,7 @@
 //!
 //! - **global**: Enables `magic_db::global()`, a lazily-initialized, process-wide `MagicDb`.
 //!   This provides a convenient singleton but is optional. If you need explicit lifetime
-//!   control or multiple independent instances, use `CompiledDb::open()` instead.
+//!   control or multiple independent instances, use `magic_db::load()` instead.
 //!
 //! ## Installation
 //!
@@ -76,7 +76,7 @@
 //!
 //! **Note:** Use the global feature only if you want a single, shared
 //! database. For multiple independent instances or explicit lifetime
-//! management, use `CompiledDb::open()`.
+//! management, use `magic_db::load()`.
 //!
 //! ## About the Rules
 //!
