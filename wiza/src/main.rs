@@ -177,8 +177,7 @@ impl Command {
             info!("Time to parse rule files: {:?}", start.elapsed());
             db
         } else {
-            magic_db::CompiledDb::open()
-                .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
+            magic_db::load().map_err(|e| anyhow!("failed to open embedded database: {e}"))?
         };
 
         for item in o.paths {
@@ -421,8 +420,7 @@ fn main() -> Result<(), anyhow::Error> {
                 db_load_rules(&mut db, &o.rules, false)?;
                 db
             } else {
-                magic_db::CompiledDb::open()
-                    .map_err(|e| anyhow!("failed to open embedded database: {e}"))?
+                magic_db::load().map_err(|e| anyhow!("failed to open embedded database: {e}"))?
             };
 
             for r in db.rules() {
