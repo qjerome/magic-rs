@@ -856,7 +856,7 @@ dependencies = [
 
 [[package]]
 name = "pure-magic-rs"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "magic-db",
  "pure-magic",
@@ -1585,7 +1585,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wiza"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
