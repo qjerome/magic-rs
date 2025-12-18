@@ -38,13 +38,12 @@ pure-magic = "0.1"  # Required peer dependency
 ### Manual lifecycle (default)
 
 ```rust
-use magic_db::CompiledDb;
 use std::fs::File;
 use std::env::current_exe;
 
 fn main() -> Result<(), pure_magic::Error> {
     // Open the precompiled database
-    let db = CompiledDb::open()?;
+    let db = magic_db::load()?;
 
     // Use it to detect file types
     let mut file = File::open(current_exe()?)?;

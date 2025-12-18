@@ -174,7 +174,7 @@ impl MagicDb {
     /// Create a new `MagicDb` instance.
     #[new]
     pub fn new() -> PyResult<Self> {
-        magic_db::CompiledDb::open().map(Self).map_err(py_value_err)
+        magic_db::load().map(Self).map_err(py_value_err)
     }
 
     /// Detect the first magic match for an in-memory buffer.

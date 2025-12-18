@@ -36,13 +36,12 @@
 //! ### Manual lifecycle (default)
 //!
 //! ```rust
-//! use magic_db::CompiledDb;
 //! use std::fs::File;
 //! use std::env::current_exe;
 //!
 //! fn main() -> Result<(), pure_magic::Error> {
 //!     // Open the precompiled database
-//!     let db = CompiledDb::open()?;
+//!     let db = magic_db::load()?;
 //!
 //!     // Use it to detect file types
 //!     let mut file = File::open(current_exe()?)?;
@@ -117,9 +116,8 @@
 //! - [`magic`](https://www.man7.org/linux/man-pages/man4/magic.4.html): Expected magic rule format
 
 use magic_embed::magic_embed;
+use pure_magic::{Error, MagicDb};
 
-#[cfg(feature = "global")]
-use pure_magic::MagicDb;
 #[cfg(feature = "global")]
 use std::sync::OnceLock;
 
@@ -127,20 +125,19 @@ use std::sync::OnceLock;
 static DB: OnceLock<MagicDb> = OnceLock::new();
 
 #[magic_embed(include=["magdir"], exclude=["magdir/der"])]
-pub struct CompiledDb;
+struct CompiledDb;
 
 #[cfg(feature = "global")]
 #[cfg_attr(docsrs, doc(cfg(feature = "global")))]
-/// Returns a process-wide read-only `MagicDb` initialized on first use.
+/// Returns a process-wide read-only [`MagicDb`] initialized on first use.
 ///
 /// This function is provided as a convenience for applications that
 /// want a shared database without managing its lifetime explicitly.
-/// The database is created using [`CompiledDb::open`] and is kept
-/// alive until program termination.
+/// The database is kept alive until program termination.
 ///
 /// If you need explicit control over the database lifetime or want
-/// multiple independent instances, use [`CompiledDb::open`] instead.
-pub fn global() -> Result<&'static MagicDb, pure_magic::Error> {
+/// multiple independent instances, use [`load`] instead.
+pub fn global() -> Result<&'static MagicDb, Error> {
     match DB.get() {
         Some(db) => Ok(db),
         None => {
@@ -150,14 +147,26 @@ pub fn global() -> Result<&'static MagicDb, pure_magic::Error> {
     }
 }
 
+#[inline(always)]
+/// Loads a [`MagicDb`] from the embedded, precompiled database.
+///
+/// This function constructs an owned [`MagicDb`] from data embedded
+/// at compile time. No file system access or runtime dependencies
+/// are involved.
+///
+/// Each call returns a new, independent instance.
+pub fn load() -> Result<MagicDb, Error> {
+    CompiledDb::open()
+}
+
 #[cfg(test)]
 mod test {
-    use crate::CompiledDb;
+    use crate as magic_db;
     use std::{env, fs::File};
 
     #[test]
     fn test_compiled_db() {
-        let db = CompiledDb::open().unwrap();
+        let db = magic_db::load().unwrap();
         let mut exe = File::open(env::current_exe().unwrap()).unwrap();
         let magic = db.first_magic(&mut exe, None).unwrap();
         println!("{}", magic.message());
