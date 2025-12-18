@@ -17,6 +17,12 @@ This crate provides ready-to-use file type detection capabilities without requir
 - **Enhanced Rules**: Improved and extended versions of the original `libmagic` rules
 - **Easy Integration**: Simple one-line access to the compiled database
 
+### Optional Cargo Features
+
+- **global**: Enables `magic_db::global()`, a lazily-initialized, process-wide `MagicDb`.
+  This provides a convenient singleton but is optional. If you need explicit lifetime
+  control or multiple independent instances, use `CompiledDb::open()` instead.
+
 ## Installation
 
 Add `magic-db` to your `Cargo.toml`:
@@ -28,6 +34,8 @@ pure-magic = "0.1"  # Required peer dependency
 ```
 
 ## Usage
+
+### Manual lifecycle (default)
 
 ```rust
 use magic_db::CompiledDb;
@@ -48,6 +56,30 @@ fn main() -> Result<(), pure_magic::Error> {
     Ok(())
 }
 ```
+
+### Global singleton (optional)
+
+The crate provides a **convenience global database** via the
+`global` feature. This is process-wide, lazily initialized, and
+kept alive until program termination.
+
+Enable it in `Cargo.toml`:
+
+```toml
+magic_db = { version = "0.1", features = ["global"] }
+```
+
+Then use it like this:
+
+```rust
+use magic_db::global;
+
+let db = global().unwrap();
+```
+
+**Note:** Use the global feature only if you want a single, shared
+database. For multiple independent instances or explicit lifetime
+management, use `CompiledDb::open()`.
 
 ## About the Rules
 
