@@ -15,3 +15,6 @@ global = []
 [dependencies]
 pure-magic = { path = "../pure-magic", version = "0.1.4" }
 magic-embed = { path = "../magic-embed", version = "0.2.4" }
+
+[package.metadata.docs.rs]
+all-features = true
