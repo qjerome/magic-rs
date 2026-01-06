@@ -156,6 +156,7 @@ use std::{
     io::{self, Read, Seek, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
+    time::Instant,
 };
 use tar::Archive;
 use thiserror::Error;
@@ -167,6 +168,7 @@ use crate::{
     utils::{decode_id3, find_json_boundaries, run_utf8_validation},
 };
 
+mod dou;
 mod numeric;
 mod parser;
 mod utils;
@@ -2320,7 +2322,7 @@ enum Entry<'span> {
     Flag(Span<'span>, Flag),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct EntryNode {
     root: bool,
     entry: Match,
@@ -2547,11 +2549,11 @@ impl EntryNode {
 }
 
 /// Represents a parsed magic rule
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MagicRule {
     id: usize,
     source: Option<String>,
-    entries: EntryNode,
+    entries: dou::DouEntryNode,
     extensions: HashSet<String>,
     /// score used for rule ranking
     score: u64,
@@ -2573,7 +2575,9 @@ impl MagicRule {
         marked: &mut HashSet<String>,
     ) -> Result<HashSet<String>, ()> {
         let mut exts = HashSet::new();
-        self.entries.update_exts_rec(&mut exts, deps, marked)?;
+        self.entries
+            .get_or_de()
+            .update_exts_rec(&mut exts, deps, marked)?;
         Ok(exts)
     }
 
@@ -2586,8 +2590,9 @@ impl MagicRule {
         marked: &mut HashSet<String>,
     ) -> u64 {
         let mut score = 0;
-        score += self.entries.entry.test_strength;
+        score += self.entries.get_or_de().entry.test_strength;
         self.entries
+            .get_or_de()
             .update_score_rec(depth, &mut score, deps, marked);
         score
     }
@@ -2622,7 +2627,7 @@ impl MagicRule {
         switch_endianness: bool,
         depth: usize,
     ) -> Result<(), Error> {
-        self.entries.matches(
+        self.entries.get_or_de().matches(
             self.source.as_deref(),
             magic,
             &mut MatchState::empty(),
@@ -2650,7 +2655,7 @@ impl MagicRule {
         switch_endianness: bool,
         depth: usize,
     ) -> Result<(), Error> {
-        self.entries.matches(
+        self.entries.get_or_de().matches(
             self.source.as_deref(),
             magic,
             &mut MatchState::empty(),
@@ -2671,8 +2676,13 @@ impl MagicRule {
     ///
     /// * `bool` - True if the rule is for text files
     pub fn is_text(&self) -> bool {
-        self.entries.entry.test.is_text()
-            && self.entries.children.iter().all(|e| e.entry.test.is_text())
+        self.entries.get_or_de().entry.test.is_text()
+            && self
+                .entries
+                .get_or_de()
+                .children
+                .iter()
+                .all(|e| e.entry.test.is_text())
     }
 
     /// Gets the rule's score used for ranking rules between them
@@ -2702,7 +2712,7 @@ impl MagicRule {
     /// * `usize` - The rule's line number
     #[inline(always)]
     pub fn line(&self) -> usize {
-        self.entries.entry.line
+        self.entries.get_or_de().entry.line
     }
 
     /// Gets all the file extensions associated to the rule
@@ -2716,7 +2726,7 @@ impl MagicRule {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DependencyRule {
     name: String,
     rule: MagicRule,
@@ -2727,7 +2737,7 @@ struct DependencyRule {
 /// # Methods
 ///
 /// * `open` - Opens a magic file from a path
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MagicSource {
     rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
@@ -3030,7 +3040,7 @@ impl<'m> Magic<'m> {
 }
 
 /// Represents a database of [`MagicRule`]
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MagicDb {
     rule_id: usize,
     rules: Vec<MagicRule>,

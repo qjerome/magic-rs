@@ -672,9 +672,10 @@ impl Use {
 
         let mut message = None;
         if let Some(msg_pair) = pairs.next()
-            && !msg_pair.as_str().is_empty() {
-                message = Some(Message::from_pair(msg_pair)?);
-            };
+            && !msg_pair.as_str().is_empty()
+        {
+            message = Some(Message::from_pair(msg_pair)?);
+        };
 
         Ok(Self {
             line,
@@ -1443,9 +1444,10 @@ impl MagicRule {
 
                     let mut message = None;
                     if let Some(msg) = pairs.next()
-                        && !msg.as_str().is_empty() {
-                            message = Some(Message::from_pair(msg)?)
-                        }
+                        && !msg.as_str().is_empty()
+                    {
+                        message = Some(Message::from_pair(msg)?)
+                    }
 
                     items.push(Entry::Match(
                         span,
@@ -1475,7 +1477,7 @@ impl MagicRule {
         Ok(Self {
             id: 0,
             source,
-            entries,
+            entries: entries.into(),
             extensions: HashSet::new(),
             score: 0,
             finalized: false,
