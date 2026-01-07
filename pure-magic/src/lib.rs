@@ -156,7 +156,6 @@ use std::{
     io::{self, Read, Seek, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
     path::Path,
-    time::Instant,
 };
 use tar::Archive;
 use thiserror::Error;

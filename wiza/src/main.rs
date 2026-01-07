@@ -240,16 +240,19 @@ impl Command {
                         f.extension().and_then(|e| e.to_str())
                     };
 
+                    let start = Instant::now();
                     let Ok(magic) = db.first_magic(&mut file, ext).inspect_err(|e| {
                         error!("failed to get magic file={}: {e}", f.to_string_lossy())
                     }) else {
                         continue;
                     };
+                    let scan_time = Instant::now().duration_since(start);
 
                     if !o.json {
                         println!(
-                            "{} source:{} strength:{} mime:{} magic:{}",
+                            "{} eval_time_us:{:.2} source:{} strength:{} mime:{} magic:{}",
                             f.to_string_lossy(),
+                            (scan_time.as_nanos() as f64) / 1_000.0,
                             magic.source().unwrap_or(&Cow::Borrowed("none")),
                             magic.strength(),
                             magic.mime_type(),
