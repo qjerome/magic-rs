@@ -12,7 +12,14 @@ mod default {
 
     use crate::EntryNode;
 
-    /// Deserialize on use EntryNode
+    /// Deserialize-on-Use wrapper for an `EntryNode`.
+    ///
+    /// This struct implements the "Deserialize on Use" pattern, where the `EntryNode` is
+    /// deserialized only when first accessed via `get_or_de()`. The serialized form is stored
+    /// in a `RefCell<Option<Vec<u8>>>`, allowing for interior mutability, while the actual
+    /// `EntryNode` is stored in a `OnceCell`, ensuring it is deserialized at most once.
+    ///
+    /// The serialized data is consumed during deserialization, ensuring it is only used once.
     #[derive(Debug, Deserialize)]
     pub(crate) struct DouEntryNode {
         ser: RefCell<Option<Vec<u8>>>,
@@ -63,6 +70,7 @@ mod default {
     }
 
     impl DouEntryNode {
+        /// Returns a reference to the entry node.
         pub(crate) fn get_or_de(&self) -> &EntryNode {
             self.entry.get_or_init(|| {
                 let ser = self.ser.borrow_mut().take().unwrap();
@@ -82,7 +90,15 @@ mod sync {
 
     use crate::EntryNode;
 
-    /// Deserialize on use EntryNode
+    /// Thread-safe Deserialize-on-Use wrapper for an `EntryNode`.
+    ///
+    /// This struct implements the "Deserialize on Use" pattern in a thread-safe manner.
+    /// The `EntryNode` is deserialized only when first accessed via `get_or_de()`.
+    /// The serialized form is stored in an `RwLock<Option<Vec<u8>>>`, allowing for concurrent
+    /// read access or exclusive write access. The actual `EntryNode` is stored in a `OnceLock`,
+    /// ensuring thread-safe, one-time deserialization.
+    ///
+    /// The serialized data is consumed during deserialization, ensuring it is only used once.
     #[derive(Debug, Deserialize)]
     pub(crate) struct DouEntryNode {
         ser: RwLock<Option<Vec<u8>>>,
@@ -133,6 +149,7 @@ mod sync {
     }
 
     impl DouEntryNode {
+        /// Returns a reference to the entry node.
         pub(crate) fn get_or_de(&self) -> &EntryNode {
             self.entry.get_or_init(|| {
                 let ser = self.ser.write().unwrap().take().unwrap();
