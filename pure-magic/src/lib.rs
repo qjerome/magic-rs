@@ -2331,69 +2331,83 @@ struct EntryNode {
     exts: HashSet<String>,
 }
 
-impl EntryNode {
-    fn update_exts_rec(
-        &self,
-        exts: &mut HashSet<String>,
-        deps: &HashMap<String, DependencyRule>,
-        marked: &mut HashSet<String>,
-    ) -> Result<(), ()> {
-        for ext in self.exts.iter() {
-            if !exts.contains(ext) {
-                exts.insert(ext.clone());
-            }
-        }
+#[derive(Debug, Default)]
+struct EntryNodeVisitor {
+    exts: HashSet<String>,
+    score: u64,
+}
 
-        for c in self.children.iter() {
-            if let Test::Use(_, ref name) = c.entry.test {
-                if marked.contains(name) {
-                    continue;
-                }
-                if let Some(r) = deps.get(name) {
-                    marked.insert(name.clone());
-                    exts.extend(r.rule.fetch_all_extensions(deps, marked)?);
-                } else {
-                    return Err(());
-                }
-            } else {
-                c.update_exts_rec(exts, deps, marked)?;
-            }
+impl EntryNodeVisitor {
+    fn new() -> Self {
+        Self {
+            ..Default::default()
         }
-
-        Ok(())
     }
 
-    fn update_score_rec(
-        &self,
-        depth: usize,
-        score: &mut u64,
-        deps: &HashMap<String, DependencyRule>,
-        marked: &mut HashSet<String>,
-    ) {
-        if depth == 3 {
-            return;
+    fn merge(&mut self, other: Self) {
+        self.exts.extend(other.exts);
+        self.score += other.score;
+    }
+}
+
+impl EntryNode {
+    #[inline]
+    fn update_visitor(&self, v: &mut EntryNodeVisitor, depth: usize) {
+        // update extensions
+        for ext in self.exts.iter() {
+            if !v.exts.contains(ext) {
+                v.exts.insert(ext.clone());
+            }
         }
 
-        *score += self
+        // update score if depth
+        if depth == 0 {
+            v.score += self.entry.test_strength;
+        }
+
+        // Tests at deeper levels contribute less to the overall score.
+        // We use the minimum value to establish a lower bound for the rule's score,
+        // which helps prioritize rules based on their importance.
+        v.score += self
             .children
             .iter()
             .map(|e| e.entry.test_strength)
             .min()
-            .unwrap_or_default();
+            .unwrap_or_default()
+            / max(1, depth as u64);
+    }
 
+    fn visit(
+        &self,
+        v: &mut EntryNodeVisitor,
+        deps: &HashMap<String, DependencyRule>,
+        marked: &mut HashSet<String>,
+        depth: usize,
+    ) -> Result<(), Error> {
+        // updating visitor
+        self.update_visitor(v, depth);
+
+        // recursively visiting
         for c in self.children.iter() {
             if let Test::Use(_, ref name) = c.entry.test {
                 if marked.contains(name) {
                     continue;
                 }
 
+                marked.insert(name.clone());
+
                 if let Some(r) = deps.get(name) {
-                    marked.insert(name.clone());
-                    *score += r.rule.compute_score(depth, deps, marked);
+                    let dv = r.rule.visit_all_entries(deps, marked)?;
+                    v.merge(dv);
+                } else {
+                    return Err(Error::MissingRule(name.clone()));
                 }
+            } else {
+                c.visit(v, deps, marked, depth + 1)?;
             }
-            c.update_score_rec(depth + 1, score, deps, marked);
         }
+
+        Ok(())
     }
 
     #[inline]
@@ -2564,32 +2578,14 @@ impl MagicRule {
         self.id = id
     }
 
-    /// Fetches all the extensions defined in the magic rule. This
-    /// function goes recursive and find extensions also defined in
-    /// dependencies
-    fn fetch_all_extensions(
+    fn visit_all_entries(
         &self,
         deps: &HashMap<String, DependencyRule>,
         marked: &mut HashSet<String>,
-    ) -> Result<HashSet<String>, ()> {
-        let mut exts = HashSet::new();
-        self.entries.update_exts_rec(&mut exts, deps, marked)?;
-        Ok(exts)
-    }
-
-    /// Computes the ranking score of a magic rule by walking
-    /// tests recursively, dependencies included.
-    fn compute_score(
-        &self,
-        depth: usize,
-        deps: &HashMap<String, DependencyRule>,
-        marked: &mut HashSet<String>,
-    ) -> u64 {
-        let mut score = 0;
-        score += self.entries.entry.test_strength;
-        self.entries
-            .update_score_rec(depth, &mut score, deps, marked);
-        score
+    ) -> Result<EntryNodeVisitor, Error> {
+        let mut v = EntryNodeVisitor::new();
+        self.entries.visit(&mut v, deps, marked, 0)?;
+        Ok(v)
     }
 
     /// Finalize a rule by searching for all extensions and computing its score
@@ -2599,17 +2595,12 @@ impl MagicRule {
             return;
         }
 
-        let Ok(exts) = self.fetch_all_extensions(deps, &mut HashSet::new()) else {
-            return;
-        };
-
-        self.extensions.extend(exts);
-
-        // fetch_all_extensions walks through all the dependencies
-        // so there is no reason for compute_score to fail as it is walking
-        // only some of them
-        self.score = self.compute_score(0, deps, &mut HashSet::new());
-        self.finalized = true
+        // rule can be finalized all deps are found
+        if let Ok(v) = self.visit_all_entries(deps, &mut HashSet::new()) {
+            self.extensions.extend(v.exts);
+            self.score = v.score;
+            self.finalized = true
+        }
     }
 
     #[inline]
@@ -4475,7 +4466,7 @@ HelloWorld
 
 0 name toasted
 >0	string twice Toasted
->>0  use toasted_twice 
+>>0  use toasted_twice
 
 0 name toasted_twice
 >(6.b) string x %s
@@ -4546,7 +4537,7 @@ HelloWorld
 >(11.b)  use toasted_twice
 
 # this one is using a new base
-# offset being previous base 
+# offset being previous base
 # offset + offset of use
 0 name toasted_twice
 >0 string x %s
