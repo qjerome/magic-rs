@@ -400,7 +400,7 @@ fn main() -> Result<(), anyhow::Error> {
             r#"{about-with-newline}
 {author-with-newline}
 {usage-heading} {usage}
-            
+
 {all-args}"#,
         )
     };
