@@ -658,6 +658,11 @@ impl RegexTest {
             || self.str_mods.contains(StringMod::ForceBin)
     }
 
+    #[inline(always)]
+    fn is_text(&self) -> bool {
+        self.mods.contains(ReMod::ForceText) || self.str_mods.contains(StringMod::ForceText)
+    }
+
     fn match_buf<'buf>(
         &self,
         off_buf: u64, // absolute buffer offset in content
@@ -1676,6 +1681,11 @@ impl Test {
     }
 
     #[inline(always)]
+    fn is_recursive(&self) -> bool {
+        matches!(self, Test::Use(_, _) | Test::Indirect(_))
+    }
+
+    #[inline(always)]
     fn is_match_any(&self) -> bool {
         match self {
             Test::Name(_) => false,
@@ -1704,7 +1714,7 @@ impl Test {
             Self::String(t) => !t.is_binary() & !t.is_text() || t.is_binary(),
             Self::Search(t) => t.is_binary(),
             Self::PString(_) => true,
-            Self::Regex(t) => t.is_binary(),
+            Self::Regex(t) => !t.is_binary() & !t.is_text() || t.is_binary(),
             Self::Clear => true,
             Self::Default => true,
             Self::Indirect(_) => true,
@@ -1722,6 +1732,7 @@ impl Test {
             Self::Clear => true,
             Self::Default => true,
             Self::String(t) => !t.is_binary() & !t.is_text() || t.is_text(),
+            Self::Regex(t) => !t.is_binary() & !t.is_text() || t.is_text(),
             _ => !self.is_binary(),
         }
     }
@@ -2119,7 +2130,7 @@ impl Match {
                     magic.push_message(msg.to_string_lossy());
                 }
 
-                dr.rule.magic(
+                let nmatch = dr.rule.magic(
                     magic,
                     stream_kind,
                     buf_base_offset,
@@ -2130,8 +2141,14 @@ impl Match {
                     depth.saturating_add(1),
                 )?;
 
-                // we return false not to push message again
-                Ok((false, None))
+                // The name is always true, so we consider there to be a match
+                // if more than one test succeeded
+                let matched = nmatch > 1;
+                if matched {
+                    state.set_continuation_level(self.continuation_level());
+                }
+
+                Ok((matched, None))
             }
 
             Test::Indirect(m) => {
@@ -2151,10 +2168,10 @@ impl Match {
                     magic.push_message(msg.to_string_lossy());
                 }
 
+                let mut nmatch = 0u64;
                 for r in db.rules.iter() {
                     let messages_cnt = magic.message.len();
-
-                    r.magic(
+                    nmatch = nmatch.saturating_add(r.magic(
                         magic,
                         stream_kind,
                         new_buf_base_off,
@@ -2163,7 +2180,7 @@ impl Match {
                         db,
                         false,
                         depth.saturating_add(1),
-                    )?;
+                    )?);
 
                     // this means we matched a rule
                     if magic.message.len() != messages_cnt {
@@ -2172,7 +2189,7 @@ impl Match {
                 }
 
                 // we return false not to push message again
-                Ok((false, None))
+                Ok((nmatch > 0, None))
             }
 
             Test::Default => {
@@ -2425,7 +2442,9 @@ impl EntryNode {
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
+        let mut nmatch = 0u64;
+
         let (ok, opt_match_res) = self.entry.matches(
             opt_source,
             magic,
@@ -2444,8 +2463,13 @@ impl EntryNode {
         let line = self.entry.line;
 
         if ok {
-            // update magic with message if match is successful
-            if let Some(msg) = self.entry.message.as_ref()
+            nmatch = nmatch.saturating_add(1);
+
+            // Update the magic with the message if the match is successful
+            // Skip updating if the test is recursive, as it's already handled
+            // in the Match::matches function
+            if !self.entry.test.is_recursive()
+                && let Some(msg) = self.entry.message.as_ref()
                 && let Ok(msg) = msg.format_with(opt_match_res.as_ref()).inspect_err(|e| {
                     debug!("source={source} line={line} failed to format message: {e}")
                 })
@@ -2540,7 +2564,7 @@ impl EntryNode {
             };
 
             for e in self.children.iter() {
-                e.matches(
+                nmatch = nmatch.saturating_add(e.matches(
                     opt_source,
                     magic,
                     state,
@@ -2552,11 +2576,11 @@ impl EntryNode {
                     db,
                     switch_endianness,
                     depth,
-                )?
+                )?);
             }
         }
 
-        Ok(())
+        Ok(nmatch)
     }
 }
 
@@ -2612,7 +2636,7 @@ impl MagicRule {
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         self.entries.matches(
             self.source.as_deref(),
             magic,
@@ -2640,7 +2664,7 @@ impl MagicRule {
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<u64, Error> {
         self.entries.matches(
             self.source.as_deref(),
             magic,
