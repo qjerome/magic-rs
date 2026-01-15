@@ -358,31 +358,32 @@ fn db_load_rules(
     rules: &[PathBuf],
     silent: bool,
 ) -> Result<(), pure_magic::Error> {
+    let mut sources = vec![];
     for rule in rules {
         if rule.is_dir() {
             let walker = WalkOptions::new()
                 .files()
-                .max_depth(0)
+                .max_depth(1)
                 .sort(true)
                 .walk(rule);
             for p in walker.flatten() {
                 info!("loading magic rule: {}", p.to_string_lossy());
-                let magic = MagicSource::open(&p).inspect_err(|e| {
+                if let Ok(source) = MagicSource::open(&p).inspect_err(|e| {
                     if !silent {
                         error!("{} {e}", p.to_string_lossy())
                     }
-                });
-                // FIXME: we ignore error for the moment
-                if magic.is_err() {
-                    continue;
+                }) {
+                    sources.push(source)
                 }
-                let _ = db.load(magic?)?;
             }
         } else {
             info!("loading magic rule: {}", rule.to_string_lossy());
-            db.load(MagicSource::open(rule)?)?;
+            sources.push(MagicSource::open(rule)?);
         }
     }
+
+    db.load_bulk(sources.into_iter());
+    db.verify()?;
 
     Ok(())
 }
@@ -443,28 +444,8 @@ fn main() -> Result<(), anyhow::Error> {
             let mut db = MagicDb::new();
 
             let mut start = Instant::now();
-            for rule in o.rules {
-                if rule.is_dir() {
-                    let walker = WalkOptions::new()
-                        .files()
-                        .max_depth(1)
-                        .sort(true)
-                        .walk(rule);
-                    for p in walker.flatten() {
-                        info!("loading magic rule: {}", p.to_string_lossy());
-                        let magic = MagicSource::open(&p)
-                            .inspect_err(|e| error!("{} {e}", p.to_string_lossy()));
-                        // FIXME: we ignore error for the moment
-                        if magic.is_err() {
-                            continue;
-                        }
-                        let _ = db.load(magic?)?;
-                    }
-                } else {
-                    info!("loading magic rule: {}", rule.to_string_lossy());
-                    db.load(MagicSource::open(rule)?)?;
-                }
-            }
+            db_load_rules(&mut db, &o.rules, false)
+                .map_err(|e| anyhow!("failed to load database: {e}"))?;
 
             info!("Time to parse rule files: {:?}", start.elapsed());
             start = Instant::now();

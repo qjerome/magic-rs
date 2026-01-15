@@ -38,7 +38,9 @@
 //!     let mut db = MagicDb::new();
 //!     // Create a MagicSource from a file
 //!     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-//!     db.load(rust_magic)?;
+//!     db.load(rust_magic);
+//!     // Verification is not mandatory
+//!     db.verify()?;
 //!
 //!     // Open a file and detect its type
 //!     let mut file = File::open("src/lib.rs")?;
@@ -63,7 +65,7 @@
 //!     let mut db = MagicDb::new();
 //!     // Create a MagicSource from a file
 //!     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-//!     db.load(rust_magic)?;
+//!     db.load(rust_magic);
 //!
 //!     // Open a file and detect its type
 //!     let mut file = File::open("src/lib.rs")?;
@@ -95,7 +97,7 @@
 //!     let mut db = MagicDb::new();
 //!     // Create a MagicSource from a file
 //!     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-//!     db.load(rust_magic)?;
+//!     db.load(rust_magic);
 //!
 //!     // Serialize the database to a file
 //!     let mut output = File::create("/tmp/compiled.db")?;
@@ -115,7 +117,7 @@
 //!     let mut db = MagicDb::new();
 //!     // Create a MagicSource from a file
 //!     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-//!     db.load(rust_magic)?;
+//!     db.load(rust_magic);
 //!
 //!     // Serialize the database in a vector
 //!     let mut ser = vec![];
@@ -236,6 +238,10 @@ pub enum Error {
     /// A generic error with a custom message.
     #[error("{0}")]
     Msg(String),
+
+    /// Indicate a rule load failure
+    #[error("source={0} line={1} error={2}")]
+    Verify(String, usize, Box<Error>),
 
     /// An error with a source location and a nested error.
     #[error("source={0} line={1} error={2}")]
@@ -2614,17 +2620,19 @@ impl MagicRule {
 
     /// Finalize a rule by searching for all extensions and computing its score
     /// for ranking. In the `MagicRule` is already finalized it returns immediately.
-    fn try_finalize(&mut self, deps: &HashMap<String, DependencyRule>) {
+    fn try_finalize(&mut self, deps: &HashMap<String, DependencyRule>) -> Result<(), Error> {
         if self.finalized {
-            return;
+            return Ok(());
         }
 
         // rule can be finalized all deps are found
-        if let Ok(v) = self.visit_all_entries(deps, &mut HashSet::new()) {
-            self.extensions.extend(v.exts);
-            self.score = v.score;
-            self.finalized = true
-        }
+        let v = self.visit_all_entries(deps, &mut HashSet::new())?;
+
+        self.extensions.extend(v.exts);
+        self.score = v.score;
+        self.finalized = true;
+
+        Ok(())
     }
 
     #[inline]
@@ -3050,6 +3058,7 @@ pub struct MagicDb {
     rule_id: usize,
     rules: Vec<MagicRule>,
     dependencies: HashMap<String, DependencyRule>,
+    finalized: usize,
 }
 
 #[inline(always)]
@@ -3336,26 +3345,38 @@ impl MagicDb {
         }
     }
 
-    /// Loads rules from a [`MagicSource`]
-    ///
-    /// # Arguments
-    ///
-    /// * `mf` - The [`MagicSource`] to load rules from
-    ///
-    /// # Returns
-    ///
-    /// * `Result<&mut Self, Error>` - Self for chaining or an error
-    pub fn load(&mut self, mf: MagicSource) -> Result<&mut Self, Error> {
-        for rule in mf.rules.into_iter() {
+    fn load_rules_no_prepare(&mut self, rules: Vec<MagicRule>) {
+        for rule in rules.into_iter() {
             let mut rule = rule;
             rule.set_id(self.next_rule_id());
 
             self.rules.push(rule);
         }
+    }
 
-        self.dependencies.extend(mf.dependencies);
-        self.prepare();
-        Ok(self)
+    /// Loads rules from a [`MagicSource`]
+    ///
+    /// # Arguments
+    ///
+    /// * `ms` - The [`MagicSource`] to load rules from
+    pub fn load(&mut self, ms: MagicSource) -> &mut Self {
+        self.load_rules_no_prepare(ms.rules);
+        self.dependencies.extend(ms.dependencies);
+        self.try_finalize();
+        self
+    }
+
+    /// Loads multiple [`MagicSource`] items efficiently in bulk.
+    ///
+    /// This is more efficient than loading each individually. After processing
+    /// all sources, it applies finalization step only once.
+    pub fn load_bulk<I: Iterator<Item = MagicSource>>(&mut self, it: I) -> &mut Self {
+        for ms in it {
+            self.load_rules_no_prepare(ms.rules);
+            self.dependencies.extend(ms.dependencies);
+        }
+        self.try_finalize();
+        self
     }
 
     /// Gets all rules in the database
@@ -3636,11 +3657,50 @@ impl MagicDb {
         Ok(sdb)
     }
 
+    /// Verifies the consistency of the [`MagicDb`] database.
+    /// This method must be called when the database is built once and used later.
+    /// It catches [`Error`] that would raise at rule evaluation time.
+    ///
+    /// # Errors
+    /// Returns an error if any rule fails verification
+    pub fn verify(&mut self) -> Result<(), Error> {
+        if self.rules.len() == self.finalized {
+            return Ok(());
+        }
+
+        for r in self.rules.iter_mut().filter(|r| !r.finalized) {
+            // return at the first rule failing verification
+            r.try_finalize(&self.dependencies).map_err(|e| {
+                Error::Verify(
+                    r.source.clone().unwrap_or(String::from("unknown")),
+                    r.line(),
+                    e.into(),
+                )
+            })?;
+            self.finalized += 1;
+        }
+
+        debug_assert!(self.finalized <= self.rules.len());
+
+        Ok(())
+    }
+
     #[inline(always)]
-    fn prepare(&mut self) {
-        self.rules
-            .iter_mut()
-            .for_each(|r| r.try_finalize(&self.dependencies));
+    fn try_finalize(&mut self) {
+        if self.rules.len() == self.finalized {
+            return;
+        }
+
+        let mut finalized = 0usize;
+        self.rules.iter_mut().for_each(|r| {
+            if r.try_finalize(&self.dependencies).is_ok() {
+                finalized += 1;
+            }
+        });
+
+        self.finalized = finalized;
+
+        debug_assert!(self.finalized <= self.rules.len());
 
         // put text rules at the end
         self.rules.sort_by_key(|r| (r.is_text(), -(r.score as i64)));
@@ -3673,8 +3733,7 @@ mod tests {
             FileMagicParser::parse_str(rule, None)
                 .inspect_err(|e| eprintln!("{e}"))
                 .unwrap(),
-        )
-        .unwrap();
+        );
         let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
         let v = md.best_magic_with_stream_kind(&mut reader, stream_kind)?;
         Ok(v.into_owned())
@@ -3694,7 +3753,7 @@ mod tests {
         ($rule:literal) => {
             FileMagicParser::parse_str($rule, None)
                 .inspect_err(|e| eprintln!("{e}"))
-                .unwrap();
+                .unwrap()
         };
     }
 
@@ -4600,5 +4659,34 @@ HelloWorld
         .unwrap();
 
         assert!(m.message_parts().any(|p| p.eq_ignore_ascii_case("python")))
+    }
+
+    #[test]
+    fn test_load_bulk() {
+        let mut db = MagicDb::new();
+
+        let rules = vec![
+            parse_assert!("0 search test"),
+            parse_assert!("0 search/24/s test"),
+            parse_assert!("0 search/s/24 test"),
+        ];
+
+        db.load_bulk(rules.into_iter());
+        db.verify().unwrap();
+    }
+
+    #[test]
+    fn test_load_bulk_failure() {
+        let mut db = MagicDb::new();
+
+        let rules = vec![parse_assert!(
+            r#"
+0 search/s/24 test
+>0 use test
+"#
+        )];
+
+        db.load_bulk(rules.into_iter());
+        assert!(matches!(db.verify(), Err(Error::Verify(_, _, _))));
     }
 }
