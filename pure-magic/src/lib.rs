@@ -3659,7 +3659,7 @@ impl MagicDb {
 
     /// Verifies the consistency of the [`MagicDb`] database.
     /// This method must be called when the database is built once and used later.
-    /// It catches [`Error`] that would raise at rule evaluation time.
+    /// It catches [`enum@Error`] that would raise at rule evaluation time.
     ///
     /// # Errors
     /// Returns an error if any rule fails verification
