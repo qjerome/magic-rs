@@ -1804,6 +1804,7 @@
 0	name	zipgeneric
 >4	beshort		x			Zip archive data, at least
 !:mime	application/zip
+!:ext zip
 >4	use		zipversion
 >4	beshort		x			to extract
 >8	beshort		x			\b, compression method=
@@ -2115,11 +2116,13 @@
 >>50		default	x			Zip data
 >>>38		regex	[!-OQ-~]+		(MIME type "%s"?)
 !:mime	application/zip
+!:ext zip
 #    (mimetype contents other than "application/*")
 >26		string	\x8\0\0\0mimetype
 >>38		string	!application/
 >>>38		regex	[!-OQ-~]+		Zip data (MIME type "%s"?)
 !:mime	application/zip
+!:ext zip
 
 # Java Jar files (see also APK files above)
 >(26.s+30)	leshort	0xcafe		Java archive data (JAR)

@@ -9,6 +9,7 @@
 0	name		zipcd
 >0	string		PK\001\002	Zip archive data
 !:mime	application/zip
+!:ext zip
 # no "made by" in local file header with PK\3\4 magic
 >>4	leshort		x		\b, made by
 >>4	use		zipversion
