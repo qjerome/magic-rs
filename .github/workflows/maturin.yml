@@ -229,7 +229,7 @@ jobs:
   # we cannot rely on github.ref to identify tags as cargo release
   # pushes branch and tags at the same time and the workflow runs
   # only with the branch as github.ref
-  check_tag:
+  head_tags:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
