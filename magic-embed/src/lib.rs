@@ -115,6 +115,7 @@ use pure_magic::{MagicDb, MagicSource};
 use quote::quote;
 use syn::{
     Expr, ExprArray, ItemStruct, Meta, MetaNameValue, Token, parse::Parser, punctuated::Punctuated,
+    spanned::Spanned,
 };
 
 /// Parser for procedural macro attributes
@@ -268,7 +269,7 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
 
     macro_rules! load_file {
         ($span: expr, $path: expr) => {
-            let f = MagicSource::open($path).map_err(|e| {
+            MagicSource::open($path).map_err(|e| {
                 syn::Error::new(
                     $span.clone(),
                     format!(
@@ -276,16 +277,11 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
                         $path.to_string_lossy()
                     ),
                 )
-            })?;
-            db.load(f).map_err(|e| {
-                syn::Error::new(
-                    $span.clone(),
-                    format!("database failed to load magic file: {e}"),
-                )
-            })?;
+            })?
         };
     }
 
+    let mut rules = vec![];
     for (s, p) in include.iter() {
         if p.is_dir() {
             for rule_file in wo.walk(p) {
@@ -296,12 +292,17 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
                     continue;
                 }
 
-                load_file!(s, &rule_file);
+                rules.push(load_file!(s, &rule_file));
             }
         } else if p.is_file() {
-            load_file!(s, p);
+            rules.push(load_file!(s, p));
         }
     }
+
+    db.load_bulk(rules.into_iter());
+    db.verify().map_err(|e| {
+        syn::Error::new(include_nv.span(), format!("inconsistent database: {e}"))
+    })?;
 
     // Serialize and save database
     let mut ser = vec![];
