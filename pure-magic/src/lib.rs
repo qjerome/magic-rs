@@ -951,7 +951,11 @@ impl SearchTest {
         while i < buf.len() {
             // we cannot match if the first character isn't the same
             // so we accelerate the search by finding potential matches
-            i += memchr(*needle, &buf[i..])?;
+            let Some(k) = memchr(*needle, &buf[i..]) else {
+                break;
+            };
+
+            i += k;
 
             // if we want a full word match
             if self.str_mods.contains(StringMod::FullWordMatch) {
