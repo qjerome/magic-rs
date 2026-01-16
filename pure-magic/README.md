@@ -40,7 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = MagicDb::new();
     // Create a MagicSource from a file
     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-    db.load(rust_magic)?;
+    db.load(rust_magic);
+    // Verification is not mandatory
+    db.verify()?;
 
     // Open a file and detect its type
     let mut file = File::open("src/lib.rs")?;
@@ -65,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = MagicDb::new();
     // Create a MagicSource from a file
     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-    db.load(rust_magic)?;
+    db.load(rust_magic);
 
     // Open a file and detect its type
     let mut file = File::open("src/lib.rs")?;
@@ -97,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = MagicDb::new();
     // Create a MagicSource from a file
     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-    db.load(rust_magic)?;
+    db.load(rust_magic);
 
     // Serialize the database to a file
     let mut output = File::create("/tmp/compiled.db")?;
@@ -117,7 +119,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut db = MagicDb::new();
     // Create a MagicSource from a file
     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
-    db.load(rust_magic)?;
+    db.load(rust_magic);
 
     // Serialize the database in a vector
     let mut ser = vec![];
