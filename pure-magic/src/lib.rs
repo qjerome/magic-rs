@@ -3460,6 +3460,15 @@ impl MagicDb {
     /// # Returns
     ///
     /// * `Result<Magic<'_>, Error>` - The detection result or an error
+    ///
+    /// # Warning
+    ///
+    /// File extension acceleration is made to evaluate rules faster by testing
+    /// first the rules defining this extension with an `!:ext` entry.
+    /// Whether you use `extension` acceleration or not with this function should not
+    /// produce different results. Yet this makes the assumption rules are written
+    /// correctly and every rule concerned defines `!:ext` when it is appropriate.
+    /// If some rules are missing it, results might differ.
     pub fn first_magic<R: Read + Seek>(
         &self,
         r: &mut R,
@@ -3489,6 +3498,15 @@ impl MagicDb {
     ///
     /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
     /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
+    /// 
+    /// # Warning
+    ///
+    /// File extension acceleration is made to evaluate rules faster by testing
+    /// first the rules defining this extension with an `!:ext` entry.
+    /// Whether you use `extension` acceleration or not with this function should not
+    /// produce different results. Yet this makes the assumption rules are written
+    /// correctly and every rule concerned defines `!:ext` when it is appropriate.
+    /// If some rules are missing it, results might differ.
     pub fn first_magic_with_lazy_cache<R: Read + Seek>(
         &self,
         cache: &mut LazyCache<R>,
