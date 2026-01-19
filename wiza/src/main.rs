@@ -116,7 +116,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling}
 use fs_walk::WalkOptions;
 use pure_magic::{Magic, MagicDb, MagicSource};
 use serde_derive::Serialize;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
 struct Scan<'a, R: Read + Seek> {
@@ -207,6 +207,9 @@ impl<'a, R: Read + Seek> Scan<'a, R> {
 
 #[derive(Parser)]
 struct Cli {
+    /// Verbose mode (-v, -vv, -vvv)
+    #[arg(short, action = clap::ArgAction::Count)]
+    verbose: u8,
     #[clap(subcommand)]
     command: Option<Command>,
     /// Hide log messages
@@ -457,9 +460,15 @@ fn main() -> Result<(), anyhow::Error> {
 
     let cli: Cli = Cli::from_arg_matches(&c.get_matches())?;
 
+    let env_filter = match cli.verbose {
+        0 => EnvFilter::from_default_env(),
+        1 => EnvFilter::builder().parse_lossy(LevelFilter::DEBUG.to_string()),
+        2.. => EnvFilter::builder().parse_lossy(LevelFilter::TRACE.to_string()),
+    };
+
     // Initialize the tracing subscriber
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(env_filter)
         .with_writer(std::io::stderr)
         .init();
 
