@@ -1,6 +1,6 @@
 [package]
 name = "wiza"
-version = "0.1.7"
+version = "0.2.0"
 rust-version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -18,8 +18,8 @@ fs-walk = "0.2.0"
 serde_json = "1.0.145"
 serde_derive = "1.0.228"
 serde = "1.0.228"
-pure-magic = { path = "../pure-magic", version = "0.1.5" }
-magic-db = { path = "../magic-db", version = "0.3.3" }
+pure-magic = { path = "../pure-magic", version = "0.2.0" }
+magic-db = { path = "../magic-db", version = "0.4.0" }
 
 [[bin]]
 name = "wiza"
