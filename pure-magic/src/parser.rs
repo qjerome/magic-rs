@@ -821,7 +821,7 @@ impl SearchTest {
 
         Ok(Self {
             // guarantee not to panic by parser
-            str: value.unwrap(),
+            str: value.unwrap().into(),
             n_pos: length,
             str_mods,
             re_mods,

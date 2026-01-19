@@ -142,6 +142,32 @@ pub(crate) fn find_json_boundaries<S: AsRef<[u8]>>(buf: S) -> Option<(usize, usi
     None
 }
 
+pub(crate) fn debug_string_from_vec_u8(data: &[u8]) -> String {
+    let mut result = String::new();
+    for &byte in data {
+        if byte.is_ascii_graphic() || byte == b' ' {
+            result.push(byte as char);
+        } else {
+            result.push_str(&format!("\\x{:02x}", byte));
+        }
+    }
+    result
+}
+
+pub(crate) fn debug_string_from_vec_u16(data: &[u16]) -> String {
+    let mut result = String::new();
+    for &short in data {
+        for byte in short.to_be_bytes() {
+            if byte.is_ascii_graphic() || byte == b' ' {
+                result.push(byte as char);
+            } else {
+                result.push_str(&format!("\\x{:02x}", byte));
+            }
+        }
+    }
+    result
+}
+
 /// Copy of rust standard library Utf8Error, to be returned
 /// by run_utf8_validation
 #[derive(Copy, Eq, PartialEq, Clone, Debug)]
