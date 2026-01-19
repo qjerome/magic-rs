@@ -1,6 +1,6 @@
 [package]
 name = "magic-db"
-version = "0.4.0"
+version = "0.4.1"
 rust-version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,8 +13,8 @@ keywords = ["magic", "mime", "libmagic", "embedded", "database"]
 global = []
 
 [dependencies]
-pure-magic = { path = "../pure-magic", version = "0.2.0" }
-magic-embed = { path = "../magic-embed", version = "0.3.0" }
+pure-magic = { path = "../pure-magic", version = "0.2.1" }
+magic-embed = { path = "../magic-embed", version = "0.3.1" }
 
 [package.metadata.docs.rs]
 all-features = true
