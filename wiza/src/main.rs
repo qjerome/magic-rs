@@ -106,7 +106,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fs::File,
-    io::Write,
+    io::{self, Read, Seek, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -118,6 +118,92 @@ use pure_magic::{Magic, MagicDb, MagicSource};
 use serde_derive::Serialize;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
+
+struct Scan<'a, R: Read + Seek> {
+    db: &'a MagicDb,
+    reader: R,
+    path: &'a PathBuf,
+    ext: Option<&'a str>,
+}
+
+impl<'a, R: Read + Seek> Scan<'a, R> {
+    fn new(db: &'a MagicDb, reader: R, path: &'a PathBuf, ext: Option<&'a str>) -> Self {
+        Self {
+            db,
+            reader,
+            path,
+            ext,
+        }
+    }
+
+    fn with_ext(&mut self, ext: Option<&'a str>) -> &mut Self {
+        self.ext = ext;
+        self
+    }
+
+    fn first_match(&mut self, o: &ScanOpt) -> Result<(), anyhow::Error> {
+        let magic = self
+            .db
+            .first_magic(&mut self.reader, self.ext)
+            .inspect_err(|e| error!("failed to get magic file=stdin: {e}"))?;
+
+        if !o.json {
+            println!(
+                "{} source:{} strength:{} mime:{} magic:{}",
+                self.path.to_string_lossy(),
+                magic.source().unwrap_or(&Cow::Borrowed("none")),
+                magic.strength(),
+                magic.mime_type(),
+                magic.message()
+            )
+        } else {
+            let mr = SerMagicResult::from_path_and_magic(Some(self.path), &magic);
+            let json = serde_json::to_string(&mr)
+                .inspect_err(|e| error!("failed to serialize magic: {e}"))?;
+
+            println!("{json}");
+        }
+
+        Ok(())
+    }
+
+    fn all_matches(&mut self, o: &ScanOpt) -> Result<(), anyhow::Error> {
+        let magics = self.db.all_magics(&mut self.reader).inspect_err(|e| {
+            error!(
+                "failed to get magic file={}: {e}",
+                self.path.to_string_lossy()
+            )
+        })?;
+
+        if o.json {
+            let amr = SerAllMagicResult {
+                path: self.path.clone(),
+                magics: magics
+                    .iter()
+                    .map(|m| SerMagicResult::from_path_and_magic(Option::<PathBuf>::None, m))
+                    .collect(),
+            };
+
+            let json = serde_json::to_string(&amr)
+                .inspect_err(|e| error!("failed to serialize magic: {e}"))?;
+
+            println!("{json}")
+        } else {
+            for magic in magics {
+                println!(
+                    "{} source:{} strength:{} mime:{} magic:{}",
+                    self.path.to_string_lossy(),
+                    magic.source().unwrap_or(&Cow::Borrowed("unknown")),
+                    magic.strength(),
+                    magic.mime_type(),
+                    magic.message()
+                )
+            }
+        }
+
+        Ok(())
+    }
+}
 
 #[derive(Parser)]
 struct Cli {
@@ -161,9 +247,9 @@ enum Command {
 
 impl Command {
     fn scan(o: ScanOpt) -> Result<(), anyhow::Error> {
-        let db = if let Some(db) = o.db {
+        let db = if let Some(db) = o.db.as_ref() {
             let start = Instant::now();
-            let db = MagicDb::deserialize(&mut File::open(&db).map_err(|e| {
+            let db = MagicDb::deserialize(&mut File::open(db).map_err(|e| {
                 anyhow!("failed to open database file {}: {e}", db.to_string_lossy())
             })?)
             .map_err(|e| anyhow!("failed to deserialize database: {e}"))?;
@@ -180,7 +266,26 @@ impl Command {
             magic_db::load().map_err(|e| anyhow!("failed to open embedded database: {e}"))?
         };
 
-        for item in o.paths {
+        if o.paths.is_empty() {
+            let stdin = io::stdin();
+            let mut buf = vec![0; pure_magic::FILE_BYTES_MAX];
+            let n = stdin.lock().read(&mut buf)?;
+            buf.truncate(n);
+
+            let reader = io::Cursor::new(buf);
+            let path = PathBuf::from("stdin");
+            let mut s = Scan::new(&db, reader, &path, None);
+
+            if o.all {
+                let _ = s.all_matches(&o);
+            } else {
+                let _ = s.first_match(&o);
+            }
+
+            return Ok(());
+        }
+
+        for item in o.paths.iter() {
             let mut wo = WalkOptions::new();
             wo.files().sort(true);
 
@@ -190,49 +295,16 @@ impl Command {
 
             for f in wo.walk(item).flatten() {
                 debug!("scanning file: {}", f.to_string_lossy());
-                let Ok(mut file) = File::open(&f)
+                let Ok(file) = File::open(&f)
                     .inspect_err(|e| error!("failed to open file={}: {e}", f.to_string_lossy()))
                 else {
                     continue;
                 };
 
+                let mut s = Scan::new(&db, file, &f, None);
+
                 if o.all {
-                    let Ok(magics) = db.all_magics(&mut file).inspect_err(|e| {
-                        error!("failed to get magic file={}: {e}", f.to_string_lossy())
-                    }) else {
-                        continue;
-                    };
-
-                    if o.json {
-                        let amr = SerAllMagicResult {
-                            path: f,
-                            magics: magics
-                                .iter()
-                                .map(|m| {
-                                    SerMagicResult::from_path_and_magic(Option::<PathBuf>::None, m)
-                                })
-                                .collect(),
-                        };
-
-                        let Ok(json) = serde_json::to_string(&amr)
-                            .inspect_err(|e| error!("failed to serialize magic: {e}"))
-                        else {
-                            continue;
-                        };
-
-                        println!("{json}")
-                    } else {
-                        for magic in magics {
-                            println!(
-                                "{} source:{} strength:{} mime:{} magic:{}",
-                                f.to_string_lossy(),
-                                magic.source().unwrap_or(&Cow::Borrowed("unknown")),
-                                magic.strength(),
-                                magic.mime_type(),
-                                magic.message()
-                            )
-                        }
-                    }
+                    let _ = s.all_matches(&o);
                 } else {
                     let ext: Option<&str> = if o.no_accel {
                         None
@@ -240,31 +312,8 @@ impl Command {
                         f.extension().and_then(|e| e.to_str())
                     };
 
-                    let Ok(magic) = db.first_magic(&mut file, ext).inspect_err(|e| {
-                        error!("failed to get magic file={}: {e}", f.to_string_lossy())
-                    }) else {
-                        continue;
-                    };
-
-                    if !o.json {
-                        println!(
-                            "{} source:{} strength:{} mime:{} magic:{}",
-                            f.to_string_lossy(),
-                            magic.source().unwrap_or(&Cow::Borrowed("none")),
-                            magic.strength(),
-                            magic.mime_type(),
-                            magic.message()
-                        )
-                    } else {
-                        let mr = SerMagicResult::from_path_and_magic(Some(f), &magic);
-                        let Ok(json) = serde_json::to_string(&mr)
-                            .inspect_err(|e| error!("failed to serialize magic: {e}"))
-                        else {
-                            continue;
-                        };
-
-                        println!("{json}");
-                    }
+                    // we ignore error
+                    let _ = s.with_ext(ext).first_match(&o);
                 }
             }
         }
