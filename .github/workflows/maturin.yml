@@ -225,7 +225,7 @@ jobs:
         with:
           name: wheels-sdist
           path: dist
-  
+
   # we cannot rely on github.ref to identify tags as cargo release
   # pushes branch and tags at the same time and the workflow runs
   # only with the branch as github.ref
@@ -238,8 +238,8 @@ jobs:
       - name: Set tag check variable
         id: head_tags
         run: |
-          echo "head_tags=$(git tag --points-at HEAD)" >> $GITHUB_OUTPUT
-
+          set -eux
+          echo "head_tags=$(git tag --points-at HEAD)" >> $GITHUB_OUTPUT 
     outputs:
       head_tags: ${{ steps.head_tags.outputs.head_tags }}
 
