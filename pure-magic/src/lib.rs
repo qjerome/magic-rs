@@ -156,7 +156,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
     io::{self, Read, Seek, SeekFrom, Write},
-    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Rem, Sub},
+    ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
 };
 use tar::Archive;
@@ -166,7 +166,10 @@ use tracing::{Level, debug, enabled, trace};
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},
     parser::{FileMagicParser, Rule},
-    utils::{decode_id3, find_json_boundaries, run_utf8_validation},
+    utils::{
+        debug_string_from_vec_u8, debug_string_from_vec_u16, decode_id3, find_json_boundaries,
+        run_utf8_validation,
+    },
 };
 
 mod numeric;
@@ -603,10 +606,46 @@ impl FloatTransform {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 enum TestValue<T> {
     Value(T),
     Any,
+}
+
+impl Debug for TestValue<Vec<u8>> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(v) => write!(f, "\"{}\"", debug_string_from_vec_u8(v)),
+            Self::Any => write!(f, "ANY"),
+        }
+    }
+}
+
+impl Debug for TestValue<Vec<u16>> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(v) => write!(f, "\"{}\"", debug_string_from_vec_u16(v)),
+            Self::Any => write!(f, "ANY"),
+        }
+    }
+}
+
+impl Debug for TestValue<Scalar> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(s) => write!(f, "{s:?}"),
+            Self::Any => write!(f, "ANY"),
+        }
+    }
+}
+
+impl Debug for TestValue<Float> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(fl) => write!(f, "{fl:?}"),
+            Self::Any => write!(f, "ANY"),
+        }
+    }
 }
 
 impl<T> TestValue<T> {
@@ -919,9 +958,32 @@ impl StringTest {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct ByteVec(Vec<u8>);
+
+impl Debug for ByteVec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"{}\"", debug_string_from_vec_u8(self))
+    }
+}
+
+impl From<Vec<u8>> for ByteVec {
+    fn from(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+}
+
+impl Deref for ByteVec {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SearchTest {
-    str: Vec<u8>,
+    str: ByteVec,
     n_pos: Option<usize>,
     str_mods: FlagSet<StringMod>,
     re_mods: FlagSet<ReMod>,
@@ -1026,11 +1088,32 @@ struct FloatTest {
 
 // the value read from the haystack we want to match against
 // 'buf is the lifetime of the buffer we are scanning
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 enum ReadValue<'buf> {
     Float(u64, Float),
     Scalar(u64, Scalar),
     Bytes(u64, &'buf [u8]),
+}
+
+impl<'buf> Debug for ReadValue<'buf> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Float(_, fl) => write!(f, "{fl:?}"),
+            Self::Scalar(_, s) => write!(f, "{s:?}"),
+            Self::Bytes(_, b) => {
+                if b.len() <= 128 {
+                    write!(f, "\"{}\"", debug_string_from_vec_u8(b))
+                } else {
+                    let limit = 128;
+                    write!(
+                        f,
+                        "\"{}\" (first {limit} bytes)",
+                        debug_string_from_vec_u8(&b[..limit])
+                    )
+                }
+            }
+        }
+    }
 }
 
 impl DynDisplay for ReadValue<'_> {
@@ -1261,6 +1344,32 @@ enum Test {
     Der,
     Clear,
     Default,
+}
+
+impl Display for Test {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Test::Name(name) => write!(f, "name {name}"),
+            Test::Use(flip, rule) => {
+                if *flip {
+                    write!(f, "use {rule}")
+                } else {
+                    write!(f, "use ^{rule}")
+                }
+            }
+            Test::Scalar(st) => write!(f, "{st:?}"),
+            Test::Float(ft) => write!(f, "{ft:?}"),
+            Test::String(st) => write!(f, "{st:?}"),
+            Test::Search(st) => write!(f, "{st:?}"),
+            Test::PString(pt) => write!(f, "{pt:?}"),
+            Test::Regex(rt) => write!(f, "{rt:?}"),
+            Test::Indirect(fs) => write!(f, "indirect {fs:?}"),
+            Test::String16(s16t) => write!(f, "{s16t:?}"),
+            Test::Der => write!(f, "unimplemented der"),
+            Test::Clear => write!(f, "clear"),
+            Test::Default => write!(f, "default"),
+        }
+    }
 }
 
 impl Test {
@@ -2245,7 +2354,15 @@ impl Match {
                     })
                 {
                     if let Some(v) = trace_msg
-                        .as_mut() { v.push(format!("test={:?}", self.test)) }
+                        .as_mut() { v.push(format!("test={}", self.test)) }
+
+                    if let Some(v) = trace_msg.as_mut(){
+                        let drv = match opt_test_value.as_ref(){
+                            Some(r) => format!("{r:?}"),
+                            None =>String::new(),
+                        };
+                        v.push(format!("read_in_stream={drv}"))
+                    }
 
                     let match_res =
                         opt_test_value.and_then(|tv| self.test.match_value(&tv, stream_kind));
