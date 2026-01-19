@@ -177,11 +177,15 @@ const HARDCODED_MAGIC_STRENGTH: u64 = 2048;
 const HARDCODED_SOURCE: &str = "hardcoded";
 // corresponds to FILE_INDIR_MAX constant defined in libmagic
 const MAX_RECURSION: usize = 50;
-// constant found in libmagic. It is used to limit for search tests
-const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 // constant found in libmagic. It is used to limit for regex tests
 const FILE_REGEX_MAX: usize = 8192;
 
+/// Maximum number of bytes to read for search tests.
+///
+/// This constant is derived from `libmagic` and is used to limit the number of bytes
+/// read during search tests to ensure performance and efficiency. The value is set
+/// to 7 megabytes.
+pub const FILE_BYTES_MAX: usize = 7 * 1024 * 1024;
 /// Default mimetype for un-identified binary data
 pub const DEFAULT_BIN_MIMETYPE: &str = "application/octet-stream";
 /// Default mimetype for un-identified text data
@@ -3498,7 +3502,7 @@ impl MagicDb {
     ///
     /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
     /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
-    /// 
+    ///
     /// # Warning
     ///
     /// File extension acceleration is made to evaluate rules faster by testing
