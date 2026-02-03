@@ -674,7 +674,7 @@ impl Use {
         if let Some(msg_pair) = pairs.next()
             && !msg_pair.as_str().is_empty()
         {
-            message = Some(Message::from_pair(msg_pair)?);
+            message = Message::from_pair(msg_pair)?;
         };
 
         Ok(Self {
@@ -1284,23 +1284,27 @@ impl Message {
         (rust_format, printf_spec)
     }
 
-    fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
+    fn from_pair(pair: Pair<'_, Rule>) -> Result<Option<Self>, Error> {
         assert_eq!(pair.as_rule(), Rule::message);
         Self::from_str(pair.as_str())
     }
 
     #[inline]
-    fn from_str<S: AsRef<str>>(s: S) -> Result<Message, Error> {
+    fn from_str<S: AsRef<str>>(s: S) -> Result<Option<Message>, Error> {
+        if s.as_ref().is_empty() {
+            return Ok(None);
+        }
+
         let (s, printf_spec) = Self::convert_printf_to_rust_format(s.as_ref());
 
         let fs = FormatString::from_string(s)?;
         if fs.contains_format() {
-            Ok(Message::Format {
+            Ok(Some(Message::Format {
                 printf_spec: printf_spec.unwrap_or_default(),
                 fs,
-            })
+            }))
         } else {
-            Ok(Message::String(fs.into_string()))
+            Ok(Some(Message::String(fs.into_string())))
         }
     }
 }
@@ -1318,7 +1322,7 @@ impl Match {
                 Rule::depth => depth = Some(pair.as_str().len() as u8),
                 Rule::stream_offset => stream_offset = Some(Offset::from_pair(pair)?),
                 Rule::test => test = Some(Test::from_pair(pair.into_inner().next().unwrap())?),
-                Rule::message => message = Some(Message::from_pair(pair)?),
+                Rule::message => message = Message::from_pair(pair)?,
                 _ => return Err(Error::parser("unexpected pair", pair.as_span())),
             }
         }
@@ -1435,25 +1439,23 @@ impl MagicRule {
             match pair.as_rule() {
                 Rule::name_entry => {
                     let (line, _) = pair.line_col();
-                    let mut pairs = pair.into_inner();
-
-                    pairs.next().expect("name entry must have offset");
-
-                    let name = pairs.next().expect("rule must have a name");
-                    assert_eq!(Rule::rule_name, name.as_rule());
-
+                    let mut name = None;
                     let mut message = None;
-                    if let Some(msg) = pairs.next()
-                        && !msg.as_str().is_empty()
-                    {
-                        message = Some(Message::from_pair(msg)?)
+
+                    for pair in pair.into_inner() {
+                        match pair.as_rule() {
+                            Rule::rule_name => name = Some(String::from(pair.as_str())),
+                            Rule::message => message = Message::from_pair(pair)?,
+                            _ => {}
+                        }
                     }
 
                     items.push(Entry::Match(
                         span,
                         Name {
                             line,
-                            name: name.as_str().into(),
+                            // parser guarantee not to panic
+                            name: name.unwrap(),
                             message,
                         }
                         .into(),
