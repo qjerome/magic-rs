@@ -2266,7 +2266,7 @@ impl Match {
 
                 // The name is always true, so we consider there to be a match
                 // if more than one test succeeded
-                let matched = nmatch > 1;
+                let matched = nmatch > 0;
                 if matched {
                     state.set_continuation_level(self.continuation_level());
                 }
@@ -2293,7 +2293,6 @@ impl Match {
 
                 let mut nmatch = 0u64;
                 for r in db.rules.iter() {
-                    let messages_cnt = magic.message.len();
                     nmatch = nmatch.saturating_add(r.magic(
                         magic,
                         stream_kind,
@@ -2305,13 +2304,11 @@ impl Match {
                         depth.saturating_add(1),
                     )?);
 
-                    // this means we matched a rule
-                    if magic.message.len() != messages_cnt {
+                    if nmatch > 0 {
                         break;
                     }
                 }
 
-                // we return false not to push message again
                 Ok((nmatch > 0, None))
             }
 
@@ -2558,6 +2555,8 @@ impl EntryNode {
         Ok(())
     }
 
+    /// Executes the magic matching logic recursively and returns the count of matches that produce messages.
+    /// Matches that don't result in message appends are not counted, consistent with libmagic's behavior.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn matches<'r, R: Read + Seek>(
@@ -2594,8 +2593,6 @@ impl EntryNode {
         let line = self.entry.line;
 
         if ok {
-            nmatch = nmatch.saturating_add(1);
-
             // Update the magic with the message if the match is successful
             // Skip updating if the test is recursive, as it's already handled
             // in the Match::matches function
@@ -2605,6 +2602,7 @@ impl EntryNode {
                     debug!("source={source} line={line} failed to format message: {e}")
                 })
             {
+                nmatch = nmatch.saturating_add(1);
                 magic.push_message(msg);
             }
 
@@ -2785,6 +2783,8 @@ impl MagicRule {
         )
     }
 
+    /// Executes the magic matching logic and returns the count of matches that produce messages.
+    /// Matches that don't result in message appends are not counted, consistent with libmagic's behavior.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn magic<'r, R: Read + Seek>(
@@ -4789,6 +4789,25 @@ HelloWorld
             ",
             b"\x00TEST\x06twice\x00\x08",
             "Bread is Toasted twice"
+        )
+    }
+
+    #[test]
+    fn test_bug_6() {
+        // An indirect use test should not be successful
+        // even if a match with no message occurs
+        
+        assert_magic_match_bin!(
+            r"
+1	string		TEST Bread is toasted
+>&0 use toasted
+>>&0 default x but not burnt
+
+0 name toasted
+>1 string toasted
+            ",
+            b"\x00TEST\x06toasted",
+            "Bread is toasted"
         )
     }
 
