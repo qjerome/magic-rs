@@ -2052,6 +2052,13 @@ enum Offset {
     Indirect(IndOffset),
 }
 
+impl Offset {
+    #[inline(always)]
+    fn is_indirect(&self) -> bool {
+        matches!(self, Self::Indirect(_))
+    }
+}
+
 impl From<DirOffset> for Offset {
     fn from(value: DirOffset) -> Self {
         Self::Direct(value)
@@ -2253,10 +2260,16 @@ impl Match {
                     magic.push_message(msg.to_string_lossy());
                 }
 
+                let new_buf_base_off = if self.offset.is_indirect() {
+                    Some(offset)
+                } else {
+                    None
+                };
+
                 let nmatch = dr.rule.magic(
                     magic,
                     stream_kind,
-                    buf_base_offset,
+                    new_buf_base_off,
                     Some(offset),
                     haystack,
                     db,
@@ -4796,7 +4809,7 @@ HelloWorld
     fn test_bug_6() {
         // An indirect use test should not be successful
         // even if a match with no message occurs
-        
+
         assert_magic_match_bin!(
             r"
 1	string		TEST Bread is toasted
@@ -4809,6 +4822,30 @@ HelloWorld
             b"\x00TEST\x06toasted",
             "Bread is toasted"
         )
+    }
+
+    #[test]
+    fn test_offset_bug_7() {
+        // Bug: nested 'use' directives with indirect offsets don't properly
+        // adjust offsets during recursion. This test encodes the behavior
+        // libmagic has when dealing with such scenarios.
+        assert_magic_match_bin!(
+            r"
+1	string		TEST Bread is
+# offset computation is relative to
+# rule start
+>(5.b)	use toasted
+
+0 name toasted
+>0	string toast Toasted
+>>(6.b)  use toasted_twice
+
+0 name toasted_twice
+>1 string x %s
+        ",
+            b"\x00TEST\x06toast\x00\x06twice\x00",
+            "Bread is Toasted twice"
+        );
     }
 
     #[test]
