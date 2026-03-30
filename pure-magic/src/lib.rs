@@ -4812,6 +4812,30 @@ HelloWorld
     }
 
     #[test]
+    fn test_offset_bug_7() {
+        // Bug: nested 'use' directives with indirect offsets don't properly
+        // adjust offsets during recursion. This test encodes the behavior
+        // libmagic has when dealing with such scenarios.
+        assert_magic_match_bin!(
+            r"
+1	string		TEST Bread is
+# offset computation is relative to
+# rule start
+>(5.b)	use toasted
+
+0 name toasted
+>0	string toast Toasted
+>>(6.b)  use toasted_twice
+
+0 name toasted_twice
+>1 string x %s
+        ",
+            b"\x00TEST\x06toast\x00\x06twice\x00",
+            "Bread is Toasted twice"
+        );
+    }
+
+    #[test]
     fn test_message_parts() {
         let m = first_magic(
             r#"0	string/W	#!/usr/bin/env\ python  PYTHON"#,
