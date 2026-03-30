@@ -393,7 +393,7 @@
 >8	byte		4		\b, SSPP signed-security-policy-profile
 >8	byte		5		\b, SDIFF signed-diff
 >8	byte		6		\b, SPSFO signed-param-sfo
->9	byte&0xf0	x		\b, version %#x	
+>9	byte&0xf0	x		\b, version %#x
 >9	byte&0x0f	4		\b, game
 >9	byte&0x0f	5		\b, module
 >9	byte&0x0f	6		\b, video app
