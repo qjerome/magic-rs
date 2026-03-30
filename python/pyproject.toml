@@ -23,3 +23,8 @@ Issues = "https://github.com/qjerome/magic-rs/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
