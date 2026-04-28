@@ -2622,11 +2622,9 @@ impl EntryNode {
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
                 match &self.entry.test {
-                    Test::String(t) => {
-                        if t.has_length_mod() {
-                            let o = mr.end_offset();
-                            haystack.seek(SeekFrom::Start(o))?;
-                        }
+                    Test::String(t) if t.has_length_mod() => {
+                        let o = mr.end_offset();
+                        haystack.seek(SeekFrom::Start(o))?;
                     }
                     Test::Search(t) => {
                         if t.re_mods.contains(ReMod::StartOffsetUpdate) {
