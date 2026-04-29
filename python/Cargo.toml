@@ -2,18 +2,17 @@
 name = "pure-magic-rs"
 version = "0.3.3"
 edition = "2021"
-description = "Python bindings for pure-magic crate"
-authors.workspace = true
-license.workspace = true
 rust-version.workspace = true
+description = "Python bindings for pure-magic crate"
 repository.workspace = true
+license.workspace = true
 publish = false
 
 [lib]
-name = "pure_magic_rs"
 crate-type = ["cdylib"]
+name = "pure_magic_rs"
 
 [dependencies]
-pyo3 = "0.27.0"
 magic-db = { path = "../magic-db" }
 pure-magic = { path = "../pure-magic" }
+pyo3 = "0.27.0"

@@ -1,17 +1,16 @@
 [workspace]
-members = [
-    "wiza",
-    "pure-magic",
-    "lazy-cache",
-    "magic-embed",
-    "magic-db",
-    "python",
-]
 resolver = "3"
+members = [
+  "lazy-cache",
+  "magic-db",
+  "magic-embed",
+  "pure-magic",
+  "python",
+  "wiza",
+]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.88.0"
-authors = ["Quentin JÉRÔME <quentin.jerome@circl.lu>"]
 repository = "https://github.com/qjerome/magic-rs/"
 license = "GPL-3.0 OR BSD-2-Clause"

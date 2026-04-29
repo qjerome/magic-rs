@@ -1,12 +1,15 @@
 [package]
 name = "lazy-cache"
 version = "0.1.2"
-rust-version.workspace = true
 edition.workspace = true
-authors.workspace = true
-license.workspace = true
-repository.workspace = true
+rust-version.workspace = true
 description = "Lazy file cache optimizing read operations for pure-magic crate"
+repository.workspace = true
+license.workspace = true
+
+[[bench]]
+harness = false
+name = "lazy_cache_benchmark"
 
 [dependencies]
 memmap2 = "0.9.8"
@@ -15,7 +18,3 @@ memmap2 = "0.9.8"
 criterion = "0.7.0"
 rand = "0.9.2"
 tempfile = "3.23.0"
-
-[[bench]]
-name = "lazy_cache_benchmark"
-harness = false

@@ -1,20 +1,19 @@
 [package]
 name = "magic-embed"
 version = "0.3.3"
-rust-version.workspace = true
 edition.workspace = true
-authors.workspace = true
-license.workspace = true
-repository.workspace = true
+rust-version.workspace = true
 description = "Proc-macro to embed a compiled magic database"
-keywords = ["proc-macro", "magic", "mime", "libmagic", "embedded"]
-
-[dependencies]
-pure-magic = { path = "../pure-magic", version = "0.2.3" }
-proc-macro2 = "1.0"
-syn = { version = "2.0", features = ["full"] }
-quote = "1.0"
-fs-walk = "0.2.0"
+repository.workspace = true
+license.workspace = true
+keywords = ["embedded", "libmagic", "magic", "mime", "proc-macro"]
 
 [lib]
 proc-macro = true
+
+[dependencies]
+fs-walk = "0.2.0"
+proc-macro2 = "1.0"
+pure-magic = { path = "../pure-magic", version = "0.2.3" }
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
