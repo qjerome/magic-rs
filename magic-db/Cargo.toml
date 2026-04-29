@@ -1,20 +1,20 @@
 [package]
 name = "magic-db"
 version = "0.4.3"
-rust-version.workspace = true
-edition.workspace = true
 authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "This crate provides a precompiled magic database for file type identification. It allows any program to perform magic file detection without the burden of compiling rules from source."
 repository.workspace = true
 license.workspace = true
-description = "This crate provides a precompiled magic database for file type identification. It allows any program to perform magic file detection without the burden of compiling rules from source."
-keywords = ["magic", "mime", "libmagic", "embedded", "database"]
-
-[features]
-global = []
-
-[dependencies]
-pure-magic = { path = "../pure-magic", version = "0.2.3" }
-magic-embed = { path = "../magic-embed", version = "0.3.3" }
+keywords = ["database", "embedded", "libmagic", "magic", "mime"]
 
 [package.metadata.docs.rs]
 all-features = true
+
+[dependencies]
+magic-embed = { path = "../magic-embed", version = "0.3.3" }
+pure-magic = { path = "../pure-magic", version = "0.2.3" }
+
+[features]
+global = []
