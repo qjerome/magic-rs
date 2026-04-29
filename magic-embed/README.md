@@ -105,6 +105,8 @@ Replace `magic/rules/` with the path to your actual rule files.
 
 ## License
 
-This project is licensed under the **GPL-3.0 License**.
+This project is dual-licensed under either:
+- **GPL-3.0**
+- **BSD-2-Clause**
 
 <!-- cargo-rdme end -->

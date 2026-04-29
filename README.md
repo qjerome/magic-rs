@@ -94,7 +94,9 @@ You can also contribute by:
 
 ## 📄 License
 
-All components are licensed under **GPL-3.0**.
+This project is dual-licensed under either:
+- **GPL-3.0**
+- **BSD-2-Clause**
 
 ## 🙌 Acknowledgments
 

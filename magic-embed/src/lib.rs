@@ -103,7 +103,9 @@
 //!
 //! ## License
 //!
-//! This project is licensed under the **GPL-3.0 License**.
+//! This project is dual-licensed under either:
+//! - **GPL-3.0**
+//! - **BSD-2-Clause**
 
 use std::{
     collections::{HashMap, HashSet},
