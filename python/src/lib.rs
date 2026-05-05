@@ -98,6 +98,23 @@ fn py_value_err(from: pure_magic::Error) -> PyErr {
     PyValueError::new_err(from.to_string())
 }
 
+// PyErr is !Send, so we can't build one inside `Python::allow_threads`
+// (which runs without the GIL). This enum carries Send errors out of the
+// GIL-free closure; `into_py_err` converts them once we're back on the GIL.
+enum FileScanErr {
+    Io(io::Error),
+    Magic(pure_magic::Error),
+}
+
+impl FileScanErr {
+    fn into_py_err(self) -> PyErr {
+        match self {
+            FileScanErr::Io(e) => PyIOError::new_err(e.to_string()),
+            FileScanErr::Magic(e) => py_value_err(e),
+        }
+    }
+}
+
 /// Represents a detected file type's "magic" information.
 ///
 /// Attributes:
@@ -195,12 +212,17 @@ impl MagicDb {
     ///     >>> with open("example.txt", "rb") as f:
     ///     ...     buffer = f.read()
     ///     >>> result = db.first_magic_buffer(buffer, "txt")
-    pub fn first_magic_buffer(&self, input: &[u8], extension: Option<&str>) -> PyResult<Magic> {
-        let mut cursor = io::Cursor::new(input);
-        self.0
-            .first_magic(&mut cursor, extension)
-            .map(Magic::from)
-            .map_err(py_value_err)
+    pub fn first_magic_buffer(
+        &self,
+        py: Python<'_>,
+        input: &[u8],
+        extension: Option<&str>,
+    ) -> PyResult<Magic> {
+        py.allow_threads(|| {
+            let mut cursor = io::Cursor::new(input);
+            self.0.first_magic(&mut cursor, extension).map(Magic::from)
+        })
+        .map_err(py_value_err)
     }
 
     /// Detect the first magic match for a file.
@@ -217,13 +239,16 @@ impl MagicDb {
     ///
     /// Example:
     ///     >>> result = db.first_magic_file("example.txt")
-    pub fn first_magic_file(&self, path: PathBuf) -> PyResult<Magic> {
-        let mut file = File::open(&path).map_err(|e| PyIOError::new_err(e.to_string()))?;
-        let ext = path.extension();
-        self.0
-            .first_magic(&mut file, ext.and_then(|e| e.to_str()))
-            .map(Magic::from)
-            .map_err(py_value_err)
+    pub fn first_magic_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Magic> {
+        py.allow_threads(|| {
+            let mut file = File::open(&path).map_err(FileScanErr::Io)?;
+            let ext = path.extension().and_then(|e| e.to_str());
+            self.0
+                .first_magic(&mut file, ext)
+                .map(Magic::from)
+                .map_err(FileScanErr::Magic)
+        })
+        .map_err(FileScanErr::into_py_err)
     }
 
     /// Detect the best magic match for an in-memory buffer.
@@ -241,12 +266,12 @@ impl MagicDb {
     ///     >>> with open("example.txt", "rb") as f:
     ///     ...     buffer = f.read()
     ///     >>> result = db.best_magic_buffer(buffer)
-    pub fn best_magic_buffer(&self, input: &[u8]) -> PyResult<Magic> {
-        let mut cursor = io::Cursor::new(input);
-        self.0
-            .best_magic(&mut cursor)
-            .map(Magic::from)
-            .map_err(py_value_err)
+    pub fn best_magic_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Magic> {
+        py.allow_threads(|| {
+            let mut cursor = io::Cursor::new(input);
+            self.0.best_magic(&mut cursor).map(Magic::from)
+        })
+        .map_err(py_value_err)
     }
 
     /// Detect the best magic match for a file.
@@ -263,12 +288,15 @@ impl MagicDb {
     ///
     /// Example:
     ///     >>> result = db.best_magic_file("example.txt")
-    pub fn best_magic_file(&self, path: PathBuf) -> PyResult<Magic> {
-        let mut file = File::open(&path).map_err(|e| PyIOError::new_err(e.to_string()))?;
-        self.0
-            .best_magic(&mut file)
-            .map(Magic::from)
-            .map_err(py_value_err)
+    pub fn best_magic_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Magic> {
+        py.allow_threads(|| {
+            let mut file = File::open(&path).map_err(FileScanErr::Io)?;
+            self.0
+                .best_magic(&mut file)
+                .map(Magic::from)
+                .map_err(FileScanErr::Magic)
+        })
+        .map_err(FileScanErr::into_py_err)
     }
 
     /// Detect all magic matches for an in-memory buffer.
@@ -286,12 +314,14 @@ impl MagicDb {
     ///     >>> with open("example.txt", "rb") as f:
     ///     ...     buffer = f.read()
     ///     >>> results = db.all_magics_buffer(buffer)
-    pub fn all_magics_buffer(&self, input: &[u8]) -> PyResult<Vec<Magic>> {
-        let mut cursor = io::Cursor::new(input);
-        self.0
-            .all_magics(&mut cursor)
-            .map(|magics| magics.into_iter().map(Magic::from).collect())
-            .map_err(py_value_err)
+    pub fn all_magics_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Vec<Magic>> {
+        py.allow_threads(|| {
+            let mut cursor = io::Cursor::new(input);
+            self.0
+                .all_magics(&mut cursor)
+                .map(|magics| magics.into_iter().map(Magic::from).collect())
+        })
+        .map_err(py_value_err)
     }
 
     /// Detect all magic matches for a file.
@@ -308,12 +338,15 @@ impl MagicDb {
     ///
     /// Example:
     ///     >>> results = db.all_magics_file("example.txt")
-    pub fn all_magics_file(&self, path: PathBuf) -> PyResult<Vec<Magic>> {
-        let mut file = File::open(&path).map_err(|e| PyIOError::new_err(e.to_string()))?;
-        self.0
-            .all_magics(&mut file)
-            .map(|magics| magics.into_iter().map(Magic::from).collect())
-            .map_err(py_value_err)
+    pub fn all_magics_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Vec<Magic>> {
+        py.allow_threads(|| {
+            let mut file = File::open(&path).map_err(FileScanErr::Io)?;
+            self.0
+                .all_magics(&mut file)
+                .map(|magics| magics.into_iter().map(Magic::from).collect())
+                .map_err(FileScanErr::Magic)
+        })
+        .map_err(FileScanErr::into_py_err)
     }
 }
 
