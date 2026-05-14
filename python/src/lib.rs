@@ -98,7 +98,7 @@ fn py_value_err(from: pure_magic::Error) -> PyErr {
     PyValueError::new_err(from.to_string())
 }
 
-// PyErr is !Send, so we can't build one inside `Python::allow_threads`
+// PyErr is !Send, so we can't build one inside `Python::detach`
 // (which runs without the GIL). This enum carries Send errors out of the
 // GIL-free closure; `into_py_err` converts them once we're back on the GIL.
 enum FileScanErr {
@@ -218,7 +218,7 @@ impl MagicDb {
         input: &[u8],
         extension: Option<&str>,
     ) -> PyResult<Magic> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut cursor = io::Cursor::new(input);
             self.0.first_magic(&mut cursor, extension).map(Magic::from)
         })
@@ -240,7 +240,7 @@ impl MagicDb {
     /// Example:
     ///     >>> result = db.first_magic_file("example.txt")
     pub fn first_magic_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Magic> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut file = File::open(&path).map_err(FileScanErr::Io)?;
             let ext = path.extension().and_then(|e| e.to_str());
             self.0
@@ -267,7 +267,7 @@ impl MagicDb {
     ///     ...     buffer = f.read()
     ///     >>> result = db.best_magic_buffer(buffer)
     pub fn best_magic_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Magic> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut cursor = io::Cursor::new(input);
             self.0.best_magic(&mut cursor).map(Magic::from)
         })
@@ -289,7 +289,7 @@ impl MagicDb {
     /// Example:
     ///     >>> result = db.best_magic_file("example.txt")
     pub fn best_magic_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Magic> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut file = File::open(&path).map_err(FileScanErr::Io)?;
             self.0
                 .best_magic(&mut file)
@@ -315,7 +315,7 @@ impl MagicDb {
     ///     ...     buffer = f.read()
     ///     >>> results = db.all_magics_buffer(buffer)
     pub fn all_magics_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Vec<Magic>> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut cursor = io::Cursor::new(input);
             self.0
                 .all_magics(&mut cursor)
@@ -339,7 +339,7 @@ impl MagicDb {
     /// Example:
     ///     >>> results = db.all_magics_file("example.txt")
     pub fn all_magics_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Vec<Magic>> {
-        py.allow_threads(|| {
+        py.detach(|| {
             let mut file = File::open(&path).map_err(FileScanErr::Io)?;
             self.0
                 .all_magics(&mut file)
