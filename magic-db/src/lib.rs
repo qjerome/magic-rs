@@ -38,14 +38,16 @@
 //! ```rust
 //! use std::fs::File;
 //! use std::env::current_exe;
+//! use pure_magic::readers::DataReader;
 //!
 //! fn main() -> Result<(), pure_magic::Error> {
 //!     // Open the precompiled database
 //!     let db = magic_db::load()?;
 //!
 //!     // Use it to detect file types
-//!     let mut file = File::open(current_exe()?)?;
-//!     let magic = db.first_magic(&mut file, None)?;
+//!     let mut dr = File::open(current_exe()?)
+//!         .and_then(DataReader::from_file)?;
+//!     let magic = db.first_magic(&mut dr, None)?;
 //!     assert!(!magic.is_default());
 //!
 //!     println!("File type: {}", magic.message());
@@ -163,13 +165,17 @@ pub fn load() -> Result<MagicDb, Error> {
 
 #[cfg(test)]
 mod test {
+    use pure_magic::readers::DataReader;
+
     use crate as magic_db;
     use std::{env, fs::File};
 
     #[test]
     fn test_compiled_db() {
         let db = magic_db::load().unwrap();
-        let mut exe = File::open(env::current_exe().unwrap()).unwrap();
+        let mut exe = File::open(env::current_exe().unwrap())
+            .and_then(DataReader::from_file)
+            .unwrap();
         let magic = db.first_magic(&mut exe, None).unwrap();
         println!("{}", magic.message());
         assert!(!magic.is_default())
@@ -179,7 +185,9 @@ mod test {
     #[cfg(feature = "global")]
     fn test_compiled_db_static() {
         let db = crate::global().unwrap();
-        let mut exe = File::open(env::current_exe().unwrap()).unwrap();
+        let mut exe = File::open(env::current_exe().unwrap())
+            .and_then(DataReader::from_file)
+            .unwrap();
         let magic = db.first_magic(&mut exe, None).unwrap();
         println!("{}", magic.message());
         assert!(!magic.is_default())

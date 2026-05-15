@@ -8,10 +8,27 @@ use std::{
     path::Path,
 };
 
+use crate::readers::DataRead;
 use memmap2::MmapMut;
 
 const EMPTY_RANGE: &[u8] = &[];
 
+/// A lazy-loading cache reader with a multi-tiered caching strategy.
+///
+/// Wraps a [`Read`] + [`Seek`] type and provides efficient cached reads using
+/// a hierarchy of caches: hot (head/tail), warm (memory-mapped), and cold (direct).
+///
+/// The cache automatically loads data in blocks as needed, minimizing I/O operations
+/// for sequential and random access patterns.
+///
+/// # Cache Tiers
+///
+/// - **Hot cache**: Small buffers at the head and tail of the source, always available.
+/// - **Warm cache**: Memory-mapped region for frequently accessed data.
+/// - **Cold cache**: Fallback buffer for reads that don't fit in other caches.
+///
+/// See [`LazyCache::from_read_seek`], [`LazyCache::open`], [`LazyCache::with_hot_cache`],
+/// and [`LazyCache::with_warm_cache`] for construction.
 pub struct LazyCache<R>
 where
     R: Read + Seek,
@@ -30,11 +47,99 @@ where
 
 const BLOCK_SIZE: usize = 4096;
 
-impl<R> Seek for LazyCache<R>
+impl<R> DataRead for LazyCache<R>
 where
     R: Read + Seek,
 {
     #[inline(always)]
+    fn stream_position(&self) -> u64 {
+        self.stream_pos
+    }
+
+    fn read_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
+        self.get_range_u64(range)
+    }
+
+    fn read_until_any_delim_or_limit(
+        &mut self,
+        delims: &[u8],
+        limit: u64,
+    ) -> Result<&[u8], io::Error> {
+        self._read_while_or_limit(|b| !delims.contains(&b), limit, true)
+    }
+
+    fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
+        self._read_while_or_limit(|b| b != byte, limit, true)
+    }
+
+    fn read_while_or_limit<F>(&mut self, f: F, limit: u64) -> Result<&[u8], io::Error>
+    where
+        F: Fn(u8) -> bool,
+    {
+        self._read_while_or_limit(f, limit, false)
+    }
+
+    fn read_until_utf16_or_limit(
+        &mut self,
+        utf16_char: &[u8; 2],
+        limit: u64,
+    ) -> Result<&[u8], io::Error> {
+        let start = self.stream_pos;
+        let mut end = 0;
+
+        let even_bs = if self.block_size.is_multiple_of(2) {
+            self.block_size
+        } else {
+            self.block_size.saturating_add(1)
+        };
+
+        'outer: while limit.saturating_sub(end) > 0 {
+            let buf = self.read_count(even_bs)?;
+
+            let even = buf
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 2 == 0)
+                .map(|t| t.1);
+
+            let odd = buf
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| i % 2 != 0)
+                .map(|t| t.1);
+
+            for t in even.zip(odd) {
+                if limit.saturating_sub(end) == 0 {
+                    break 'outer;
+                }
+
+                end += 2;
+
+                // tail check
+                if t.0 == &utf16_char[0] && t.1 == &utf16_char[1] {
+                    // we include char
+                    break 'outer;
+                }
+            }
+
+            // we processed the last chunk
+            if buf.len() as u64 != even_bs {
+                // if we arrive here we reached end of file
+                if buf.len() % 2 != 0 {
+                    // we include last byte missed by zip
+                    end += 1
+                }
+                break;
+            }
+        }
+
+        self.read_exact_range(start..start + end)
+    }
+
+    fn data_size(&self) -> u64 {
+        self.pos_end
+    }
+
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.stream_pos = self.offset_from_start(pos);
         Ok(self.stream_pos)
@@ -42,6 +147,24 @@ where
 }
 
 impl LazyCache<File> {
+    /// Opens a file and creates a new `LazyCache` for it.
+    ///
+    /// This is a convenience constructor equivalent to calling [`LazyCache::from_read_seek`]
+    /// with a [`File`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pure_magic::readers::LazyCache;
+    /// use std::path::Path;
+    ///
+    /// let cache = LazyCache::<std::fs::File>::open(Path::new("file.bin"))?;
+    /// # Ok::<_, std::io::Error>(())
+    /// ```
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, io::Error> {
         Self::from_read_seek(File::open(path)?)
     }
@@ -52,7 +175,7 @@ where
     R: Read + Seek,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let r = self.inner_read_count(buf.len() as u64)?;
+        let r = self.read_count(buf.len() as u64)?;
         for (i, b) in r.iter().enumerate() {
             buf[i] = *b;
         }
@@ -64,6 +187,25 @@ impl<R> LazyCache<R>
 where
     R: Read + Seek,
 {
+    /// Creates a new `LazyCache` wrapping a [`Read`] + [`Seek`] type.
+    ///
+    /// The cache is initialized with default settings: no hot or warm caches.
+    /// Use [`LazyCache::with_hot_cache`] and [`LazyCache::with_warm_cache`] to enable additional cache tiers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if seeking to the end of the source fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pure_magic::readers::{LazyCache, DataRead};
+    /// use std::io::Cursor;
+    ///
+    /// let data = b"hello world";
+    /// let cache = LazyCache::from_read_seek(Cursor::new(data)).unwrap();
+    /// assert_eq!(cache.data_size(), data.len() as u64);
+    /// ```
     pub fn from_read_seek(mut rs: R) -> Result<Self, io::Error> {
         let block_size = BLOCK_SIZE as u64;
         let pos_end = rs.seek(SeekFrom::End(0))?;
@@ -83,6 +225,15 @@ where
         })
     }
 
+    /// Enables the hot cache with the specified size.
+    ///
+    /// The hot cache maintains two buffers: one at the head (beginning) and one
+    /// at the tail (end) of the source, each with size `size / 2`. This is useful
+    /// for optimizing access to the start and end of files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if seeking or reading from the source fails.
     pub fn with_hot_cache(mut self, size: usize) -> Result<Self, io::Error> {
         let head_tail_size = size / 2;
 
@@ -103,26 +254,19 @@ where
         Ok(self)
     }
 
+    /// Enables the warm cache with the specified size.
+    ///
+    /// The warm cache uses memory-mapped storage for improved performance when
+    /// reading larger regions. The size is clamped to be at least as large as
+    /// the block size to ensure proper alignment.
+    ///
+    /// Note: The memory mapping is performed lazily on first access.
     pub fn with_warm_cache(mut self, mut warm_size: u64) -> Self {
         // if warm_size is smaller than block_size we will not
         // be able to write chunks into the warm cache
         warm_size = max(warm_size, self.block_size);
         self.warm_size = Some(warm_size);
         self
-    }
-
-    #[inline(always)]
-    pub fn offset_from_start(&self, pos: SeekFrom) -> u64 {
-        match pos {
-            SeekFrom::Start(s) => s,
-            SeekFrom::Current(p) => (self.stream_pos as i128 + p as i128) as u64,
-            SeekFrom::End(e) => (self.pos_end as i128 + e as i128) as u64,
-        }
-    }
-
-    #[inline(always)]
-    pub fn lazy_stream_position(&self) -> u64 {
-        self.stream_pos
     }
 
     #[inline(always)]
@@ -211,63 +355,6 @@ where
         }
     }
 
-    pub fn read_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
-        let range = range.start..range.end;
-        self.get_range_u64(range)
-    }
-
-    #[inline(always)]
-    fn inner_read_count(&mut self, count: u64) -> Result<&[u8], io::Error> {
-        let pos = self.stream_pos;
-        let range = pos..(pos.saturating_add(count));
-        self.get_range_u64(range)
-    }
-
-    /// Read at current reader position and return byte slice
-    pub fn read_count(&mut self, count: u64) -> Result<&[u8], io::Error> {
-        self.inner_read_count(count)
-    }
-
-    pub fn read_exact_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
-        let range_len = range.end - range.start;
-        let b = self.read_range(range)?;
-        if b.len() as u64 != range_len {
-            Err(io::Error::from(io::ErrorKind::UnexpectedEof))
-        } else {
-            Ok(b)
-        }
-    }
-
-    pub fn read_exact_count(&mut self, count: u64) -> Result<&[u8], io::Error> {
-        let b = self.read_count(count)?;
-        debug_assert!(b.len() <= count as usize);
-        if b.len() as u64 != count {
-            Err(io::ErrorKind::UnexpectedEof.into())
-        } else {
-            Ok(b)
-        }
-    }
-
-    pub fn read_exact_into(&mut self, buf: &mut [u8]) -> Result<(), io::Error> {
-        let read = self.read_exact_count(buf.len() as u64)?;
-        // this function call should not panic as read_exact
-        // guarantees we read exactly the length of buf
-        buf.copy_from_slice(read);
-        Ok(())
-    }
-
-    pub fn read_until_any_delim_or_limit(
-        &mut self,
-        delims: &[u8],
-        limit: u64,
-    ) -> Result<&[u8], io::Error> {
-        self._read_while_or_limit(|b| !delims.contains(&b), limit, true)
-    }
-
-    pub fn read_until_or_limit(&mut self, byte: u8, limit: u64) -> Result<&[u8], io::Error> {
-        self._read_while_or_limit(|b| b != byte, limit, true)
-    }
-
     // reads while f returns true or we reach limit
     #[inline(always)]
     fn _read_while_or_limit<F>(
@@ -291,7 +378,7 @@ where
                 }
 
                 if !f(*b) {
-                    if include_last {
+                    if include_last && end < self.data_size() {
                         end += 1;
                     }
                     // read_until includes delimiter
@@ -308,79 +395,6 @@ where
         }
 
         self.read_exact_range(start..start + end)
-    }
-
-    pub fn read_while_or_limit<F>(&mut self, f: F, limit: u64) -> Result<&[u8], io::Error>
-    where
-        F: Fn(u8) -> bool,
-    {
-        self._read_while_or_limit(f, limit, false)
-    }
-
-    // limit is expressed in numbers of utf16 chars
-    pub fn read_until_utf16_or_limit(
-        &mut self,
-        utf16_char: &[u8; 2],
-        limit: u64,
-    ) -> Result<&[u8], io::Error> {
-        let start = self.stream_pos;
-        let mut end = 0;
-
-        let even_bs = if self.block_size.is_multiple_of(2) {
-            self.block_size
-        } else {
-            self.block_size.saturating_add(1)
-        };
-
-        'outer: while limit.saturating_sub(end) > 0 {
-            let buf = self.read_count(even_bs)?;
-
-            let even = buf
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i % 2 == 0)
-                .map(|t| t.1);
-
-            let odd = buf
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i % 2 != 0)
-                .map(|t| t.1);
-
-            for t in even.zip(odd) {
-                if limit.saturating_sub(end) == 0 {
-                    break 'outer;
-                }
-
-                end += 2;
-
-                // tail check
-                if t.0 == &utf16_char[0] && t.1 == &utf16_char[1] {
-                    // we include char
-                    break 'outer;
-                }
-            }
-
-            // we processed the last chunk
-            if buf.len() as u64 != even_bs {
-                // if we arrive here we reached end of file
-                if buf.len() % 2 != 0 {
-                    // we include last byte missed by zip
-                    end += 1
-                }
-                break;
-            }
-        }
-
-        self.read_exact_range(start..start + end)
-    }
-
-    /// Returns the size of the whole data. If the `LazyCache` is
-    /// used with a [`std::fs::File`] reader, this method will return
-    /// the file size.
-    #[inline(always)]
-    pub fn data_size(&self) -> u64 {
-        self.pos_end
     }
 }
 

@@ -108,7 +108,7 @@ use std::{
     borrow::Cow,
     collections::HashSet,
     fs::File,
-    io::{self, Read, Seek, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -116,20 +116,25 @@ use std::{
 use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
 use fs_walk::WalkOptions;
-use pure_magic::{Magic, MagicDb, MagicSource};
+use pure_magic::{Magic, MagicDb, MagicSource, readers::DataReader};
 use serde_derive::Serialize;
 use tracing::{debug, error, info, level_filters::LevelFilter};
 use tracing_subscriber::EnvFilter;
 
-struct Scan<'a, R: Read + Seek> {
+struct Scan<'a, 'r> {
     db: &'a MagicDb,
-    reader: R,
+    reader: DataReader<'r>,
     path: &'a PathBuf,
     ext: Option<&'a str>,
 }
 
-impl<'a, R: Read + Seek> Scan<'a, R> {
-    fn new(db: &'a MagicDb, reader: R, path: &'a PathBuf, ext: Option<&'a str>) -> Self {
+impl<'a, 'r> Scan<'a, 'r> {
+    fn new(
+        db: &'a MagicDb,
+        reader: DataReader<'r>,
+        path: &'a PathBuf,
+        ext: Option<&'a str>,
+    ) -> Self {
         Self {
             db,
             reader,
@@ -271,22 +276,26 @@ impl Command {
             magic_db::load().map_err(|e| anyhow!("failed to open embedded database: {e}"))?
         };
 
+        macro_rules! scan_stdin {
+            () => {
+                let stdin = io::stdin();
+                let mut buf = vec![0; pure_magic::FILE_BYTES_MAX];
+                let n = stdin.lock().read(&mut buf)?;
+                buf.truncate(n);
+
+                let path = PathBuf::from("stdin");
+                let mut s = Scan::new(&db, DataReader::from_slice(buf.as_slice()), &path, None);
+
+                if o.all {
+                    let _ = s.all_matches(&o);
+                } else {
+                    let _ = s.first_match(&o);
+                }
+            };
+        }
+
         if o.paths.is_empty() {
-            let stdin = io::stdin();
-            let mut buf = vec![0; pure_magic::FILE_BYTES_MAX];
-            let n = stdin.lock().read(&mut buf)?;
-            buf.truncate(n);
-
-            let reader = io::Cursor::new(buf);
-            let path = PathBuf::from("stdin");
-            let mut s = Scan::new(&db, reader, &path, None);
-
-            if o.all {
-                let _ = s.all_matches(&o);
-            } else {
-                let _ = s.first_match(&o);
-            }
-
+            scan_stdin!();
             return Ok(());
         }
 
@@ -298,15 +307,21 @@ impl Command {
                 wo.max_depth(0);
             }
 
+            if item.to_string_lossy() == "-" {
+                scan_stdin!();
+                continue;
+            }
+
             for f in wo.walk(item).flatten() {
                 debug!("scanning file: {}", f.to_string_lossy());
-                let Ok(file) = File::open(&f)
+                let Ok(reader) = File::open(&f)
+                    .and_then(DataReader::from_file)
                     .inspect_err(|e| error!("failed to open file={}: {e}", f.to_string_lossy()))
                 else {
                     continue;
                 };
 
-                let mut s = Scan::new(&db, file, &f, None);
+                let mut s = Scan::new(&db, reader, &f, None);
 
                 if o.all {
                     let _ = s.all_matches(&o);

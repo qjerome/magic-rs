@@ -33,7 +33,7 @@ cargo add pure-magic
 
 ### Detect File Types Programmatically
 ```rust
-use pure_magic::{MagicDb, MagicSource};
+use pure_magic::{MagicDb, MagicSource, DataReader};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,8 +45,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.verify()?;
 
     // Open a file and detect its type
-    let mut file = File::open("src/lib.rs")?;
-    let magic = db.first_magic(&mut file, None)?;
+    let mut dr = File::open("src/lib.rs")
+        .and_then(DataReader::from_file)?;
+    let magic = db.first_magic(&mut dr, None)?;
 
     println!(
         "File type: {} (MIME: {}, strength: {})",
@@ -60,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Get All Matching Rules
 ```rust
-use pure_magic::{MagicDb, MagicSource};
+use pure_magic::{MagicDb, MagicSource, DataReader};
 use std::fs::File;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,10 +71,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.load(rust_magic);
 
     // Open a file and detect its type
-    let mut file = File::open("src/lib.rs")?;
+    let mut dr = File::open("src/lib.rs")
+        .and_then(DataReader::from_file)?;
 
     // Get all matching rules, sorted by strength
-    let magics = db.all_magics(&mut file)?;
+    let magics = db.all_magics(&mut dr)?;
 
     // Must contain rust file magic and default text magic
     assert!(magics.len() > 1);

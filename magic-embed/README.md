@@ -55,7 +55,7 @@ fn main() -> Result<(), pure_magic::Error> {
 
 ```rust
 use magic_embed::magic_embed;
-use pure_magic::MagicDb;
+use pure_magic::{MagicDb, DataReader};
 use std::fs::File;
 use std::env::current_exe;
 
@@ -70,8 +70,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = AppMagicDb::open()?;
 
     // Use it to detect file types
-    let mut file = File::open(current_exe()?)?;
-    let magic = db.first_magic(&mut file, None)?;
+    let mut dr = File::open(current_exe()?)
+        .and_then(DataReader::from_file)?;
+    let magic = db.first_magic(&mut dr, None)?;
 
     println!("Detected: {} (MIME: {})", magic.message(), magic.mime_type());
     Ok(())
