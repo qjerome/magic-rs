@@ -40,14 +40,16 @@ pure-magic = "0.1"  # Required peer dependency
 ```rust
 use std::fs::File;
 use std::env::current_exe;
+use pure_magic::readers::DataReader;
 
 fn main() -> Result<(), pure_magic::Error> {
     // Open the precompiled database
     let db = magic_db::load()?;
 
     // Use it to detect file types
-    let mut file = File::open(current_exe()?)?;
-    let magic = db.first_magic(&mut file, None)?;
+    let mut dr = File::open(current_exe()?)
+        .and_then(DataReader::from_file)?;
+    let magic = db.first_magic(&mut dr, None)?;
     assert!(!magic.is_default());
 
     println!("File type: {}", magic.message());
