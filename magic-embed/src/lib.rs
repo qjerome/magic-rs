@@ -53,7 +53,7 @@
 //!
 //! ```rust
 //! use magic_embed::magic_embed;
-//! use pure_magic::MagicDb;
+//! use pure_magic::{MagicDb, DataReader};
 //! use std::fs::File;
 //! use std::env::current_exe;
 //!
@@ -68,8 +68,9 @@
 //!     let db = AppMagicDb::open()?;
 //!
 //!     // Use it to detect file types
-//!     let mut file = File::open(current_exe()?)?;
-//!     let magic = db.first_magic(&mut file, None)?;
+//!     let mut dr = File::open(current_exe()?)
+//!         .and_then(DataReader::from_file)?;
+//!     let magic = db.first_magic(&mut dr, None)?;
 //!
 //!     println!("Detected: {} (MIME: {})", magic.message(), magic.mime_type());
 //!     Ok(())
@@ -302,9 +303,8 @@ fn impl_magic_embed(attr: TokenStream, item: TokenStream) -> Result<TokenStream,
     }
 
     db.load_bulk(rules.into_iter());
-    db.verify().map_err(|e| {
-        syn::Error::new(include_nv.span(), format!("inconsistent database: {e}"))
-    })?;
+    db.verify()
+        .map_err(|e| syn::Error::new(include_nv.span(), format!("inconsistent database: {e}")))?;
 
     // Serialize and save database
     let mut ser = vec![];
