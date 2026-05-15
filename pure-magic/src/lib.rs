@@ -31,7 +31,7 @@
 //!
 //! ### Detect File Types Programmatically
 //! ```rust
-//! use pure_magic::{MagicDb, MagicSource};
+//! use pure_magic::{MagicDb, MagicSource, DataReader};
 //! use std::fs::File;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -43,8 +43,9 @@
 //!     db.verify()?;
 //!
 //!     // Open a file and detect its type
-//!     let mut file = File::open("src/lib.rs")?;
-//!     let magic = db.first_magic(&mut file, None)?;
+//!     let mut dr = File::open("src/lib.rs")
+//!         .and_then(DataReader::from_file)?;
+//!     let magic = db.first_magic(&mut dr, None)?;
 //!
 //!     println!(
 //!         "File type: {} (MIME: {}, strength: {})",
@@ -58,7 +59,7 @@
 //!
 //! ### Get All Matching Rules
 //! ```rust
-//! use pure_magic::{MagicDb, MagicSource};
+//! use pure_magic::{MagicDb, MagicSource, DataReader};
 //! use std::fs::File;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -68,10 +69,11 @@
 //!     db.load(rust_magic);
 //!
 //!     // Open a file and detect its type
-//!     let mut file = File::open("src/lib.rs")?;
+//!     let mut dr = File::open("src/lib.rs")
+//!         .and_then(DataReader::from_file)?;
 //!
 //!     // Get all matching rules, sorted by strength
-//!     let magics = db.all_magics(&mut file)?;
+//!     let magics = db.all_magics(&mut dr)?;
 //!
 //!     // Must contain rust file magic and default text magic
 //!     assert!(magics.len() > 1);
@@ -147,7 +149,6 @@
 use dyf::{DynDisplay, FormatString, dformat};
 use flagset::{FlagSet, flags};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use lazy_cache::LazyCache;
 use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
@@ -168,6 +169,7 @@ use tracing::{Level, debug, enabled, trace};
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},
     parser::{FileMagicParser, Rule},
+    readers::{DataRead, LazyCache},
     utils::{
         debug_string_from_vec_u8, debug_string_from_vec_u16, decode_id3, find_json_boundaries,
         run_utf8_validation,
@@ -176,6 +178,8 @@ use crate::{
 
 mod numeric;
 mod parser;
+pub mod readers;
+pub use readers::DataReader;
 mod utils;
 
 const HARDCODED_MAGIC_STRENGTH: u64 = 2048;
@@ -209,7 +213,7 @@ macro_rules! debug_panic {
 macro_rules! read {
     ($r: expr, $ty: ty) => {{
         let mut a = [0u8; std::mem::size_of::<$ty>()];
-        $r.read_exact(&mut a)?;
+        $r.read_exact_into(&mut a)?;
         a
     }};
 }
@@ -227,7 +231,7 @@ macro_rules! read_me {
 }
 
 #[inline(always)]
-fn read_octal_u64<R: Read + Seek>(haystack: &mut LazyCache<R>) -> Option<u64> {
+fn read_octal_u64<D: DataRead>(haystack: &mut D) -> Option<u64> {
     let s = haystack
         .read_while_or_limit(|b| matches!(b, b'0'..=b'7'), 22)
         .map(|buf| str::from_utf8(buf))
@@ -385,7 +389,7 @@ impl Message {
 
 impl ScalarDataType {
     #[inline(always)]
-    fn read<R: Read + Seek>(&self, from: &mut R, switch_endianness: bool) -> Result<Scalar, Error> {
+    fn read<R: DataRead>(&self, from: &mut R, switch_endianness: bool) -> Result<Scalar, Error> {
         macro_rules! _read_le {
             ($ty: ty) => {{
                 if switch_endianness {
@@ -445,7 +449,7 @@ impl ScalarDataType {
             Self::ulelong => Scalar::ulelong(_read_le!(u32)),
             Self::uledate => Scalar::uledate(_read_le!(u32)),
             Self::ulequad => Scalar::ulequad(_read_le!(u64)),
-            Self::offset => Scalar::offset(from.stream_position()?),
+            Self::offset => Scalar::offset(from.stream_position()),
             Self::ubequad => Scalar::ubequad(_read_be!(u64)),
             Self::medate => Scalar::medate(_read_me!()),
             Self::meldate => Scalar::meldate(_read_me!()),
@@ -471,7 +475,7 @@ impl ScalarDataType {
 
 impl FloatDataType {
     #[inline(always)]
-    fn read<R: Read + Seek>(&self, from: &mut R, switch_endianness: bool) -> Result<Float, Error> {
+    fn read<R: DataRead>(&self, from: &mut R, switch_endianness: bool) -> Result<Float, Error> {
         macro_rules! _read_le {
             ($ty: ty) => {{
                 if switch_endianness {
@@ -1293,9 +1297,9 @@ struct PStringTest {
 
 impl PStringTest {
     #[inline]
-    fn read<'cache, R: Read + Seek>(
+    fn read<'cache, R: DataRead>(
         &self,
-        haystack: &'cache mut LazyCache<R>,
+        haystack: &'cache mut R,
     ) -> Result<Option<&'cache [u8]>, Error> {
         let mut len = match self.len {
             PStringLen::Byte => read_le!(haystack, u8) as u32,
@@ -1377,12 +1381,12 @@ impl Display for Test {
 impl Test {
     // read the value to test from the haystack
     #[inline]
-    fn read_test_value<'haystack, R: Read + Seek>(
+    fn read_test_value<'haystack, D: DataRead>(
         &self,
-        haystack: &'haystack mut LazyCache<R>,
+        haystack: &'haystack mut D,
         switch_endianness: bool,
     ) -> Result<Option<ReadValue<'haystack>>, Error> {
-        let test_value_offset = haystack.lazy_stream_position();
+        let test_value_offset = haystack.stream_position();
 
         match self {
             Self::Scalar(t) => {
@@ -1910,9 +1914,9 @@ struct IndOffset {
 
 impl IndOffset {
     // if we overflow we must not return an offset
-    fn read_offset<R: Read + Seek>(
+    fn read_offset<D: DataRead>(
         &self,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut D,
         rule_base_offset: Option<u64>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
@@ -2132,9 +2136,9 @@ impl From<Name> for Match {
 impl Match {
     /// Turns the `Match`'s offset into an absolute offset from the start of the stream
     #[inline(always)]
-    fn offset_from_start<R: Read + Seek>(
+    fn offset_from_start<D: DataRead>(
         &self,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut D,
         rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
@@ -2174,7 +2178,7 @@ impl Match {
     /// has been reached or if a dependency rule is missing.
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn matches<'a: 'h, 'h, R: Read + Seek>(
+    fn matches<'a: 'h, 'h, D: DataRead>(
         &'a self,
         source: Option<&str>,
         magic: &mut Magic<'a>,
@@ -2183,7 +2187,7 @@ impl Match {
         buf_base_offset: Option<u64>,
         rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
-        haystack: &'h mut LazyCache<R>,
+        haystack: &'h mut D,
         switch_endianness: bool,
         db: &'a MagicDb,
         depth: usize,
@@ -2351,7 +2355,7 @@ impl Match {
                     trace_msg = Some(vec![format!(
                         "source={source} line={line} depth={} stream_offset={:#x}",
                         self.depth,
-                        haystack.lazy_stream_position()
+                        haystack.stream_position()
                     )])
                 }
 
@@ -2574,7 +2578,7 @@ impl EntryNode {
     /// Matches that don't result in message appends are not counted, consistent with libmagic's behavior.
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn matches<'r, R: Read + Seek>(
+    fn matches<'r, D: DataRead>(
         &'r self,
         opt_source: Option<&str>,
         magic: &mut Magic<'r>,
@@ -2583,7 +2587,7 @@ impl EntryNode {
         buf_base_offset: Option<u64>,
         rule_base_offset: Option<u64>,
         last_level_offset: Option<u64>,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
@@ -2685,7 +2689,7 @@ impl EntryNode {
 
             magic.update_strength(strength);
 
-            let end_upper_level = haystack.lazy_stream_position();
+            let end_upper_level = haystack.stream_position();
 
             // we have to fix rule_base_offset if
             // the rule_base_starts from end otherwise it
@@ -2772,11 +2776,11 @@ impl MagicRule {
     }
 
     #[inline]
-    fn magic_entrypoint<'r, R: Read + Seek>(
+    fn magic_entrypoint<'r, D: DataRead>(
         &'r self,
         magic: &mut Magic<'r>,
         stream_kind: StreamKind,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
@@ -2800,13 +2804,13 @@ impl MagicRule {
     /// Matches that don't result in message appends are not counted, consistent with libmagic's behavior.
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    fn magic<'r, R: Read + Seek>(
+    fn magic<'r, D: DataRead>(
         &'r self,
         magic: &mut Magic<'r>,
         stream_kind: StreamKind,
         buf_base_offset: Option<u64>,
         rule_base_offset: Option<u64>,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
         depth: usize,
@@ -3290,8 +3294,8 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn try_json<R: Read + Seek>(
-        haystack: &mut LazyCache<R>,
+    fn try_json<D: DataRead>(
+        haystack: &mut D,
         stream_kind: StreamKind,
         magic: &mut Magic,
     ) -> Result<bool, Error> {
@@ -3354,8 +3358,8 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn try_csv<R: Read + Seek>(
-        haystack: &mut LazyCache<R>,
+    fn try_csv<D: DataRead>(
+        haystack: &mut D,
         stream_kind: StreamKind,
         magic: &mut Magic,
     ) -> Result<bool, Error> {
@@ -3408,8 +3412,8 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn try_tar<R: Read + Seek>(
-        haystack: &mut LazyCache<R>,
+    fn try_tar<D: DataRead>(
+        haystack: &mut D,
         stream_kind: StreamKind,
         magic: &mut Magic,
     ) -> Result<bool, Error> {
@@ -3447,8 +3451,8 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn try_hard_magic<R: Read + Seek>(
-        haystack: &mut LazyCache<R>,
+    fn try_hard_magic<D: DataRead>(
+        haystack: &mut D,
         stream_kind: StreamKind,
         magic: &mut Magic,
     ) -> Result<bool, Error> {
@@ -3458,8 +3462,8 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn magic_default<'m, R: Read + Seek>(
-        cache: &mut LazyCache<R>,
+    fn magic_default<'m, D: DataRead>(
+        cache: &mut D,
         stream_kind: StreamKind,
         magic: &mut Magic<'m>,
     ) {
@@ -3527,9 +3531,9 @@ impl MagicDb {
     }
 
     #[inline]
-    fn first_magic_with_stream_kind<R: Read + Seek>(
+    fn first_magic_with_stream_kind<D: DataRead>(
         &self,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut D,
         stream_kind: StreamKind,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
@@ -3603,14 +3607,13 @@ impl MagicDb {
     /// produce different results. Yet this makes the assumption rules are written
     /// correctly and every rule concerned defines `!:ext` when it is appropriate.
     /// If some rules are missing it, results might differ.
-    pub fn first_magic<R: Read + Seek>(
+    pub fn first_magic<R: DataRead>(
         &self,
         r: &mut R,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
-        let mut cache = Self::optimal_lazy_cache(r)?;
-        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.first_magic_with_stream_kind(&mut cache, stream_kind, extension)
+        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.first_magic_with_stream_kind(r, stream_kind, extension)
     }
 
     /// An alternative to [`Self::first_magic`] using a [`LazyCache`]
@@ -3641,9 +3644,9 @@ impl MagicDb {
     /// produce different results. Yet this makes the assumption rules are written
     /// correctly and every rule concerned defines `!:ext` when it is appropriate.
     /// If some rules are missing it, results might differ.
-    pub fn first_magic_with_lazy_cache<R: Read + Seek>(
+    pub fn first_magic_with_lazy_cache<R: DataRead>(
         &self,
-        cache: &mut LazyCache<R>,
+        cache: &mut R,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
         let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
@@ -3651,9 +3654,9 @@ impl MagicDb {
     }
 
     #[inline(always)]
-    fn all_magics_sort_with_stream_kind<R: Read + Seek>(
+    fn all_magics_sort_with_stream_kind<R: DataRead>(
         &self,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut R,
         stream_kind: StreamKind,
     ) -> Result<Vec<Magic<'_>>, Error> {
         let mut out = Vec::new();
@@ -3696,10 +3699,9 @@ impl MagicDb {
     /// # Returns
     ///
     /// * `Result<Vec<Magic<'_>>, Error>` - All detection results sorted by strength or an error
-    pub fn all_magics<R: Read + Seek>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
-        let mut cache = Self::optimal_lazy_cache(r)?;
-        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.all_magics_sort_with_stream_kind(&mut cache, stream_kind)
+    pub fn all_magics<R: DataRead>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
+        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.all_magics_sort_with_stream_kind(r, stream_kind)
     }
 
     /// An alternative to [`Self::all_magics`] using a [`LazyCache`]
@@ -3717,18 +3719,18 @@ impl MagicDb {
     ///
     /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
     /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
-    pub fn all_magics_with_lazy_cache<R: Read + Seek>(
+    pub fn all_magics_with_lazy_cache<R: DataRead>(
         &self,
-        cache: &mut LazyCache<R>,
+        cache: &mut R,
     ) -> Result<Vec<Magic<'_>>, Error> {
         let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
         self.all_magics_sort_with_stream_kind(cache, stream_kind)
     }
 
     #[inline(always)]
-    fn best_magic_with_stream_kind<R: Read + Seek>(
+    fn best_magic_with_stream_kind<R: DataRead>(
         &self,
-        haystack: &mut LazyCache<R>,
+        haystack: &mut R,
         stream_kind: StreamKind,
     ) -> Result<Magic<'_>, Error> {
         let magics = self.all_magics_sort_with_stream_kind(haystack, stream_kind)?;
@@ -3751,10 +3753,9 @@ impl MagicDb {
     /// # Returns
     ///
     /// * `Result<Magic<'_>, Error>` - The best detection result or an error
-    pub fn best_magic<R: Read + Seek>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
-        let mut cache = Self::optimal_lazy_cache(r)?;
-        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.best_magic_with_stream_kind(&mut cache, stream_kind)
+    pub fn best_magic<R: DataRead>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
+        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.best_magic_with_stream_kind(r, stream_kind)
     }
 
     /// An alternative to [`Self::best_magic`] using a [`LazyCache`]
@@ -3772,9 +3773,9 @@ impl MagicDb {
     ///
     /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
     /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
-    pub fn best_magic_with_lazy_cache<R: Read + Seek>(
+    pub fn best_magic_with_lazy_cache<R: DataRead>(
         &self,
-        cache: &mut LazyCache<R>,
+        cache: &mut R,
     ) -> Result<Magic<'_>, Error> {
         let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
         self.best_magic_with_stream_kind(cache, stream_kind)
@@ -3865,17 +3866,16 @@ impl MagicDb {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
 
     use regex::bytes::Regex;
 
-    use crate::utils::unix_local_time_to_string;
+    use crate::{readers::BufReader, utils::unix_local_time_to_string};
 
     use super::*;
 
-    macro_rules! lazy_cache {
+    macro_rules! buf_reader {
         ($l: literal) => {
-            LazyCache::from_read_seek(Cursor::new($l)).unwrap()
+            BufReader::from_slice($l.as_bytes())
         };
     }
 
@@ -3890,7 +3890,7 @@ mod tests {
                 .inspect_err(|e| eprintln!("{e}"))
                 .unwrap(),
         );
-        let mut reader = LazyCache::from_read_seek(Cursor::new(content)).unwrap();
+        let mut reader = BufReader::from_slice(content);
         let v = md.best_magic_with_stream_kind(&mut reader, stream_kind)?;
         Ok(v.into_owned())
     }
@@ -4656,38 +4656,38 @@ HelloWorld
     #[test]
     fn test_read_octal() {
         // Basic cases
-        assert_eq!(read_octal_u64(&mut lazy_cache!("0")), Some(0));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("00")), Some(0));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("01")), Some(1));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("07")), Some(7));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("010")), Some(8));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("0123")), Some(83));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("0755")), Some(493));
+        assert_eq!(read_octal_u64(&mut buf_reader!("0")), Some(0));
+        assert_eq!(read_octal_u64(&mut buf_reader!("00")), Some(0));
+        assert_eq!(read_octal_u64(&mut buf_reader!("01")), Some(1));
+        assert_eq!(read_octal_u64(&mut buf_reader!("07")), Some(7));
+        assert_eq!(read_octal_u64(&mut buf_reader!("010")), Some(8));
+        assert_eq!(read_octal_u64(&mut buf_reader!("0123")), Some(83));
+        assert_eq!(read_octal_u64(&mut buf_reader!("0755")), Some(493));
 
         // With trailing non-octal characters
-        assert_eq!(read_octal_u64(&mut lazy_cache!("0ABC")), Some(0));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("01ABC")), Some(1));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("0755ABC")), Some(493));
-        assert_eq!(read_octal_u64(&mut lazy_cache!("0123ABC")), Some(83));
+        assert_eq!(read_octal_u64(&mut buf_reader!("0ABC")), Some(0));
+        assert_eq!(read_octal_u64(&mut buf_reader!("01ABC")), Some(1));
+        assert_eq!(read_octal_u64(&mut buf_reader!("0755ABC")), Some(493));
+        assert_eq!(read_octal_u64(&mut buf_reader!("0123ABC")), Some(83));
 
         // Invalid octal digits
-        assert_eq!(read_octal_u64(&mut lazy_cache!("08")), Some(0)); // stops at '8'
-        assert_eq!(read_octal_u64(&mut lazy_cache!("01238")), Some(83)); // stops at '8'
+        assert_eq!(read_octal_u64(&mut buf_reader!("08")), Some(0)); // stops at '8'
+        assert_eq!(read_octal_u64(&mut buf_reader!("01238")), Some(83)); // stops at '8'
 
         // No leading '0'
-        assert_eq!(read_octal_u64(&mut lazy_cache!("123")), None);
-        assert_eq!(read_octal_u64(&mut lazy_cache!("755")), None);
+        assert_eq!(read_octal_u64(&mut buf_reader!("123")), None);
+        assert_eq!(read_octal_u64(&mut buf_reader!("755")), None);
 
         // Empty string
-        assert_eq!(read_octal_u64(&mut lazy_cache!("")), None);
+        assert_eq!(read_octal_u64(&mut buf_reader!("")), None);
 
         // Only non-octal characters
-        assert_eq!(read_octal_u64(&mut lazy_cache!("ABC")), None);
-        assert_eq!(read_octal_u64(&mut lazy_cache!("8ABC")), None); // first char is not '0'
+        assert_eq!(read_octal_u64(&mut buf_reader!("ABC")), None);
+        assert_eq!(read_octal_u64(&mut buf_reader!("8ABC")), None); // first char is not '0'
 
         // Longer valid octal (but within u64 range)
         assert_eq!(
-            read_octal_u64(&mut lazy_cache!("01777777777")),
+            read_octal_u64(&mut buf_reader!("01777777777")),
             Some(268435455)
         );
     }
