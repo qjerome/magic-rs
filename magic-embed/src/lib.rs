@@ -68,9 +68,7 @@
 //!     let db = AppMagicDb::open()?;
 //!
 //!     // Use it to detect file types
-//!     let mut dr = File::open(current_exe()?)
-//!         .and_then(DataReader::from_file)?;
-//!     let magic = db.first_magic(&mut dr, None)?;
+//!     let magic = db.first_magic_file(current_exe()?)?;
 //!
 //!     println!("Detected: {} (MIME: {})", magic.message(), magic.mime_type());
 //!     Ok(())
