@@ -3270,14 +3270,6 @@ fn guess_stream_kind<S: AsRef<[u8]>>(stream: S) -> StreamKind {
 }
 
 impl MagicDb {
-    /// Prepares an [`LazyCache`] configured with optimal parameters for
-    /// **read** operations done during file identification
-    pub fn optimal_lazy_cache<R: Read + Seek>(f: R) -> Result<LazyCache<R>, io::Error> {
-        Ok(LazyCache::<R>::from_read_seek(f)
-            .and_then(|lc| lc.with_hot_cache(2 * FILE_BYTES_MAX))?)
-        .map(|lc| lc.with_warm_cache(100 << 20))
-    }
-
     /// Creates a new empty database
     ///
     /// # Returns
