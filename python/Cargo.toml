@@ -15,4 +15,4 @@ name = "pure_magic_rs"
 [dependencies]
 magic-db = { path = "../magic-db" }
 pure-magic = { path = "../pure-magic" }
-pyo3 = "0.27.0"
+pyo3 = "0.28.3"
