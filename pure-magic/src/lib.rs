@@ -158,7 +158,8 @@ use std::{
     cmp::max,
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
-    io::{self, Read, Seek, SeekFrom, Write},
+    fs::File,
+    io::{self, Read, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
 };
@@ -169,7 +170,7 @@ use tracing::{Level, debug, enabled, trace};
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},
     parser::{FileMagicParser, Rule},
-    readers::{DataRead, LazyCache},
+    readers::DataRead,
     utils::{
         debug_string_from_vec_u8, debug_string_from_vec_u16, decode_id3, find_json_boundaries,
         run_utf8_validation,
@@ -3592,12 +3593,17 @@ impl MagicDb {
     ///
     /// # Arguments
     ///
-    /// * `r` - A readable and seekable input
+    /// * `r` - A reader implementing [`DataRead`]
     /// * `extension` - Optional file extension to use for acceleration
     ///
     /// # Returns
     ///
     /// * `Result<Magic<'_>, Error>` - The detection result or an error
+    ///
+    /// # Notes
+    ///
+    /// * Use this method **only** if you need to re-use a `reader` for future **read** operations.
+    /// * Use [`DataReader`] to create a generic `reader`
     ///
     /// # Warning
     ///
@@ -3616,41 +3622,33 @@ impl MagicDb {
         self.first_magic_with_stream_kind(r, stream_kind, extension)
     }
 
-    /// An alternative to [`Self::first_magic`] using a [`LazyCache`]
-    /// to detects file [`Magic`] stopping at the first matching magic. Magic
-    /// rules are evaluated from the best to the least relevant, so this method
-    /// returns most of the time the best magic. For the rare cases where
-    /// it doesn't or if the best result is always required, use [`MagicDb::best_magic`]
+    /// Detects file [`Magic`] from a file path.
     ///
-    /// # Arguments
+    /// This is a convenience method that opens the file and creates a [`DataReader::File`]
+    /// internally. The file extension is automatically extracted and passed to
+    /// [`MagicDb::first_magic`].
     ///
-    /// * `cache` - A [`LazyCache`] used for read operations
-    /// * `extension` - Optional file extension to use for acceleration
+    /// # Errors
     ///
-    /// # Returns
+    /// Returns an error if the file cannot be opened or if magic detection fails.
+    pub fn first_magic_file<P: AsRef<Path>>(&self, path: P) -> Result<Magic<'_>, Error> {
+        let ext = path.as_ref().extension().and_then(|e| e.to_str());
+        self.first_magic(&mut DataReader::from_file(File::open(path.as_ref())?)?, ext)
+    }
+
+    /// Detects file [`Magic`] from an in-memory byte slice.
     ///
-    /// * `Result<Magic<'_>, Error>` - The detection result or an error
+    /// This is a convenience method that creates a [`DataReader::Slice`] internally.
     ///
-    /// # Notes
+    /// # Errors
     ///
-    /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
-    /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
-    ///
-    /// # Warning
-    ///
-    /// File extension acceleration is made to evaluate rules faster by testing
-    /// first the rules defining this extension with an `!:ext` entry.
-    /// Whether you use `extension` acceleration or not with this function should not
-    /// produce different results. Yet this makes the assumption rules are written
-    /// correctly and every rule concerned defines `!:ext` when it is appropriate.
-    /// If some rules are missing it, results might differ.
-    pub fn first_magic_with_lazy_cache<R: DataRead>(
+    /// Returns an error if magic detection fails.
+    pub fn first_magic_slice<S: AsRef<[u8]>>(
         &self,
-        cache: &mut R,
+        s: S,
         extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
-        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.first_magic_with_stream_kind(cache, stream_kind, extension)
+        self.first_magic(&mut DataReader::from_slice(s.as_ref()), extension)
     }
 
     #[inline(always)]
@@ -3694,22 +3692,7 @@ impl MagicDb {
     ///
     /// # Arguments
     ///
-    /// * `r` - A readable and seekable input
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Vec<Magic<'_>>, Error>` - All detection results sorted by strength or an error
-    pub fn all_magics<R: DataRead>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
-        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.all_magics_sort_with_stream_kind(r, stream_kind)
-    }
-
-    /// An alternative to [`Self::all_magics`] using a [`LazyCache`]
-    /// to detects all [`Magic`] matching a given content.
-    ///
-    /// # Arguments
-    ///
-    /// * `r` - A readable and seekable input
+    /// * `r` - A reader implementing [`DataRead`]
     ///
     /// # Returns
     ///
@@ -3717,29 +3700,51 @@ impl MagicDb {
     ///
     /// # Notes
     ///
-    /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
-    /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
-    pub fn all_magics_with_lazy_cache<R: DataRead>(
-        &self,
-        cache: &mut R,
-    ) -> Result<Vec<Magic<'_>>, Error> {
-        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.all_magics_sort_with_stream_kind(cache, stream_kind)
+    /// * Use this method **only** if you need to re-use a `reader` for future **read** operations.
+    /// * Use [`DataReader`] to create a generic `reader`
+    #[inline]
+    pub fn all_magics<R: DataRead>(&self, r: &mut R) -> Result<Vec<Magic<'_>>, Error> {
+        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.all_magics_sort_with_stream_kind(r, stream_kind)
+    }
+
+    /// Detects all matching [`Magic`] entries from a file path.
+    ///
+    /// This is a convenience method that opens the file and creates a [`DataReader::File`]
+    /// internally, then calls [`MagicDb::all_magics`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened or if magic detection fails.
+    pub fn all_magics_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<Magic<'_>>, Error> {
+        self.all_magics(&mut DataReader::from_file(File::open(path)?)?)
+    }
+
+    /// Detects all matching [`Magic`] entries from an in-memory byte slice.
+    ///
+    /// This is a convenience method that creates a [`DataReader::Slice`] internally,
+    /// then calls [`MagicDb::all_magics`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if magic detection fails.
+    pub fn all_magics_slice<S: AsRef<[u8]>>(&self, slice: S) -> Result<Vec<Magic<'_>>, Error> {
+        self.all_magics(&mut DataReader::from_slice(slice.as_ref()))
     }
 
     #[inline(always)]
     fn best_magic_with_stream_kind<R: DataRead>(
         &self,
-        haystack: &mut R,
+        reader: &mut R,
         stream_kind: StreamKind,
     ) -> Result<Magic<'_>, Error> {
-        let magics = self.all_magics_sort_with_stream_kind(haystack, stream_kind)?;
+        let magics = self.all_magics_sort_with_stream_kind(reader, stream_kind)?;
 
         // magics is guaranteed to contain at least the
         // default magic but we unwrap to avoid any panic
         Ok(magics.into_iter().next().unwrap_or_else(|| {
             let mut magic = Magic::default();
-            Self::magic_default(haystack, stream_kind, &mut magic);
+            Self::magic_default(reader, stream_kind, &mut magic);
             magic
         }))
     }
@@ -3748,22 +3753,7 @@ impl MagicDb {
     ///
     /// # Arguments
     ///
-    /// * `r` - A readable and seekable input
-    ///
-    /// # Returns
-    ///
-    /// * `Result<Magic<'_>, Error>` - The best detection result or an error
-    pub fn best_magic<R: DataRead>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
-        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.best_magic_with_stream_kind(r, stream_kind)
-    }
-
-    /// An alternative to [`Self::best_magic`] using a [`LazyCache`]
-    /// to detect the best [`Magic`] matching a given content.
-    ///
-    /// # Arguments
-    ///
-    /// * `r` - A readable and seekable input
+    /// * `r` - A reader implementing [`DataRead`]
     ///
     /// # Returns
     ///
@@ -3771,14 +3761,36 @@ impl MagicDb {
     ///
     /// # Notes
     ///
-    /// * Use this method **only** if you need to re-use a [`LazyCache`] for future **read** operations.
-    /// * Use [`Self::optimal_lazy_cache`] to prepare an optimal [`LazyCache`]
-    pub fn best_magic_with_lazy_cache<R: DataRead>(
-        &self,
-        cache: &mut R,
-    ) -> Result<Magic<'_>, Error> {
-        let stream_kind = guess_stream_kind(cache.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.best_magic_with_stream_kind(cache, stream_kind)
+    /// * Use this method **only** if you need to re-use a `reader` for future **read** operations.
+    /// * Use [`DataReader`] to create a generic `reader`
+    #[inline]
+    pub fn best_magic<R: DataRead>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
+        let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
+        self.best_magic_with_stream_kind(r, stream_kind)
+    }
+
+    /// Detects the best matching [`Magic`] from a file path.
+    ///
+    /// This is a convenience method that opens the file and creates a [`DataReader::File`]
+    /// internally, then calls [`MagicDb::best_magic`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened or if magic detection fails.
+    pub fn best_magic_file<P: AsRef<Path>>(&self, path: P) -> Result<Magic<'_>, Error> {
+        self.best_magic(&mut DataReader::from_file(File::open(path)?)?)
+    }
+
+    /// Detects the best matching [`Magic`] from an in-memory byte slice.
+    ///
+    /// This is a convenience method that creates a [`DataReader::Slice`] internally,
+    /// then calls [`MagicDb::best_magic`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if magic detection fails.
+    pub fn best_magic_slice<S: AsRef<[u8]>>(&self, slice: S) -> Result<Magic<'_>, Error> {
+        self.best_magic(&mut DataReader::from_slice(slice.as_ref()))
     }
 
     /// Serializes the database to a generic writer implementing [`io::Write`]
