@@ -87,11 +87,8 @@
 //! - **BSD-2-Clause**
 
 #![deny(unused_imports)]
-
-use std::fs::File;
 use std::path::PathBuf;
 
-use pure_magic::readers::DataReader;
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -207,11 +204,8 @@ impl MagicDb {
         input: &[u8],
         extension: Option<&str>,
     ) -> PyResult<Magic> {
-        py.detach(|| {
-            let mut buf = DataReader::from_slice(input);
-            self.0.first_magic(&mut buf, extension).map(Magic::from)
-        })
-        .map_err(py_err)
+        py.detach(|| self.0.first_magic_slice(input, extension).map(Magic::from))
+            .map_err(py_err)
     }
 
     /// Detect the first magic match for a file.
@@ -229,12 +223,8 @@ impl MagicDb {
     /// Example:
     ///     >>> result = db.first_magic_file("example.txt")
     pub fn first_magic_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Magic> {
-        py.detach(|| {
-            let mut file_reader = File::open(&path).and_then(DataReader::from_file)?;
-            let ext = path.extension().and_then(|e| e.to_str());
-            self.0.first_magic(&mut file_reader, ext).map(Magic::from)
-        })
-        .map_err(py_err)
+        py.detach(|| self.0.first_magic_file(path).map(Magic::from))
+            .map_err(py_err)
     }
 
     /// Detect the best magic match for an in-memory buffer.
@@ -253,11 +243,8 @@ impl MagicDb {
     ///     ...     buffer = f.read()
     ///     >>> result = db.best_magic_buffer(buffer)
     pub fn best_magic_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Magic> {
-        py.detach(|| {
-            let mut buf = DataReader::from_slice(input);
-            self.0.best_magic(&mut buf).map(Magic::from)
-        })
-        .map_err(py_err)
+        py.detach(|| self.0.best_magic_slice(input).map(Magic::from))
+            .map_err(py_err)
     }
 
     /// Detect the best magic match for a file.
@@ -275,11 +262,8 @@ impl MagicDb {
     /// Example:
     ///     >>> result = db.best_magic_file("example.txt")
     pub fn best_magic_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Magic> {
-        py.detach(|| {
-            let mut file_reader = File::open(&path).and_then(DataReader::from_file)?;
-            self.0.best_magic(&mut file_reader).map(Magic::from)
-        })
-        .map_err(py_err)
+        py.detach(|| self.0.best_magic_file(path).map(Magic::from))
+            .map_err(py_err)
     }
 
     /// Detect all magic matches for an in-memory buffer.
@@ -299,9 +283,8 @@ impl MagicDb {
     ///     >>> results = db.all_magics_buffer(buffer)
     pub fn all_magics_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Vec<Magic>> {
         py.detach(|| {
-            let mut buf = DataReader::from_slice(input);
             self.0
-                .all_magics(&mut buf)
+                .all_magics_slice(input)
                 .map(|magics| magics.into_iter().map(Magic::from).collect())
         })
         .map_err(py_err)
@@ -323,9 +306,8 @@ impl MagicDb {
     ///     >>> results = db.all_magics_file("example.txt")
     pub fn all_magics_file(&self, py: Python<'_>, path: PathBuf) -> PyResult<Vec<Magic>> {
         py.detach(|| {
-            let mut file_reader = File::open(&path).and_then(DataReader::from_file)?;
             self.0
-                .all_magics(&mut file_reader)
+                .all_magics_file(path)
                 .map(|magics| magics.into_iter().map(Magic::from).collect())
         })
         .map_err(py_err)

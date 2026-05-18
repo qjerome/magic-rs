@@ -47,9 +47,7 @@ fn main() -> Result<(), pure_magic::Error> {
     let db = magic_db::load()?;
 
     // Use it to detect file types
-    let mut dr = File::open(current_exe()?)
-        .and_then(DataReader::from_file)?;
-    let magic = db.first_magic(&mut dr, None)?;
+    let magic = db.first_magic_file(current_exe()?)?;
     assert!(!magic.is_default());
 
     println!("File type: {}", magic.message());

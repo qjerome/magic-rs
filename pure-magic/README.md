@@ -44,10 +44,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Verification is not mandatory
     db.verify()?;
 
-    // Open a file and detect its type
-    let mut dr = File::open("src/lib.rs")
-        .and_then(DataReader::from_file)?;
-    let magic = db.first_magic(&mut dr, None)?;
+    // Detect file type
+    let magic = db.first_magic_file("src/lib.rs")?;
 
     println!(
         "File type: {} (MIME: {}, strength: {})",
@@ -70,12 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rust_magic = MagicSource::open("../magic-db/src/magdir/rust")?;
     db.load(rust_magic);
 
-    // Open a file and detect its type
-    let mut dr = File::open("src/lib.rs")
-        .and_then(DataReader::from_file)?;
-
     // Get all matching rules, sorted by strength
-    let magics = db.all_magics(&mut dr)?;
+    let magics = db.all_magics_file("src/lib.rs")?;
 
     // Must contain rust file magic and default text magic
     assert!(magics.len() > 1);
