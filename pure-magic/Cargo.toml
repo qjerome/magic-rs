@@ -1,6 +1,6 @@
 [package]
 name = "pure-magic"
-version = "0.2.4"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Safe Rust re-implementation of libmagic"
