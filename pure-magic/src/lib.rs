@@ -1118,17 +1118,18 @@ impl<'buf> Debug for ReadValue<'buf> {
 }
 
 impl DynDisplay for ReadValue<'_> {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+    fn dyn_fmt(&self, f: &mut dyf::Formatter<'_>) -> dyf::Result {
+        use std::fmt::Write;
         match self {
             Self::Float(_, s) => DynDisplay::dyn_fmt(s, f),
             Self::Scalar(_, s) => DynDisplay::dyn_fmt(s, f),
-            Self::Bytes(_, b) => Ok(format!("{b:?}")),
+            Self::Bytes(_, b) => Ok(write!(f, "{b:?}")?),
         }
     }
 }
 
 impl DynDisplay for &ReadValue<'_> {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+    fn dyn_fmt(&self, f: &mut dyf::Formatter<'_>) -> dyf::Result {
         // Dereference self to get the TestValue and call its fmt method
         DynDisplay::dyn_fmt(*self, f)
     }
@@ -1162,13 +1163,13 @@ enum MatchRes<'buf> {
 }
 
 impl DynDisplay for &MatchRes<'_> {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+    fn dyn_fmt(&self, f: &mut dyf::Formatter) -> dyf::Result {
         (*self).dyn_fmt(f)
     }
 }
 
 impl DynDisplay for MatchRes<'_> {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+    fn dyn_fmt(&self, f: &mut dyf::Formatter) -> dyf::Result {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
