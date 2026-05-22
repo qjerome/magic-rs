@@ -2197,16 +2197,6 @@ impl Match {
             ));
         }
 
-        if self.test.is_only_binary() && stream_kind.is_text() {
-            trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}",);
-            return Ok((false, None));
-        }
-
-        if self.test.is_only_text() && !stream_kind.is_text() {
-            trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}",);
-            return Ok((false, None));
-        }
-
         let Ok(Some(mut offset)) = self
             .offset_from_start(haystack, rule_base_offset, last_level_offset)
             .inspect_err(|e| debug!("source={source} line={line} failed at computing offset: {e}"))
@@ -2587,6 +2577,26 @@ impl EntryNode {
         depth: usize,
     ) -> Result<u64, Error> {
         let mut nmatch = 0u64;
+
+        // Mirror libmagic's softmagic.c::match(): the binary/text gate fires
+        // only at the top of a rule. Once a parent matches, its sub-tests run
+        // regardless of stream classification — otherwise nested scalar tests
+        // (e.g. the `>5 ubyte` qualifiers inside the RTF rule) are dropped on
+        // text inputs and the rule's message is never emitted.
+        if self.root {
+            let source = opt_source.unwrap_or("unknown");
+            let line = self.entry.line;
+
+            if self.entry.test.is_only_binary() && stream_kind.is_text() {
+                trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}");
+                return Ok(0);
+            }
+
+            if self.entry.test.is_only_text() && !stream_kind.is_text() {
+                trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}");
+                return Ok(0);
+            }
+        }
 
         let (ok, opt_match_res) = self.entry.matches(
             opt_source,
@@ -4961,5 +4971,41 @@ HelloWorld
     fn test_csv_ragged_columns_rejected() {
         let m = csv_magic(b"a,b,c\n1,2\n3,4,5\n");
         assert_ne!(m.mime_type(), "text/csv");
+    }
+
+    // Regression: nested scalar tests under a top-level `string` match used to
+    // be dropped on text inputs because the binary/text gate ran inside every
+    // recursion. The shape mirrors magdir/rtf:11–18 — the message lives on
+    // the level-2 ubyte child, so dropping the children silently strips the
+    // whole rule. Upstream libmagic's softmagic.c::match() applies the gate
+    // only at the outer match loop.
+    #[test]
+    fn test_string_parent_with_scalar_children_on_text_stream() {
+        assert_magic_match_text!(
+            r"
+0	string		{\\rtf
+>5	ubyte		!0xAB
+>>5	ubyte		!0x5C		Rich Text Format data
+!:mime	text/rtf
+!:ext	rtf
+            ",
+            b"{\\rtf1\\ansi\\ansicpg1252\nHello world}",
+            "Rich Text Format data"
+        );
+    }
+
+    // The level-1 `>5 ubyte !0xAB` qualifier exists upstream specifically to
+    // skip DROID fmt-355-signature-id-522.rtf. With \xAB at offset 5 the rule
+    // must NOT emit a message even now that children run on text streams.
+    #[test]
+    fn test_rtf_droid_skip_still_rejects() {
+        assert_magic_not_match_text!(
+            r"
+0	string		{\\rtf
+>5	ubyte		!0xAB
+>>5	ubyte		!0x5C		Rich Text Format data
+            ",
+            b"{\\rtf\xab......\n"
+        );
     }
 }
