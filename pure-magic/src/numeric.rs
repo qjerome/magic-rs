@@ -1,4 +1,4 @@
-use std::fmt;
+use std::fmt::{self, Write};
 
 use dyf::DynDisplay;
 use serde::{Deserialize, Serialize};
@@ -253,20 +253,22 @@ impl fmt::Display for Scalar {
 }
 
 impl DynDisplay for Scalar {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+    fn dyn_fmt(&self, f: &mut dyf::Formatter<'_>) -> dyf::Result {
         match self {
-            Scalar::date(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::ldate(value) => Ok(unix_local_time_to_string(*value as i64)),
+            Scalar::date(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
+            Scalar::ldate(value) => Ok(write!(f, "{}", unix_local_time_to_string(*value as i64))?),
             Scalar::quad(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::qwdate(value) => Ok(windows_filetime_to_string(*value)),
+            Scalar::qwdate(value) => Ok(write!(f, "{}", windows_filetime_to_string(*value))?),
             Scalar::belong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::bequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::beshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::bedate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::beldate(value) => Ok(unix_local_time_to_string(*value as i64)),
-            Scalar::beqdate(value) => Ok(unix_utc_time_to_string(*value)),
+            Scalar::bedate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
+            Scalar::beldate(value) => {
+                Ok(write!(f, "{}", unix_local_time_to_string(*value as i64))?)
+            }
+            Scalar::beqdate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value))?),
             Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::ledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
+            Scalar::ledate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
             Scalar::lelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::leshort(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::lequad(value) => DynDisplay::dyn_fmt(value, f),
@@ -282,26 +284,42 @@ impl DynDisplay for Scalar {
             Scalar::ulelong(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ulequad(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::uleshort(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::uledate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::ubeqdate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::medate(value) => Ok(unix_utc_time_to_string(*value as i64)),
-            Scalar::meldate(value) => Ok(unix_local_time_to_string(*value as i64)),
+            Scalar::uledate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
+            Scalar::ubeqdate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
+            Scalar::medate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
+            Scalar::meldate(value) => {
+                Ok(write!(f, "{}", unix_local_time_to_string(*value as i64))?)
+            }
             Scalar::melong(value) => DynDisplay::dyn_fmt(value, f),
-            Scalar::leqdate(value) => Ok(unix_utc_time_to_string(*value)),
-            Scalar::leldate(value) => Ok(unix_local_time_to_string(*value as i64)),
-            Scalar::leqldate(value) => Ok(unix_local_time_to_string(*value)),
-            Scalar::leqwdate(value) => Ok(windows_filetime_to_string(*value)),
-            Scalar::guid(value) => Ok(Uuid::from_u128(*value)
-                .hyphenated()
-                .to_string()
-                .to_uppercase()),
-            Scalar::offset(v) => Ok(format!("{v:#x}")),
-            Scalar::lemsdosdate(v) => Ok(parse_fat_date(*v)
-                .map(|fd| fd.to_string())
-                .unwrap_or("invalid msdos date".into())),
-            Scalar::lemsdostime(v) => Ok(parse_fat_time(*v)
-                .map(|ft| ft.to_string())
-                .unwrap_or("invalid msdos time".into())),
+            Scalar::leqdate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value))?),
+            Scalar::leldate(value) => {
+                Ok(write!(f, "{}", unix_local_time_to_string(*value as i64))?)
+            }
+            Scalar::leqldate(value) => Ok(write!(f, "{}", unix_local_time_to_string(*value))?),
+            Scalar::leqwdate(value) => Ok(write!(f, "{}", windows_filetime_to_string(*value))?),
+            Scalar::guid(value) => Ok(write!(
+                f,
+                "{}",
+                Uuid::from_u128(*value)
+                    .hyphenated()
+                    .to_string()
+                    .to_uppercase()
+            )?),
+            Scalar::offset(v) => Ok(write!(f, "{v:#x}")?),
+            Scalar::lemsdosdate(v) => Ok(write!(
+                f,
+                "{}",
+                parse_fat_date(*v)
+                    .map(|fd| fd.to_string())
+                    .unwrap_or("invalid msdos date".into())
+            )?),
+            Scalar::lemsdostime(v) => Ok(write!(
+                f,
+                "{}",
+                parse_fat_time(*v)
+                    .map(|ft| ft.to_string())
+                    .unwrap_or("invalid msdos time".into())
+            )?),
         }
     }
 }
@@ -423,7 +441,7 @@ impl fmt::Display for Float {
 }
 
 impl DynDisplay for Float {
-    fn dyn_fmt(&self, f: &dyf::FormatSpec) -> Result<String, dyf::Error> {
+    fn dyn_fmt(&self, f: &mut dyf::Formatter) -> dyf::Result {
         match self {
             Float::bedouble(v) => DynDisplay::dyn_fmt(v, f),
             Float::ledouble(v) => DynDisplay::dyn_fmt(v, f),
