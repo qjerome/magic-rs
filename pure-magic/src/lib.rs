@@ -3357,7 +3357,9 @@ impl MagicDb {
         };
 
         let buf = haystack.read_range(0..FILE_BYTES_MAX as u64)?;
-        let mut reader = csv::Reader::from_reader(io::Cursor::new(buf));
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(io::Cursor::new(buf));
         let mut records = reader.records();
 
         let Some(Ok(first)) = records.next() else {
@@ -3371,21 +3373,18 @@ impl MagicDb {
             return Ok(false);
         }
 
-        // we already parsed first line
         let mut n = 1;
-        for i in records.take(9) {
-            if let Ok(rec) = i {
-                if first.len() != rec.len() {
-                    return Ok(false);
-                }
-            } else {
+        for i in records {
+            let Ok(rec) = i else {
+                return Ok(false);
+            };
+            if first.len() != rec.len() {
                 return Ok(false);
             }
             n += 1;
         }
 
-        // we need at least 10 lines
-        if n != 10 {
+        if n < 2 {
             return Ok(false);
         }
 
@@ -4886,5 +4885,47 @@ HelloWorld
 
         db.load_bulk(rules.into_iter());
         assert!(matches!(db.verify(), Err(Error::Verify(_, _, _))));
+    }
+
+    // try_csv runs before any rule; pass a never-matching rule so the
+    // harness only exercises the hardcoded CSV detector.
+    fn csv_magic(content: &[u8]) -> Magic<'static> {
+        first_magic(
+            "0\tstring\t__NEVER_MATCH__\tnope\n",
+            content,
+            StreamKind::Text(TextEncoding::Utf8),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_csv_two_rows_two_cols() {
+        let m = csv_magic(b"a,b\n1,2\n");
+        assert_eq!(m.mime_type(), "text/csv");
+    }
+
+    #[test]
+    fn test_csv_short_consistent_rows() {
+        let m = csv_magic(b"a,b,c\n1,2,3\n4,5,6\n7,8,9\n10,11,12\n");
+        assert_eq!(m.mime_type(), "text/csv");
+    }
+
+    #[test]
+    fn test_csv_many_rows_still_detected() {
+        let body: &[u8] = b"a,b,c\n1,2,3\n4,5,6\n7,8,9\n10,11,12\n13,14,15\n16,17,18\n19,20,21\n22,23,24\n25,26,27\n28,29,30\n31,32,33\n";
+        let m = csv_magic(body);
+        assert_eq!(m.mime_type(), "text/csv");
+    }
+
+    #[test]
+    fn test_csv_single_field_rejected() {
+        let m = csv_magic(b"hello\nworld\nfoo\n");
+        assert_ne!(m.mime_type(), "text/csv");
+    }
+
+    #[test]
+    fn test_csv_ragged_columns_rejected() {
+        let m = csv_magic(b"a,b,c\n1,2\n3,4,5\n");
+        assert_ne!(m.mime_type(), "text/csv");
     }
 }
