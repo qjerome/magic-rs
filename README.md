@@ -29,14 +29,19 @@ This ecosystem provides a complete, memory-safe alternative to the traditional `
 **Procedural macro for embedding rule databases**
 
 - Compiles libmagic-compatible rules at build time
-- Use it to embeds a compiled database of magics in your binary
+- Use it to embed a compiled database of magics in your binary
 
 ### 3. [`magic-db`](magic-db/)
 **Precompiled libmagic-compatible rule database**
 
-- Contains [magic rules](magic-db/src/magdir/) 
+- Contains [magic rules](magic-db/src/magdir/)
 - Ready-to-use with zero configuration
 
+### 4. [`wiza`](wiza/)
+**Command-line file identification tool**
+
+- Built on top of `pure-magic` and `magic-db`
+- Drop-in companion to the `file` command
 
 ## 🚀 Getting Started: using [`wiza`](wiza/) CLI
 
@@ -58,7 +63,7 @@ $ wiza /bin/file
 This project has been built to provide the maximum level of compatibility
 with existing `libmagic` rules. So most of the rules you will find in
 the [`file`](https://github.com/file/file) repository will directly be 
-compatible with this project. You just need to be aware of the current f
+compatible with this project. You just need to be aware of the current
 few incompatibilities:
 
 - **Ternary printf format is not supported**:  The following extract from ELF
@@ -71,6 +76,22 @@ relying on ternary formatting.
 !:mime	application/x-${x?pie-executable:sharedlib}
 ```
 - **DER Rule Limitation**: The only major incompatibility is with ASN.1/DER encoding rules, which require specialized test operations not yet implemented in `pure-magic`. All other rule types work identically to libmagic.
+
+## ⚖️ Differences from Traditional libmagic
+
+Traditional `libmagic` (as shipped with the `file` command) goes beyond magic byte rules for certain formats: it parses ELF binaries at the structural level to extract metadata like the dynamic linker path, BuildID, etc.
+
+```
+# file output
+/bin/ls: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=c988ae960e91ea3f9f7b9cbbc2e3e4ffc0353796, for GNU/Linux 4.4.0, stripped
+```
+
+```
+# wiza output
+/bin/ls source:elf strength:436 mime:application/x-pie-executable magic:ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV)
+```
+
+`magic-rs` deliberately stops at what magic rules can express. Deep binary format parsing — walking ELF section headers, reading program headers, extracting build metadata — is outside the scope of this library. Supporting it for ELF would also raise an obvious question: why ELF and not COFF, Mach-O, PDF, PE, or any other structured format? There is no principled place to draw that line, so we draw it at the magic rule boundary instead.
 
 ## 📚 Documentation
 
