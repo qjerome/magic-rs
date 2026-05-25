@@ -573,6 +573,14 @@ mod tests {
     // === read_while_or_limit ===
 
     #[test]
+    fn test_read_while_or_limit_stream_pos_past_end() {
+        // stream_pos > buf.len() previously cause an OOB panic via unchecked slice indexing
+        let mut r = BufReader::from_slice(b"hello");
+        r.stream_pos = 10; // past end
+        assert_eq!(r.read_while_or_limit(|_| true, 100).unwrap(), b"");
+    }
+
+    #[test]
     fn test_read_while_or_limit_all_match() {
         let mut r = BufReader::from_slice(b"hello world");
         assert_eq!(r.read_while_or_limit(|b| b != b' ', 100).unwrap(), b"hello");
