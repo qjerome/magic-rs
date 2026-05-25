@@ -172,7 +172,11 @@ where
         let start = self.stream_pos;
         let mut end = 0;
 
-        for b in &self.buf.as_ref()[start as usize..] {
+        let Some(buf) = self.buf.as_ref().get(start as usize..) else {
+            return Ok(&[]);
+        };
+
+        for b in buf {
             if limit - end == 0 {
                 break;
             }
