@@ -1,6 +1,6 @@
 [package]
 name = "magic-db"
-version = "0.5.0"
+version = "0.5.2"
 edition.workspace = true
 rust-version.workspace = true
 description = "This crate provides a precompiled magic database for file type identification. It allows any program to perform magic file detection without the burden of compiling rules from source."
