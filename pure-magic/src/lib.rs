@@ -141,7 +141,7 @@
 //! - Inspired by the original `libmagic` (part of the `file` command).
 
 use dyf::{DynDisplay, FormatString, dformat};
-use flagset::{FlagSet, flags};
+use flaglet::flags;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use memchr::memchr;
 use pest::{Span, error::ErrorVariant};
@@ -659,15 +659,15 @@ impl<T> TestValue<T> {
     }
 }
 
-flags! {
-    enum ReMod: u8{
-        CaseInsensitive,
-        StartOffsetUpdate,
-        LineLimit,
-        ForceBin,
-        ForceText,
-        TrimMatch,
-    }
+#[flags(u8)]
+#[derive(Debug, Serialize, Deserialize)]
+enum ReMod {
+    CaseInsensitive = 1 << 0,
+    StartOffsetUpdate = 1 << 1,
+    LineLimit = 1 << 2,
+    ForceBin = 1 << 3,
+    ForceText = 1 << 4,
+    TrimMatch = 1 << 5,
 }
 
 fn serialize_regex<S>(re: &bytes::Regex, serializer: S) -> Result<S::Ok, S::Error>
@@ -693,8 +693,8 @@ struct RegexTest {
     )]
     re: bytes::Regex,
     length: Option<usize>,
-    mods: FlagSet<ReMod>,
-    str_mods: FlagSet<StringMod>,
+    mods: ReModFlags,
+    str_mods: StringModFlags,
     non_magic_len: usize,
     binary: bool,
     cmp_op: CmpOp,
@@ -788,17 +788,17 @@ impl From<RegexTest> for Test {
     }
 }
 
-flags! {
-    enum StringMod: u8{
-        ForceBin,
-        UpperInsensitive,
-        LowerInsensitive,
-        FullWordMatch,
-        Trim,
-        ForceText,
-        CompactWhitespace,
-        OptBlank,
-    }
+#[flags(u8)]
+#[derive(Debug, Serialize, Deserialize)]
+enum StringMod {
+    ForceBin = 1 << 0,
+    UpperInsensitive = 1 << 1,
+    LowerInsensitive = 1 << 2,
+    FullWordMatch = 1 << 3,
+    Trim = 1 << 4,
+    ForceText = 1 << 5,
+    CompactWhitespace = 1 << 6,
+    OptBlank = 1 << 7,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -806,7 +806,7 @@ struct StringTest {
     test_val: TestValue<Vec<u8>>,
     cmp_op: CmpOp,
     length: Option<usize>,
-    mods: FlagSet<StringMod>,
+    mods: StringModFlags,
     binary: bool,
 }
 
@@ -817,7 +817,7 @@ impl From<StringTest> for Test {
 }
 
 #[inline(always)]
-fn string_match(str: &[u8], mods: FlagSet<StringMod>, buf: &[u8]) -> (bool, usize) {
+fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
     let mut consumed = 0;
     // we can do a simple string comparison
     if mods.is_disjoint(
@@ -986,8 +986,8 @@ impl Deref for ByteVec {
 struct SearchTest {
     str: ByteVec,
     n_pos: Option<usize>,
-    str_mods: FlagSet<StringMod>,
-    re_mods: FlagSet<ReMod>,
+    str_mods: StringModFlags,
+    re_mods: ReModFlags,
     binary: bool,
     cmp_op: CmpOp,
 }
@@ -1254,13 +1254,11 @@ impl String16Test {
     }
 }
 
-flags! {
-    enum IndirectMod: u8{
-        Relative,
-    }
+#[flags(u8)]
+#[derive(Debug, Serialize, Deserialize)]
+enum IndirectMod {
+    Relative = 1 << 0,
 }
-
-type IndirectMods = FlagSet<IndirectMod>;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum PStringLen {
@@ -1339,7 +1337,7 @@ enum Test {
     Search(SearchTest),
     PString(PStringTest),
     Regex(RegexTest),
-    Indirect(FlagSet<IndirectMod>),
+    Indirect(IndirectModFlags),
     String16(String16Test),
     // FIXME: placeholder for strength computation
     #[allow(dead_code)]

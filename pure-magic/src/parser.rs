@@ -7,7 +7,6 @@ use std::{
 };
 
 use dyf::FormatString;
-use flagset::FlagSet;
 use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
 use regex::bytes;
@@ -16,10 +15,10 @@ use uuid::Uuid;
 
 use crate::{
     CmpOp, DependencyRule, DirOffset, Entry, EntryNode, Error, Flag, FloatTest, FloatTransform,
-    IndOffset, IndirectMod, IndirectMods, MagicRule, MagicSource, Match, Message, Name, Offset,
-    OffsetType, Op, PStringLen, PStringTest, ReMod, RegexTest, ScalarTest, ScalarTransform,
-    SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod, StringTest, Test,
-    TestValue, Use,
+    IndOffset, IndirectMod, IndirectModFlags, MagicRule, MagicSource, Match, Message, Name, Offset,
+    OffsetType, Op, PStringLen, PStringTest, ReMod, ReModFlags, RegexTest, ScalarTest,
+    ScalarTransform, SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod,
+    StringModFlags, StringTest, Test, TestValue, Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
     utils::nonmagic,
 };
@@ -720,7 +719,7 @@ impl StringTest {
         cmp_op: CmpOp,
     ) -> Result<Self, Error> {
         let mut length = None;
-        let mut mods = FlagSet::empty();
+        let mut mods = StringModFlags::empty();
         for p in pair.into_inner() {
             match p.as_rule() {
                 Rule::pos_number => length = Some(parse_pos_number(p)? as usize),
@@ -775,8 +774,8 @@ impl PStringTest {
 impl SearchTest {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let mut length = None;
-        let mut str_mods: FlagSet<StringMod> = FlagSet::empty();
-        let mut re_mods: FlagSet<ReMod> = FlagSet::empty();
+        let mut str_mods = StringModFlags::empty();
+        let mut re_mods = ReModFlags::empty();
         let mut cmp_op = CmpOp::Eq;
         let mut value = None;
         let mut binary = false;
@@ -834,8 +833,8 @@ impl SearchTest {
 impl RegexTest {
     fn from_pair(pair: Pair<'_, Rule>) -> Result<Self, Error> {
         let mut length = None;
-        let mut mods = FlagSet::empty();
-        let str_mods = FlagSet::empty();
+        let mut mods = ReModFlags::empty();
+        let str_mods = StringModFlags::empty();
         let mut cmp_op = CmpOp::Eq;
         let mut binary = false;
         let mut prep_re = None;
@@ -1175,7 +1174,7 @@ impl Test {
             Rule::clear_test => Self::Clear,
             Rule::default_test => Self::Default,
             Rule::indirect_test => {
-                let mut ind_mods = IndirectMods::empty();
+                let mut ind_mods = IndirectModFlags::empty();
                 for p in pair.into_inner() {
                     if p.as_rule() == Rule::indirect {
                         for p in p.into_inner() {
