@@ -666,6 +666,26 @@ mod tests {
     }
 
     #[test]
+    fn test_read_until_utf16_or_limit_stream_pos_past_end() {
+        // unchecked [start..] indexing previously panicked when stream_pos > buf.len()
+        let mut r = BufReader::from_slice(b"\x61\x00\x62\x00");
+        r.stream_pos = 10;
+        assert_eq!(r.read_until_utf16_or_limit(b"\x00\x00", 100).unwrap(), b"");
+    }
+
+    #[test]
+    fn test_read_until_utf16_or_limit_odd_nonzero_start() {
+        // (len - 1) was used as an absolute index; when start > 0 it would be
+        // less than start, causing a start > end panic
+        let mut r = BufReader::from_slice(b"\x61\x00\x62\x00\x63");
+        r.stream_pos = 2; // 3 bytes remaining (\x62\x00\x63) — odd, start != 0
+        assert_eq!(
+            r.read_until_utf16_or_limit(b"\x00\x00", 100).unwrap(),
+            b"\x62\x00"
+        );
+    }
+
+    #[test]
     fn test_read_until_utf16_or_limit_single_byte() {
         let mut r = BufReader::from_slice(b"\x61");
         assert_eq!(r.read_until_utf16_or_limit(b"\x00\x00", 100).unwrap(), b"");
