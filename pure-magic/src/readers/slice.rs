@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read, SeekFrom},
-    ops::Range,
+    ops::{Range, Sub},
 };
 
 use crate::readers::DataRead;
@@ -85,12 +85,15 @@ where
     ) -> Result<&[u8], io::Error> {
         let start = self.stream_pos;
         let mut end = 0;
-        let len = self.buf.as_ref()[start as usize..].len();
 
-        let buf = if len.is_multiple_of(2) {
-            &self.buf.as_ref()[start as usize..]
-        } else if len > 1 {
-            &self.buf.as_ref()[start as usize..(len - 1)]
+        let Some(buf) = self.buf.as_ref().get(start as usize..) else {
+            return Ok(&[]);
+        };
+
+        let buf = if buf.len().is_multiple_of(2) {
+            buf
+        } else if buf.len() > 1 {
+            &buf[..buf.len().sub(1)]
         } else {
             return Ok(&[]);
         };
@@ -663,6 +666,26 @@ mod tests {
             b"\x61\x00"
         );
         assert_eq!(r.stream_position(), 2);
+    }
+
+    #[test]
+    fn test_read_until_utf16_or_limit_stream_pos_past_end() {
+        // unchecked [start..] indexing previously panicked when stream_pos > buf.len()
+        let mut r = BufReader::from_slice(b"\x61\x00\x62\x00");
+        r.stream_pos = 10;
+        assert_eq!(r.read_until_utf16_or_limit(b"\x00\x00", 100).unwrap(), b"");
+    }
+
+    #[test]
+    fn test_read_until_utf16_or_limit_odd_nonzero_start() {
+        // (len - 1) was used as an absolute index; when start > 0 it would be
+        // less than start, causing a start > end panic
+        let mut r = BufReader::from_slice(b"\x61\x00\x62\x00\x63");
+        r.stream_pos = 2; // 3 bytes remaining (\x62\x00\x63) — odd, start != 0
+        assert_eq!(
+            r.read_until_utf16_or_limit(b"\x00\x00", 100).unwrap(),
+            b"\x62\x00"
+        );
     }
 
     #[test]
