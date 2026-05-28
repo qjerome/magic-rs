@@ -47,16 +47,18 @@ where
             range
         };
 
-        let range_len = range.end.saturating_sub(range.start);
-
         self.seek(SeekFrom::Start(range.end))
             .expect("buffer seek should never fail");
 
-        if range.start >= self.buf.as_ref().len() as u64 || range_len == 0 {
+        let Some(buf) = self
+            .buf
+            .as_ref()
+            .get(range.start as usize..range.end as usize)
+        else {
             return Ok(&[]);
-        }
+        };
 
-        Ok(&self.buf.as_ref()[range.start as usize..range.end as usize])
+        Ok(buf)
     }
 
     fn read_until_any_delim_or_limit(
