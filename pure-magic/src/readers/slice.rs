@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read, SeekFrom},
-    ops::Range,
+    ops::{Range, Sub},
 };
 
 use crate::readers::DataRead;
@@ -85,12 +85,15 @@ where
     ) -> Result<&[u8], io::Error> {
         let start = self.stream_pos;
         let mut end = 0;
-        let len = self.buf.as_ref()[start as usize..].len();
 
-        let buf = if len.is_multiple_of(2) {
-            &self.buf.as_ref()[start as usize..]
-        } else if len > 1 {
-            &self.buf.as_ref()[start as usize..(len - 1)]
+        let Some(buf) = self.buf.as_ref().get(start as usize..) else {
+            return Ok(&[]);
+        };
+
+        let buf = if buf.len().is_multiple_of(2) {
+            buf
+        } else if buf.len() > 1 {
+            &buf[..buf.len().sub(1)]
         } else {
             return Ok(&[]);
         };
