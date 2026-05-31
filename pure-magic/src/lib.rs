@@ -3373,17 +3373,20 @@ impl MagicDb {
             return Ok(false);
         }
 
+        // we already parsed first line
         let mut n = 1;
-        for i in records {
-            let Ok(rec) = i else {
-                return Ok(false);
-            };
-            if first.len() != rec.len() {
+        for i in records.take(9) {
+            if let Ok(rec) = i {
+                if first.len() != rec.len() {
+                    return Ok(false);
+                }
+            } else {
                 return Ok(false);
             }
             n += 1;
         }
 
+        // we need at least 2 lines (matches file command https://github.com/file/file/commit/b4e621d1d5b3e9d142dd23030cca09f6f198e18b)
         if n < 2 {
             return Ok(false);
         }
