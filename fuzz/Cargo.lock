@@ -426,7 +426,7 @@ checksum = "616ec5685824bcc94416c6d4a7a446eea774a31efd7062c8480ba6fd06d7a6e5"
 
 [[package]]
 name = "magic-db"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "magic-embed",
  "pure-magic",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "magic-embed"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "fs-walk",
  "proc-macro2",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "pure-magic"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "bincode",
  "chrono",
