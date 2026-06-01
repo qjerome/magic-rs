@@ -1,6 +1,6 @@
 [package]
 name = "magic-db"
-version = "0.5.2"
+version = "0.5.3"
 edition.workspace = true
 rust-version.workspace = true
 description = "This crate provides a precompiled magic database for file type identification. It allows any program to perform magic file detection without the burden of compiling rules from source."
@@ -12,8 +12,8 @@ keywords = ["database", "embedded", "libmagic", "magic", "mime"]
 all-features = true
 
 [dependencies]
-magic-embed = { path = "../magic-embed", version = "0.4.0" }
-pure-magic = { path = "../pure-magic", version = "0.3.0" }
+magic-embed = { path = "../magic-embed", version = "0.4.3" }
+pure-magic = { path = "../pure-magic", version = "0.3.3" }
 
 [features]
 global = []

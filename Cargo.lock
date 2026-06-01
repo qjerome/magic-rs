@@ -469,7 +469,7 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "magic-db"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "magic-embed",
  "pure-magic",
@@ -477,7 +477,7 @@ dependencies = [
 
 [[package]]
 name = "magic-embed"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "fs-walk",
  "proc-macro2",
@@ -616,7 +616,7 @@ dependencies = [
 
 [[package]]
 name = "pure-magic"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "bincode",
  "chrono",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "pure-magic-rs"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "magic-db",
  "pure-magic",
@@ -1229,7 +1229,7 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "wiza"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "clap",
