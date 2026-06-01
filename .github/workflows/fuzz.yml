@@ -1,0 +1,141 @@
+name: Fuzz Testing
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Nightly deep fuzz at 2am UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzz_duration:
+        description: "Fuzzing duration in seconds"
+        required: false
+        default: "300"
+
+env:
+  RUST_BACKTRACE: 1
+  # Smoke duration for PRs/pushes, override with input or nightly default
+  SMOKE_DURATION: 60
+  NIGHTLY_DURATION: 3600
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Smoke fuzz: runs on every PR and push
+  # Fast, catches obvious regressions quickly
+  # ─────────────────────────────────────────────
+  smoke-fuzz:
+    name: Smoke Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_buf_reader
+          - fuzz_lazy_cache
+          - fuzz_match_slice
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Restore corpus cache
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.ref }}
+
+      - name: Run smoke fuzz
+        run: |
+          DURATION=${{ github.event.inputs.fuzz_duration || env.SMOKE_DURATION }}
+          cargo +nightly fuzz run ${{ matrix.target }} \
+            -- \
+            -max_total_time=$DURATION \
+            -max_len=4096 \
+            -print_final_stats=1
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}-${{ github.sha }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 30
+
+      - name: Save corpus cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.ref }}
+
+  # ─────────────────────────────────────────────
+  # Deep fuzz: runs nightly on a schedule
+  # Longer exploration, updates persistent corpus
+  # ─────────────────────────────────────────────
+  deep-fuzz:
+    name: Deep Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_buf_reader
+          - fuzz_lazy_cache
+          - fuzz_match_slice
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Restore corpus cache
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.ref }}
+
+      - name: Run deep fuzz
+        run: |
+          cargo +nightly fuzz run ${{ matrix.target }} \
+            -- \
+            -max_total_time=${{ env.NIGHTLY_DURATION }} \
+            -max_len=65536 \
+            -print_final_stats=1
+
+      - name: Minimize corpus
+        if: always()
+        run: |
+          cargo +nightly fuzz cmin ${{ matrix.target }} 2>/dev/null || true
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-nightly-${{ matrix.target }}-${{ github.run_id }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 90
+
+      - name: Save updated corpus cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.ref }}

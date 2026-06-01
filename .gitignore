@@ -1,2 +1,6 @@
 target
 .vscode
+
+# cargo fuzz files we don't want to commit
+fuzz/corpus
+fuzz/artifacts

@@ -1,0 +1,38 @@
+[package]
+name = "pure-magic-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+# keep this crate out of the workspace
+[workspace]
+
+[[bin]]
+doc = false
+name = "fuzz_match_slice"
+path = "fuzz_targets/fuzz_match_slice.rs"
+test = false
+
+[[bin]]
+doc = false
+name = "fuzz_buf_reader"
+path = "fuzz_targets/fuzz_buf_reader.rs"
+test = false
+
+[[bin]]
+doc = false
+name = "fuzz_lazy_cache"
+path = "fuzz_targets/fuzz_lazy_cache.rs"
+test = false
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+magic-db = { path = "../magic-db/", features = ["global"] }
+pure-magic = { path = "../pure-magic/" }
+
+[profile.release]
+debug = true
