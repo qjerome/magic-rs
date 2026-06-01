@@ -11,8 +11,6 @@ use std::{
 use crate::readers::DataRead;
 use memmap2::MmapMut;
 
-const EMPTY_RANGE: &[u8] = &[];
-
 /// A lazy-loading cache reader with a multi-tiered caching strategy.
 ///
 /// Wraps a [`Read`] + [`Seek`] type and provides efficient cached reads using
@@ -38,6 +36,7 @@ where
     hot_head: Vec<u8>,
     hot_tail: Vec<u8>,
     warm: Option<MmapMut>,
+    cold_range: Range<u64>,
     cold: Vec<u8>,
     block_size: u64,
     warm_size: Option<u64>,
@@ -216,6 +215,7 @@ where
             hot_head: vec![],
             hot_tail: vec![],
             warm: None,
+            cold_range: 0..0,
             cold: vec![0; block_size as usize],
             loaded: vec![false; cache_cap as usize],
             block_size,
@@ -321,12 +321,11 @@ where
         let range_len = range.end.saturating_sub(range.start);
 
         if range.start > self.pos_end || range_len == 0 {
-            Ok(EMPTY_RANGE)
+            Ok(&[])
         } else if range.start < self.hot_head.len() as u64
             && range.end <= self.hot_head.len() as u64
         {
             self.seek(SeekFrom::Start(range.end))?;
-
             Ok(&self.hot_head[range.start as usize..range.end as usize])
         } else if range.start >= (self.pos_end.saturating_sub(self.hot_tail.len() as u64)) {
             let tail_base = self.pos_end.saturating_sub(self.hot_tail.len() as u64);
@@ -343,15 +342,28 @@ where
 
             Ok(&self.warm()?[range.start as usize..range.end as usize])
         } else {
-            if range_len > self.cold.len() as u64 {
-                self.cold.resize(range_len as usize, 0);
+            if self.cold_range.contains(&range.start)
+                && self.cold_range.contains(&range.end.saturating_sub(1))
+            {
+                let rel_start = range.start - self.cold_range.start;
+                self.seek(SeekFrom::Start(range.end))?;
+
+                Ok(&self.cold[rel_start as usize..(rel_start + range_len) as usize])
+            } else {
+                // we read one block in advance
+                let range_len_ext = range_len.saturating_add(self.block_size);
+                if range_len_ext > self.cold.len() as u64 {
+                    self.cold.resize(range_len_ext as usize, 0);
+                }
+
+                self.source.seek(SeekFrom::Start(range.start))?;
+                let n = self
+                    .source
+                    .read(self.cold[..range_len_ext as usize].as_mut())?;
+                self.seek(SeekFrom::Start(range.end))?;
+
+                Ok(&self.cold[..min(range_len as usize, n)])
             }
-
-            self.source.seek(SeekFrom::Start(range.start))?;
-            let n = self.source.read(self.cold[..range_len as usize].as_mut())?;
-            self.seek(SeekFrom::Start(range.end))?;
-
-            Ok(&self.cold[..n])
         }
     }
 
