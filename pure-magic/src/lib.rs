@@ -3047,24 +3047,49 @@ impl<'m> Magic<'m> {
     /// # Returns
     ///
     /// * `String` - The formatted message
+    ///
+    /// # Note
+    ///
+    /// The returned string only ever contains printable ASCII (graphic
+    /// characters and spaces). Any other byte, including non-ASCII UTF-8
+    /// sequences, control characters and Unicode format/bidi characters, is
+    /// escaped as `\NNN` (octal), the same way libmagic does. This makes the
+    /// output safe to print directly to a terminal.
     #[inline(always)]
     pub fn message(&self) -> String {
         let mut out = String::new();
+
+        macro_rules! push_str {
+            ($input: expr) => {{
+                for c in $input.as_bytes() {
+                    match c {
+                        b'\r' => out.push_str("\\r"),
+                        b'\t' => out.push_str("\\t"),
+                        b'\n' => out.push_str("\\n"),
+                        b' ' => out.push(' '),
+                        c if c.is_ascii_graphic() => out.push(*c as char),
+                        // the way libmagic handles non printable bytes
+                        _ => out.push_str(&format!("\\{:03o}", *c as u8)),
+                    }
+                }
+            }};
+        }
+
         for (i, m) in self.message.iter().enumerate() {
             if let Some(s) = m.strip_prefix(r#"\b"#) {
-                out.push_str(s);
+                push_str!(s);
             } else {
                 // don't put space on first string
                 if i > 0 {
                     out.push(' ');
                 }
-                out.push_str(m);
+                push_str!(m);
             }
         }
         out
     }
 
-    /// Returns an iterator over the individual parts of the magic message
+    /// Returns an iterator over the individual raw parts of the magic message
     ///
     /// A magic message is typically composed of multiple parts, each appended
     /// during successful magic tests. This method provides an efficient way to
@@ -3074,6 +3099,14 @@ impl<'m> Magic<'m> {
     /// # Returns
     ///
     /// * `impl Iterator<Item = &str>` - An iterator yielding string slices of each message part
+    ///
+    /// # Note
+    ///
+    /// Unlike [`Magic::message`], the returned parts are **not** sanitized:
+    /// they may contain raw control characters (e.g. `ESC`) extracted from
+    /// the scanned data. Do not print them directly to a terminal, as this
+    /// could result in terminal escape sequence injection. This method is
+    /// intended for programmatic inspection only.
     #[inline]
     pub fn message_parts(&self) -> impl Iterator<Item = &str> {
         self.message.iter().map(|p| p.as_ref())
