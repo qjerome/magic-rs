@@ -257,3 +257,26 @@
 
 # extracted APK Signing Block
 -16	string	APK\x20Sig\x20Block\x2042	APK Signing Block
+
+# Android Binary XML (ABX)
+# Stream-based binary XML used for Android system files (packages.xml, etc.)
+# Reference: https://cs.android.com/android/platform/superproject/+/main:frameworks/\
+#            base/core/java/com/android/internal/util/BinaryXmlSerializer.java
+# +--------+--------+--------+---------+----------+---------------+
+# | byte 0 | byte 1 | byte 2 |  byte 3 |  byte 4  |  byte 5 ...   |
+# +--------+--------+--------+---------+----------+---------------+
+# |  0x41  |  0x42  |  0x58  |  0xNN   |   0x10   |               |
+# |  'A'   |  'B'   |  'X'   | version |  START   |  event stream |
+# +--------+--------+--------+---------+ DOCUMENT |               |
+# |       magic "ABX"        |  (u8)   |  token   |               |
+# +--------------------------+---------+----------+---------------+
+
+0       string      ABX             Android Binary XML (ABX)
+!:mime  application/vnd.android.abx
+# Android uses .xml extension
+!:ext   abx/xml
+>3      ubyte       x               \b v%u
+# This corresponds to (START_DOCUMENT | TYPE_NULL)
+>4      ubyte       0x10            \b, valid start document
+# This corresponds to (END_DOCUMENT | TYPE_NULL)
+>-1     ubyte       0x11            \b, valid end document
