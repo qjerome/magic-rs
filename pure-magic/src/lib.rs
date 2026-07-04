@@ -2913,11 +2913,15 @@ impl MagicSource {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 struct ContinuationLevel(u8);
 
+/// The encoding encountered for a given `StreamKind::Text`
 // FIXME: magic handles many more text encodings
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum TextEncoding {
+pub enum TextEncoding {
+    /// ASCII
     Ascii,
+    /// UTF-8
     Utf8,
+    /// Unspecified
     Unknown,
 }
 
@@ -2934,7 +2938,9 @@ impl TextEncoding {
 /// Represents the kind of encountered data
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StreamKind {
+    /// A binary stream
     Binary,
+    /// A text stream with encoding information
     Text(TextEncoding),
 }
 
