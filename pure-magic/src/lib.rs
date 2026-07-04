@@ -2932,14 +2932,18 @@ impl TextEncoding {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum StreamKind {
+pub enum StreamKind {
     Binary,
     Text(TextEncoding),
 }
 
 impl StreamKind {
-    const fn is_text(&self) -> bool {
+    pub const fn is_text(&self) -> bool {
         matches!(self, StreamKind::Text(_))
+    }
+
+    pub const fn is_binary(&self) -> bool {
+        matches!(self, StreamKind::Binary)
     }
 }
 
@@ -3001,6 +3005,11 @@ impl<'m> Magic<'m> {
     #[inline(always)]
     fn set_stream_kind(&mut self, stream_kind: StreamKind) {
         self.stream_kind = Some(stream_kind)
+    }
+
+    #[inline(always)]
+    pub fn stream_kind(&self) -> Option<StreamKind> {
+        self.stream_kind
     }
 
     #[inline(always)]
