@@ -2931,6 +2931,7 @@ impl TextEncoding {
     }
 }
 
+/// Represents the kind of encountered data
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StreamKind {
     Binary,
@@ -2938,10 +2939,20 @@ pub enum StreamKind {
 }
 
 impl StreamKind {
+    /// Returns whether this is a text stream
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if this is a StreamKind::Text
     pub const fn is_text(&self) -> bool {
         matches!(self, StreamKind::Text(_))
     }
 
+    /// Returns whether this is a binary stream
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if this is a StreamKind::Binary
     pub const fn is_binary(&self) -> bool {
         matches!(self, StreamKind::Binary)
     }
@@ -3007,6 +3018,12 @@ impl<'m> Magic<'m> {
         self.stream_kind = Some(stream_kind)
     }
 
+    /// Gets the detected `StreamKind` describing the type of detected data,
+    /// or `None` if it was not determined.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<StreamKind>` - The detected kind or `None`
     #[inline(always)]
     pub fn stream_kind(&self) -> Option<StreamKind> {
         self.stream_kind
