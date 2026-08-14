@@ -1790,11 +1790,11 @@ impl Test {
             Self::String(t) => Some(t.cmp_op),
             Self::Scalar(s) => Some(s.cmp_op),
             Self::Float(t) => Some(t.cmp_op),
+            Self::Search(t) => Some(t.cmp_op),
+            Self::Regex(t) => Some(t.cmp_op),
             Self::Name(_)
             | Self::Use(_, _)
-            | Self::Search(_)
             | Self::PString(_)
-            | Self::Regex(_)
             | Self::Clear
             | Self::Default
             | Self::Indirect(_)
@@ -2346,49 +2346,64 @@ impl Match {
                 // NOTE: we may have a way to optimize here. In case we do a Any
                 // test and we don't use the value to format the message, we don't
                 // need to read the value.
-                if let Ok(opt_test_value) = self
-                    .test
-                    .read_test_value(haystack, switch_endianness)
-                    .inspect_err(|e| {
-                        debug!("source={source} line={line} error while reading test value @{offset}: {e}",)
-                    })
-                {
-                    if let Some(v) = trace_msg
-                        .as_mut() { v.push(format!("test={}", self.test)) }
+                match self.test.read_test_value(haystack, switch_endianness) {
+                    Err(e) => {
+                        debug!(
+                            "source={source} line={line} error while reading test value @{offset}: {e}",
+                        );
 
-                    if let Some(v) = trace_msg.as_mut(){
-                        let drv = match opt_test_value.as_ref(){
-                            Some(r) => format!("{r:?}"),
-                            None =>String::new(),
-                        };
-                        v.push(format!("read_in_stream={drv}"))
-                    }
-
-                    let match_res =
-                        opt_test_value.and_then(|tv| self.test.match_value(&tv, stream_kind));
-
-                    if let Some(v) = trace_msg.as_mut() { v.push(format!(
-                            "message=\"{}\" match={}",
-                            self.message
-                                .as_ref()
-                                .map(|fs| fs.to_string_lossy())
-                                .unwrap_or_default(),
-                            match_res.is_some()
-                        )) }
-
-                    // trace message
-                    if enabled!(Level::DEBUG) && !enabled!(Level::TRACE) && match_res.is_some() {
-                        if let Some(m) = trace_msg{
-                            debug!("{}", m.join(" "));
+                        // libmagic mget(): unreadable data satisfies a `!=` test.
+                        if self.test.cmp_op().is_some_and(|op| op.is_neq()) {
+                            trace!(
+                                "source={source} line={line} unreadable data treated as match for negated test",
+                            );
+                            state.set_continuation_level(self.continuation_level());
+                            return Ok((true, None));
                         }
-                    } else if enabled!(Level::TRACE)
-                        && let Some(m) = trace_msg{
+                    }
+                    Ok(opt_test_value) => {
+                        if let Some(v) = trace_msg.as_mut() {
+                            v.push(format!("test={}", self.test))
+                        }
+
+                        if let Some(v) = trace_msg.as_mut() {
+                            let drv = match opt_test_value.as_ref() {
+                                Some(r) => format!("{r:?}"),
+                                None => String::new(),
+                            };
+                            v.push(format!("read_in_stream={drv}"))
+                        }
+
+                        let match_res =
+                            opt_test_value.and_then(|tv| self.test.match_value(&tv, stream_kind));
+
+                        if let Some(v) = trace_msg.as_mut() {
+                            v.push(format!(
+                                "message=\"{}\" match={}",
+                                self.message
+                                    .as_ref()
+                                    .map(|fs| fs.to_string_lossy())
+                                    .unwrap_or_default(),
+                                match_res.is_some()
+                            ))
+                        }
+
+                        // trace message
+                        if enabled!(Level::DEBUG) && !enabled!(Level::TRACE) && match_res.is_some()
+                        {
+                            if let Some(m) = trace_msg {
+                                debug!("{}", m.join(" "));
+                            }
+                        } else if enabled!(Level::TRACE)
+                            && let Some(m) = trace_msg
+                        {
                             trace!("{}", m.join(" "));
                         }
 
-                    if let Some(mr) = match_res {
-                        state.set_continuation_level(self.continuation_level());
-                        return Ok((true, Some(mr)));
+                        if let Some(mr) = match_res {
+                            state.set_continuation_level(self.continuation_level());
+                            return Ok((true, Some(mr)));
+                        }
                     }
                 }
 
@@ -5052,5 +5067,39 @@ HelloWorld
             ",
             b"{\\rtf\xab......\n"
         );
+    }
+
+    // Regression: a `!=` test against out-of-bounds data is considered true.
+    #[test]
+    fn test_neq_test_on_unreadable_offset_matches() {
+        let mut content = vec![0u8; 64];
+        content[0] = b'M';
+        content[1] = b'Z';
+        // offset 0x3c holds a 4-byte LE offset pointing far past EOF
+        content[0x3c..0x40].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+
+        let m = first_magic(
+            "0\tstring\tMZ\n>(0x3c.l)\tstring\t!PE\\0\\0\tMS-DOS executable\n",
+            &content,
+            StreamKind::Binary,
+        )
+        .unwrap();
+        assert_eq!(m.message(), "MS-DOS executable");
+    }
+
+    #[test]
+    fn test_eq_test_on_unreadable_offset_does_not_match() {
+        let mut content = vec![0u8; 64];
+        content[0] = b'M';
+        content[1] = b'Z';
+        content[0x3c..0x40].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+
+        let m = first_magic(
+            "0\tstring\tMZ\n>(0x3c.l)\tstring\tPE\\0\\0\tPE executable\n",
+            &content,
+            StreamKind::Binary,
+        )
+        .unwrap();
+        assert_eq!(m.message(), "data");
     }
 }
