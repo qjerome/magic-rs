@@ -2245,10 +2245,6 @@ impl Match {
                     Error::localized(source, line, Error::MissingRule(rule_name.clone())),
                 )?;
 
-                // we push the message here otherwise we push message in depth first
-                if let Some(msg) = self.message.as_ref() {
-                    magic.push_message(msg.to_string_lossy());
-                }
 
                 let new_buf_base_off = if self.offset.is_indirect() {
                     Some(offset)
@@ -2289,10 +2285,8 @@ impl Match {
                     None
                 };
 
-                // we push the message here otherwise we push message in depth first
-                if let Some(msg) = self.message.as_ref() {
-                    magic.push_message(msg.to_string_lossy());
-                }
+                // Own message prints only if the scan matches, spliced before its output.
+                let msg_checkpoint = magic.message.len();
 
                 let mut nmatch = 0u64;
                 for r in db.rules.iter() {
@@ -2309,6 +2303,16 @@ impl Match {
 
                     if nmatch > 0 {
                         break;
+                    }
+                }
+
+                if nmatch > 0
+                    && let Some(msg) = self.message.as_ref()
+                {
+                    let msg = msg.to_string_lossy();
+                    if !msg.is_empty() {
+                        debug!("pushing message: msg={msg} len={}", msg.len());
+                        magic.message.insert(msg_checkpoint, msg);
                     }
                 }
 
@@ -4301,6 +4305,10 @@ HelloWorld
         );
     }
 
+    // A `use` line's own message is never printed by libmagic (softmagic.c's
+    // FILE_USE case never calls file_printf on its own `desc`) -- only the
+    // named rule's own text (here the `name` line's "then second match")
+    // shows up, confirmed against real `file`.
     #[test]
     fn test_use_with_message() {
         assert_magic_match_bin!(
@@ -4312,8 +4320,28 @@ HelloWorld
 >0 string MZ
 "#,
             b"MZ\0",
-            "first match then second match"
+            "then second match"
         );
+    }
+
+    // An `indirect` line's own message only prints if the recursive scan at
+    // its target offset actually finds something (softmagic.c's
+    // FILE_INDIRECT case prints `desc` conditionally, then the nested
+    // match's own output), and in that order: own text first, nested second.
+    #[test]
+    fn test_indirect_message_only_on_nested_match() {
+        let rule = r#"
+0 string AB
+>2 indirect x contains:
+
+0 string CD nested match
+"#;
+
+        let m = first_magic(rule, b"ABCD", StreamKind::Binary).unwrap();
+        assert_eq!(m.message(), "contains: nested match");
+
+        let m = first_magic(rule, b"ABXX", StreamKind::Binary).unwrap();
+        assert!(m.is_default());
     }
 
     #[test]
