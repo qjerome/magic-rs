@@ -2913,11 +2913,15 @@ impl MagicSource {
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 struct ContinuationLevel(u8);
 
+/// The encoding encountered for a given `StreamKind::Text`
 // FIXME: magic handles many more text encodings
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum TextEncoding {
+pub enum TextEncoding {
+    /// ASCII
     Ascii,
+    /// UTF-8
     Utf8,
+    /// Unspecified
     Unknown,
 }
 
@@ -2931,15 +2935,34 @@ impl TextEncoding {
     }
 }
 
+/// Represents the kind of encountered data
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum StreamKind {
+pub enum StreamKind {
+    /// A binary stream
     Binary,
+    /// A text stream with encoding information
     Text(TextEncoding),
 }
 
 impl StreamKind {
-    const fn is_text(&self) -> bool {
+    /// Returns whether this is a text stream
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if this is a StreamKind::Text
+    #[inline(always)]
+    pub const fn is_text(&self) -> bool {
         matches!(self, StreamKind::Text(_))
+    }
+
+    /// Returns whether this is a binary stream
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if this is a StreamKind::Binary
+    #[inline(always)]
+    pub const fn is_binary(&self) -> bool {
+        matches!(self, StreamKind::Binary)
     }
 }
 
@@ -3001,6 +3024,17 @@ impl<'m> Magic<'m> {
     #[inline(always)]
     fn set_stream_kind(&mut self, stream_kind: StreamKind) {
         self.stream_kind = Some(stream_kind)
+    }
+
+    /// Gets the detected `StreamKind` describing the type of detected data,
+    /// or `None` if it was not determined.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<StreamKind>` - The detected kind or `None`
+    #[inline(always)]
+    pub fn stream_kind(&self) -> Option<StreamKind> {
+        self.stream_kind
     }
 
     #[inline(always)]
@@ -4893,6 +4927,24 @@ HelloWorld
         .unwrap();
 
         assert!(m.message_parts().any(|p| p.eq_ignore_ascii_case("python")))
+    }
+
+    #[test]
+    fn test_magic_stream_kind_reflects_detection() {
+        let mut db = MagicDb::new();
+        db.load(parse_assert!("0\tsearch\t__NEVER_MATCH__\tnope\n"));
+
+        let mut ascii = BufReader::from_slice(b"hello world");
+        let m = db.best_magic(&mut ascii).unwrap();
+        assert_eq!(m.stream_kind(), Some(StreamKind::Text(TextEncoding::Ascii)));
+
+        let mut utf8 = BufReader::from_slice("héllo wörld".as_bytes());
+        let m = db.best_magic(&mut utf8).unwrap();
+        assert_eq!(m.stream_kind(), Some(StreamKind::Text(TextEncoding::Utf8)));
+
+        let mut binary = BufReader::from_slice(&[0x00u8, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x00, 0x00]);
+        let m = db.best_magic(&mut binary).unwrap();
+        assert_eq!(m.stream_kind(), Some(StreamKind::Binary));
     }
 
     #[test]
