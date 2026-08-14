@@ -2950,6 +2950,7 @@ impl StreamKind {
     /// # Returns
     ///
     /// * `bool` - True if this is a StreamKind::Text
+    #[inline(always)]
     pub const fn is_text(&self) -> bool {
         matches!(self, StreamKind::Text(_))
     }
@@ -2959,6 +2960,7 @@ impl StreamKind {
     /// # Returns
     ///
     /// * `bool` - True if this is a StreamKind::Binary
+    #[inline(always)]
     pub const fn is_binary(&self) -> bool {
         matches!(self, StreamKind::Binary)
     }
