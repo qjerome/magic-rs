@@ -4930,6 +4930,24 @@ HelloWorld
     }
 
     #[test]
+    fn test_magic_stream_kind_reflects_detection() {
+        let mut db = MagicDb::new();
+        db.load(parse_assert!("0\tsearch\t__NEVER_MATCH__\tnope\n"));
+
+        let mut ascii = BufReader::from_slice(b"hello world");
+        let m = db.best_magic(&mut ascii).unwrap();
+        assert_eq!(m.stream_kind(), Some(StreamKind::Text(TextEncoding::Ascii)));
+
+        let mut utf8 = BufReader::from_slice("héllo wörld".as_bytes());
+        let m = db.best_magic(&mut utf8).unwrap();
+        assert_eq!(m.stream_kind(), Some(StreamKind::Text(TextEncoding::Utf8)));
+
+        let mut binary = BufReader::from_slice(&[0x00u8, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x00, 0x00]);
+        let m = db.best_magic(&mut binary).unwrap();
+        assert_eq!(m.stream_kind(), Some(StreamKind::Binary));
+    }
+
+    #[test]
     fn test_load_bulk() {
         let mut db = MagicDb::new();
 
