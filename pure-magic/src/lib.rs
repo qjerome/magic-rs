@@ -2580,11 +2580,8 @@ impl EntryNode {
         let source = opt_source.unwrap_or("unknown");
         let line = self.entry.line;
 
-        // Mirror libmagic's softmagic.c::match(): the binary/text gate fires
-        // only at the top of a rule. Once a parent matches, its sub-tests run
-        // regardless of stream classification — otherwise nested scalar tests
-        // (e.g. the `>5 ubyte` qualifiers inside the RTF rule) are dropped on
-        // text inputs and the rule's message is never emitted.
+        // Mirrors libmagic's softmagic.c::match(): the binary/text gate only
+        // applies to top-level entries, not their sub-tests.
         if self.root {
             if self.entry.test.is_only_binary() && stream_kind.is_text() {
                 trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}");
