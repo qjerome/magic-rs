@@ -110,6 +110,8 @@ fn py_err(from: pure_magic::Error) -> PyErr {
 ///     creator_code (Optional[str]): The creator code, if available.
 ///     strength (int): The strength of the detection.
 ///     extensions (List[str]): Possible file extensions for the detected type.
+///     stream_kind (Optional[str]): The kind of data that was scanned, if
+///         determined.
 #[pyclass]
 pub struct Magic {
     #[pyo3(get)]
@@ -124,6 +126,8 @@ pub struct Magic {
     strength: u64,
     #[pyo3(get)]
     extensions: Vec<String>,
+    #[pyo3(get)]
+    stream_kind: Option<&'static str>,
 }
 
 impl From<pure_magic::Magic<'_>> for Magic {
@@ -135,6 +139,7 @@ impl From<pure_magic::Magic<'_>> for Magic {
             creator_code: value.creator_code().map(|c| c.to_string()),
             strength: value.strength(),
             extensions: value.extensions().iter().map(|e| e.to_string()).collect(),
+            stream_kind: value.stream_kind().map(|sk| sk.as_str()),
         }
     }
 }
@@ -145,7 +150,7 @@ impl Magic {
     ///
     /// Returns:
     ///     dict: A dictionary with keys `source`, `message`, `mime_type`,
-    ///           `creator_code`, `strength`, and `extensions`.
+    ///           `creator_code`, `strength`, `extensions`, and `stream_kind`.
     ///
     /// Example:
     ///     >>> magic_dict = magic_instance.to_dict()
@@ -158,6 +163,7 @@ impl Magic {
         m.set_item("creator_code", self.creator_code.clone())?;
         m.set_item("strength", self.strength)?;
         m.set_item("extensions", self.extensions.clone())?;
+        m.set_item("stream_kind", self.stream_kind)?;
         Ok(m)
     }
 }
