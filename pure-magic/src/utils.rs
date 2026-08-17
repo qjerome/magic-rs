@@ -202,9 +202,24 @@ const fn utf8_char_width(b: u8) -> usize {
     UTF8_CHAR_WIDTH[b as usize] as usize
 }
 
+/// Mirrors libmagic's `text_chars` table (encoding.c): only these ASCII-range
+/// bytes are considered text-like. A single other byte in 0x00-0x7F (most
+/// notably NUL) makes libmagic treat the whole buffer as binary, even if
+/// every byte is otherwise valid ASCII/UTF-8 (looks_ascii/file_looks_utf8).
+const ASCII_TEXT_CHAR: [bool; 128] = {
+    let mut t = [false; 128];
+    let mut i = 0;
+    while i < 128 {
+        t[i] = matches!(i as u8, 0x07..=0x0d | 0x1a | 0x1b | 0x20..=0x7e);
+        i += 1;
+    }
+    t
+};
+
 /// This is a pale, modified and simplified copy of the Rust std method
 /// to do UTF8 validation. It has been changed to return a boolean flag
-/// if buffer is full of ascii characters.
+/// if buffer is full of ascii characters, and to reject (as if invalid)
+/// any ASCII-range byte outside libmagic's `text_chars` whitelist.
 #[inline(always)]
 pub(crate) fn run_utf8_validation(v: &[u8]) -> Result<bool, Utf8Error> {
     let mut index = 0;
@@ -289,6 +304,9 @@ pub(crate) fn run_utf8_validation(v: &[u8]) -> Result<bool, Utf8Error> {
             index += 1;
             ascii_only = false;
         } else {
+            if !ASCII_TEXT_CHAR[first as usize] {
+                err!(None)
+            }
             index += 1;
         }
     }

@@ -2245,7 +2245,6 @@ impl Match {
                     Error::localized(source, line, Error::MissingRule(rule_name.clone())),
                 )?;
 
-
                 let new_buf_base_off = if self.offset.is_indirect() {
                     Some(offset)
                 } else {
@@ -4988,6 +4987,20 @@ HelloWorld
         let mut binary = BufReader::from_slice(&[0x00u8, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x00, 0x00]);
         let m = db.best_magic(&mut binary).unwrap();
         assert_eq!(m.stream_kind(), Some(StreamKind::Binary));
+    }
+
+    // Regression: a buffer that's valid ASCII/UTF-8 byte-for-byte (every byte
+    // < 0x80) can still contain control bytes (e.g. embedded NUL, as in a
+    // fuzzed PE header) that libmagic's text_chars whitelist rejects
+    // (encoding.c: looks_ascii/file_looks_utf8), making it treat the buffer
+    // as binary rather than text. Confirmed against real `file
+    // --mime-encoding`.
+    #[test]
+    fn test_stream_kind_rejects_ascii_with_forbidden_control_bytes() {
+        assert_eq!(
+            guess_stream_kind(b"MZ\x00\x00\x00\x00this is otherwise all printable ASCII"),
+            StreamKind::Binary
+        );
     }
 
     #[test]
