@@ -60,7 +60,7 @@ jobs:
           set -e
           python3 -m venv .venv
           source .venv/bin/activate
-          pip install pure-magic-rs --find-links dist --force-reinstall
+          pip install pure-magic-rs --no-index --find-links dist --force-reinstall
           pip install pytest
           cd python && pytest
       - name: pytest
