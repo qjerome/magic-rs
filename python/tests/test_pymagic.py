@@ -85,6 +85,18 @@ def test_to_dict(magic_db):
     assert d["message"] == result.message
     assert d["mime_type"] == result.mime_type
     assert d["extensions"] == result.extensions
+    assert d["stream_kind"] == result.stream_kind
+
+
+def test_stream_kind_binary(magic_db):
+    png_buffer = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+    result = magic_db.first_magic_buffer(png_buffer, None)
+    assert result.stream_kind == "binary"
+
+
+def test_stream_kind_text(magic_db):
+    result = magic_db.best_magic_buffer(b"hello world\n")
+    assert result.stream_kind == "text/ascii"
 
 
 def test_file_not_found(magic_db):

@@ -2982,6 +2982,22 @@ impl StreamKind {
     pub const fn is_binary(&self) -> bool {
         matches!(self, StreamKind::Binary)
     }
+
+    /// Returns a stable, machine-readable string representation.
+    ///
+    /// # Returns
+    ///
+    /// * `&'static str` - One of `"binary"`, `"text/ascii"`,
+    ///   `"text/utf-8"` or `"text/unknown"`
+    #[inline(always)]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            StreamKind::Binary => "binary",
+            StreamKind::Text(TextEncoding::Ascii) => "text/ascii",
+            StreamKind::Text(TextEncoding::Utf8) => "text/utf-8",
+            StreamKind::Text(TextEncoding::Unknown) => "text/unknown",
+        }
+    }
 }
 
 #[derive(Debug)]

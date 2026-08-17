@@ -10,6 +10,8 @@ class Magic:
         creator_code (Optional[str]): The creator code, if available.
         strength (int): The strength of the detection.
         extensions (List[str]): Possible file extensions for the detected type.
+        stream_kind (Optional[str]): The kind of data that was scanned, if
+            determined.
     """
 
     @property
@@ -24,12 +26,14 @@ class Magic:
     def strength(self) -> int: ...
     @property
     def extensions(self) -> List[str]: ...
+    @property
+    def stream_kind(self) -> Optional[str]: ...
     def to_dict(self) -> Dict[str, Any]:
         """Convert this `Magic` instance into a Python dictionary.
 
         Returns:
             dict: A dictionary with keys `source`, `message`, `mime_type`,
-                  `creator_code`, `strength`, and `extensions`.
+                  `creator_code`, `strength`, `extensions`, and `stream_kind`.
 
         Example:
             >>> magic_dict = magic_instance.to_dict()
