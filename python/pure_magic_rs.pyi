@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 class Magic:
     """Represents a detected file type's "magic" information.
@@ -15,20 +15,20 @@ class Magic:
     """
 
     @property
-    def source(self) -> Optional[str]: ...
+    def source(self) -> str | None: ...
     @property
     def message(self) -> str: ...
     @property
     def mime_type(self) -> str: ...
     @property
-    def creator_code(self) -> Optional[str]: ...
+    def creator_code(self) -> str | None: ...
     @property
     def strength(self) -> int: ...
     @property
-    def extensions(self) -> List[str]: ...
+    def extensions(self) -> list[str]: ...
     @property
-    def stream_kind(self) -> Optional[str]: ...
-    def to_dict(self) -> Dict[str, Any]:
+    def stream_kind(self) -> str | None: ...
+    def to_dict(self) -> dict[str, Any]:
         """Convert this `Magic` instance into a Python dictionary.
 
         Returns:
@@ -39,7 +39,6 @@ class Magic:
             >>> magic_dict = magic_instance.to_dict()
             >>> print(magic_dict["mime_type"])
         """
-        ...
 
 class MagicDb:
     """A file type detection database using magic numbers.
@@ -54,7 +53,7 @@ class MagicDb:
     """
 
     def __init__(self) -> None: ...
-    def first_magic_buffer(self, input: bytes, extension: Optional[str] = ...) -> Magic:
+    def first_magic_buffer(self, input: bytes, extension: str | None = ...) -> Magic:
         """Detect the first magic match for an in-memory buffer.
 
         Args:
@@ -72,7 +71,6 @@ class MagicDb:
             ...     buffer = f.read()
             >>> result = db.first_magic_buffer(buffer, "txt")
         """
-        ...
 
     def first_magic_file(self, path: str) -> Magic:
         """Detect the first magic match for a file.
@@ -90,7 +88,6 @@ class MagicDb:
         Example:
             >>> result = db.first_magic_file("example.txt")
         """
-        ...
 
     def best_magic_buffer(self, input: bytes) -> Magic:
         """Detect the best magic match for an in-memory buffer.
@@ -109,7 +106,6 @@ class MagicDb:
             ...     buffer = f.read()
             >>> result = db.best_magic_buffer(buffer)
         """
-        ...
 
     def best_magic_file(self, path: str) -> Magic:
         """Detect the best magic match for a file.
@@ -127,9 +123,8 @@ class MagicDb:
         Example:
             >>> result = db.best_magic_file("example.txt")
         """
-        ...
 
-    def all_magics_buffer(self, input: bytes) -> List[Magic]:
+    def all_magics_buffer(self, input: bytes) -> list[Magic]:
         """Detect all magic matches for an in-memory buffer.
 
         Args:
@@ -146,9 +141,8 @@ class MagicDb:
             ...     buffer = f.read()
             >>> results = db.all_magics_buffer(buffer)
         """
-        ...
 
-    def all_magics_file(self, path: str) -> List[Magic]:
+    def all_magics_file(self, path: str) -> list[Magic]:
         """Detect all magic matches for a file.
 
         Args:
@@ -164,4 +158,3 @@ class MagicDb:
         Example:
             >>> results = db.all_magics_file("example.txt")
         """
-        ...
