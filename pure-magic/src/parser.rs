@@ -1085,23 +1085,34 @@ impl Test {
                 })
             }
             Rule::guid_test => {
+                let mut ty = ScalarDataType::guid;
                 let mut guid = None;
                 for p in pair.into_inner() {
                     match p.as_rule() {
+                        Rule::guid_type => {
+                            ty = match p.as_str() {
+                                "beguid" => ScalarDataType::beguid,
+                                "leguid" => ScalarDataType::leguid,
+                                _ => ScalarDataType::guid,
+                            }
+                        }
                         Rule::any_value => guid = Some(TestValue::Any),
                         Rule::guid => {
-                            guid = Some(TestValue::Value(Scalar::guid(
-                                Uuid::parse_str(p.as_str())
-                                    .expect("valid uuid is guaranteed by grammar")
-                                    .as_u128(),
-                            )))
+                            let value = Uuid::parse_str(p.as_str())
+                                .expect("valid uuid is guaranteed by grammar")
+                                .as_u128();
+                            guid = Some(TestValue::Value(match ty {
+                                ScalarDataType::beguid => Scalar::beguid(value),
+                                ScalarDataType::leguid => Scalar::leguid(value),
+                                _ => Scalar::guid(value),
+                            }))
                         }
                         _ => {}
                     }
                 }
 
                 Self::Scalar(ScalarTest {
-                    ty: ScalarDataType::guid,
+                    ty,
                     transform: None,
                     cmp_op: CmpOp::Eq,
                     // guid is guaranteed to be some by parser

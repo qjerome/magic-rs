@@ -116,7 +116,8 @@ guid = { ASCII_HEX_DIGIT{8} ~ ("-" ~ ASCII_HEX_DIGIT{4}){3} ~ "-" ~ ASCII_HEX_DI
 // this could have been done in scalar test yet guid does not
 // seem to implement transform operation and other compairison
 // operators than eq
-guid_test = { "guid" ~ (any_value | guid) }
+guid_type = @{ "beguid" | "leguid" | "guid" }
+guid_test = { guid_type ~ (any_value | guid) }
 
 /// string related test types
 string_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" }

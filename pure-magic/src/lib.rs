@@ -463,7 +463,18 @@ impl ScalarDataType {
             Self::ubeqdate => Scalar::ubeqdate(_read_be!(u64)),
             Self::lemsdosdate => Scalar::lemsdosdate(_read_le!(u16)),
             Self::lemsdostime => Scalar::lemsdostime(_read_le!(u16)),
-            Self::guid => Scalar::guid(u128::from_be_bytes(read!(from, u128))),
+            // Microsoft mixed-endian GUID: data1/data2/data3 little-endian, data4 raw.
+            Self::guid => Scalar::guid((_read_le!(u32) as u128) << 96
+                                | (_read_le!(u16) as u128) << 80
+                                | (_read_le!(u16) as u128) << 64
+                                | (_read_be!(u64) as u128)),
+            Self::leguid => Scalar::leguid(
+                (_read_le!(u32) as u128) << 96
+                    | (_read_le!(u16) as u128) << 80
+                    | (_read_le!(u16) as u128) << 64
+                    | (_read_be!(u64) as u128),
+            ),
+            Self::beguid => Scalar::beguid(_read_be!(u128)),
         })
     }
 }
@@ -4715,22 +4726,67 @@ HelloWorld
         );
     }
 
+    // guid stores data1/data2/data3 little-endian (the Microsoft
+    // mixed-endian GUID layout), only data4 is raw bytes -- confirmed
+    // against real `file`.
     #[test]
     fn test_guid() {
         assert_magic_match_bin!(
-            "0 guid EC959539-6786-2D4E-8FDB-98814CE76C1E It works",
-            b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E"
+            "0 guid DDCCBBAA-FFEE-1100-2233-445566778899 It works",
+            b"\xAA\xBB\xCC\xDD\xEE\xFF\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99"
         );
 
         assert_magic_not_match_bin!(
-            "0 guid 399595EC-8667-4E2D-8FDB-98814CE76C1E It works",
+            "0 guid DDCCBBAA-FFEE-1100-2233-445566778899 It works",
             b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
         );
 
         assert_magic_match_bin!(
             "0 guid x %s",
-            b"\xEC\x95\x95\x39\x67\x86\x2D\x4E\x8F\xDB\x98\x81\x4C\xE7\x6C\x1E",
-            "EC959539-6786-2D4E-8FDB-98814CE76C1E"
+            b"\xAA\xBB\xCC\xDD\xEE\xFF\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99",
+            "DDCCBBAA-FFEE-1100-2233-445566778899"
+        );
+    }
+
+    // leguid has identical semantics to guid.
+    #[test]
+    fn test_leguid() {
+        assert_magic_match_bin!(
+            "0 leguid DDCCBBAA-FFEE-1100-2233-445566778899 It works",
+            b"\xAA\xBB\xCC\xDD\xEE\xFF\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99"
+        );
+
+        assert_magic_not_match_bin!(
+            "0 leguid DDCCBBAA-FFEE-1100-2233-445566778899 It works",
+            b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+        );
+
+        assert_magic_match_bin!(
+            "0 leguid x %s",
+            b"\xAA\xBB\xCC\xDD\xEE\xFF\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99",
+            "DDCCBBAA-FFEE-1100-2233-445566778899"
+        );
+    }
+
+    // beguid has no on-disk mixed-endian convention, unlike guid/leguid: the
+    // 16 bytes are one plain big-endian number, matching the string's
+    // sequential digit order directly.
+    #[test]
+    fn test_beguid() {
+        assert_magic_match_bin!(
+            "0 beguid AABBCCDD-EEFF-0011-2233-445566778899 It works",
+            b"\xAA\xBB\xCC\xDD\xEE\xFF\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99"
+        );
+
+        assert_magic_not_match_bin!(
+            "0 beguid AABBCCDD-EEFF-0011-2233-445566778899 It works",
+            b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+        );
+
+        assert_magic_match_bin!(
+            "0 beguid x %s",
+            b"\xAA\xBB\xCC\xDD\xEE\xFF\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99",
+            "AABBCCDD-EEFF-0011-2233-445566778899"
         );
     }
 
