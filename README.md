@@ -1,126 +1,155 @@
-# Magic File Type Detection Ecosystem
+# magic-rs
 
-**A safe Rust implementation of file type detection with 99% compatibility with libmagic rule format**
+A safe Rust implementation of file type detection, compatible with the
+`libmagic` rule format.
 
-This ecosystem provides a complete, memory-safe alternative to the traditional `libmagic` implementation, while maintaining near-full compatibility with existing rule files.
+This workspace provides a memory-safe alternative to `libmagic`, parsing
+the same magic rule files used by the `file` command, with no `unsafe`
+code.
 
-## 🔥 Key Advantages
+[![CI](https://img.shields.io/github/actions/workflow/status/qjerome/magic-rs/rust.yml?style=for-the-badge)](https://github.com/qjerome/magic-rs/actions/workflows/rust.yml)
+[![Crates.io](https://img.shields.io/crates/v/pure-magic.svg?style=for-the-badge)](https://crates.io/crates/pure-magic)
+[![docs.rs](https://img.shields.io/docsrs/pure-magic?style=for-the-badge)](https://docs.rs/pure-magic)
+[![PyPI](https://img.shields.io/pypi/v/pure-magic-rs.svg?style=for-the-badge)](https://pypi.org/project/pure-magic-rs/)
+[![License](https://img.shields.io/crates/l/pure-magic.svg?style=for-the-badge)](#license)
 
-- **99% libmagic Compatible** - Uses the same rule format and syntax
-- **Memory Safe** - Pure Rust implementation with no `unsafe` code
-- **High Performance** - Optimized parsing and detection
-- **Embeddable** - Compile rules directly into your binary
-- **Extensible** - Easy to add new file type detection rules
+## Advantages over libmagic
 
-## 📦 Crates Overview
+- **Memory safety.** `pure-magic` is built with `#![forbid(unsafe_code)]`,
+  so it can't be affected by the memory-corruption bugs (buffer overreads,
+  use-after-free) that have periodically been reported against the C
+  implementation. This matters in particular when scanning untrusted or
+  adversarial input, which is `file`'s primary use case.
+- **Self-contained, purpose-built binaries.** `magic-embed` compiles a
+  chosen set of rule files directly into the binary at build time, via
+  `include`/`exclude` paths. You can embed only the formats a given tool
+  needs, instead of the entire `magdir`, which keeps the binary lean and
+  removes the runtime dependency on `libmagic.so` or an external
+  `magic.mgc` — and with it, the risk of a binary and its shared library
+  disagreeing on the compiled database version.
+- **Straightforward cross-compilation.** No C toolchain or autotools
+  build step; anything `cargo` can target, `pure-magic` can target.
+- **Native Python bindings.** `pure-magic-rs` ships as a self-contained
+  wheel with an embedded database, with no `libmagic` system dependency
+  to install or link against.
 
-### 1. [`pure-magic`](pure-magic/)
-**Core libmagic-compatible detection engine**
+These come with a trade-off: see [Differences from
+libmagic](#differences-from-libmagic) below for what's out of scope.
 
-- **99% compatible** with original libmagic rule syntax
-- Safe Rust implementation (no `unsafe`)
-- Powerful APIs:
-  - File type detection
-  - MIME type identification
-  - Access rule strength
-  - Polyglot file detection
+## Crates
 
-### 2. [`magic-embed`](magic-embed/)
-**Procedural macro for embedding rule databases**
+| Crate | Description |
+| --- | --- |
+| [`pure-magic`](pure-magic/) | Core detection engine: parses magic rules and evaluates them against a byte stream. |
+| [`magic-embed`](magic-embed/) | Procedural macro to compile a rule database into a binary at build time. |
+| [`magic-db`](magic-db/) | Precompiled database built from the [rules](magic-db/src/magdir/) shipped with `file`. |
+| [`wiza`](wiza/) | Command-line tool built on `pure-magic` and `magic-db`. |
+| [`pure-magic-rs`](python/) | Python bindings for `pure-magic`, published on PyPI. |
 
-- Compiles libmagic-compatible rules at build time
-- Use it to embed a compiled database of magics in your binary
+## Getting started
 
-### 3. [`magic-db`](magic-db/)
-**Precompiled libmagic-compatible rule database**
-
-- Contains [magic rules](magic-db/src/magdir/)
-- Ready-to-use with zero configuration
-
-### 4. [`wiza`](wiza/)
-**Command-line file identification tool**
-
-- Built on top of `pure-magic` and `magic-db`
-- Drop-in companion to the `file` command
-
-## 🚀 Getting Started: using [`wiza`](wiza/) CLI
-
-### Installation
+Install the `wiza` CLI:
 
 ```sh
 cargo install wiza
 ```
 
-### Basic file identification
+Identify a file:
 
 ```sh
 $ wiza /bin/file
 /bin/file source:elf strength:431 mime:application/x-pie-executable magic:ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV)
 ```
 
-## 📜 Rule Compatibility
+Python bindings are also available as [`pure-magic-rs`](python/) on PyPI,
+with an embedded database so no separate rule files are needed:
 
-This project has been built to provide the maximum level of compatibility
-with existing `libmagic` rules. So most of the rules you will find in
-the [`file`](https://github.com/file/file) repository will directly be 
-compatible with this project. You just need to be aware of the current
-few incompatibilities:
-
-- **Ternary printf format is not supported**:  The following extract from ELF
-detection will not be supported, however it can be fixed trivially without
-relying on ternary formatting.
+```sh
+pip install pure-magic-rs
 ```
-0	name		elf-le
-[...]
->16	leshort		3		${x?pie executable:shared object},
-!:mime	application/x-${x?pie-executable:sharedlib}
+
+```python
+from pure_magic_rs import MagicDb
+
+db = MagicDb()
+result = db.best_magic_file("example.png")
+print(result.message, result.mime_type)
 ```
-- **DER Rule Limitation**: The only major incompatibility is with ASN.1/DER encoding rules, which require specialized test operations not yet implemented in `pure-magic`. All other rule types work identically to libmagic.
 
-## ⚖️ Differences from Traditional libmagic
+See the [Python package README](python/README.md) for the full API.
 
-Traditional `libmagic` (as shipped with the `file` command) goes beyond magic byte rules for certain formats: it parses ELF binaries at the structural level to extract metadata like the dynamic linker path, BuildID, etc.
+## Rule compatibility
+
+Most rules from the [`file`](https://github.com/file/file) repository work
+unmodified against `pure-magic`. Two known gaps:
+
+- **Ternary printf formatting is not supported.** Rules using
+  `${cond?a:b}` need to be rewritten, which is usually straightforward.
+  For example, this extract from the ELF rules:
+
+  ```
+  0	name		elf-le
+  [...]
+  >16	leshort		3		${x?pie executable:shared object},
+  !:mime	application/x-${x?pie-executable:sharedlib}
+  ```
+
+- **DER/ASN.1 rules are not implemented.** They require dedicated parsing
+  that `pure-magic` doesn't yet provide. Everything else behaves the same
+  as `libmagic`.
+
+## Differences from libmagic
+
+`libmagic` goes beyond magic-byte matching for some formats. For ELF
+binaries in particular, it parses program and section headers to report
+the dynamic linker path, build ID, and similar metadata:
 
 ```
-# file output
+$ file /bin/ls
 /bin/ls: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=c988ae960e91ea3f9f7b9cbbc2e3e4ffc0353796, for GNU/Linux 4.4.0, stripped
 ```
 
 ```
-# wiza output
+$ wiza /bin/ls
 /bin/ls source:elf strength:436 mime:application/x-pie-executable magic:ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV)
 ```
 
-`magic-rs` deliberately stops at what magic rules can express. Deep binary format parsing — walking ELF section headers, reading program headers, extracting build metadata — is outside the scope of this library. Supporting it for ELF would also raise an obvious question: why ELF and not COFF, Mach-O, PDF, PE, or any other structured format? There is no principled place to draw that line, so we draw it at the magic rule boundary instead.
+`magic-rs` intentionally stops at what the magic rule language can
+express. Structural binary parsing — ELF section and program headers,
+build metadata, and the equivalents for COFF, Mach-O, PE, PDF, and so
+on — is out of scope. There's no principled place to draw that line once
+you start walking binary structures for one format, so the boundary is
+drawn at the rule format itself.
 
-## 📚 Documentation
+## Documentation
 
-- [pure-magic API Docs](https://docs.rs/pure-magic) - Core detection library
-- [magic-embed Docs](https://docs.rs/magic-embed) - Embedding macro
-- [magic-db Docs](https://docs.rs/magic-db) - Precompiled database
-- [Rule Syntax Guide](https://www.man7.org/linux/man-pages/man4/magic.4.html) - libmagic-compatible rule format
+- [pure-magic](https://docs.rs/pure-magic)
+- [magic-embed](https://docs.rs/magic-embed)
+- [magic-db](https://docs.rs/magic-db)
+- [Magic rule syntax (man page)](https://www.man7.org/linux/man-pages/man4/magic.4.html)
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions to improve libmagic compatibility:
+Bug reports should include a sample file (or a minimal reproduction)
+demonstrating the mismatch with `libmagic`, and, where possible, a
+suggested rule fix.
 
-1. Open an issue with a description of the problem
-2. Include sample files that demonstrate the issue
-3. Suggest specific rule modifications if possible
+Contributions are also welcome for:
 
-You can also contribute by:
-- Improving existing rules in the [`src/magdir`](./magic-db/src/magdir/) directory
-- Adding support for new file formats
-- Helping optimize rule performance or accuracy
+- Fixes and additions to the [rule database](./magic-db/src/magdir/)
+- New file format support
+- Performance improvements to rule evaluation
 
-## 📄 License
+## License
 
-This project is dual-licensed under either:
-- **GPL-3.0**
-- **BSD-2-Clause**
+Dual-licensed under [GPL-3.0](LICENSE-GPL) or [BSD-2-Clause](LICENSE-BSD),
+at your option.
 
-## 🙌 Acknowledgments
+## Acknowledgments
 
-- Thanks to all the people behind [file](https://github.com/file/file), project which served as a foundation for this work.
-- Thanks to [@adulau](https://github.com/adulau) for supporting this work.
-- Thanks to all my colleagues at [CIRCL](https://circl.lu/) who listened to me (without complaining) talking about `pure-magic` almost every single day since I started this project.
+- [file](https://github.com/file/file), whose magic rule format and
+  database this project builds on.
+- [@adulau](https://github.com/adulau) for supporting this work.
+- My colleagues at [CIRCL](https://circl.lu/) for their patience
+  listening to me talk about `pure-magic` almost every day since I
+  started this project.
