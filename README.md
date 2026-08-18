@@ -83,16 +83,16 @@ See the [Python package README](python/README.md) for the full API.
 Most rules from the [`file`](https://github.com/file/file) repository work
 unmodified against `pure-magic`. Two known gaps:
 
-- **Ternary printf formatting is not supported.** Rules using
-  `${cond?a:b}` need to be rewritten, which is usually straightforward.
-  For example, this extract from the ELF rules:
-
-  ```
-  0	name		elf-le
-  [...]
-  >16	leshort		3		${x?pie executable:shared object},
-  !:mime	application/x-${x?pie-executable:sharedlib}
-  ```
+- **Ternary message formatting (`${x?a:b}`) is not supported.** `x` is
+  not a general variable — it's the single hardcoded case libmagic's
+  `varexpand()` recognizes, meaning "does the scanned file have its
+  Unix execute permission bit set on disk". That's a property of the
+  file's metadata, not its content, and `pure-magic` deliberately
+  doesn't check it: it would only ever be meaningful when scanning a
+  real file from disk (never for in-memory buffers), for a
+  single-purpose heuristic found in exactly one rule upstream (`elf`).
+  Rules using it need to be rewritten to drop the condition and
+  pick one fixed message.
 
 - **DER/ASN.1 rules are not implemented.** They require dedicated parsing
   that `pure-magic` doesn't yet provide. Everything else behaves the same
@@ -120,6 +120,18 @@ build metadata, and the equivalents for COFF, Mach-O, PE, PDF, and so
 on — is out of scope. There's no principled place to draw that line once
 you start walking binary structures for one format, so the boundary is
 drawn at the rule format itself.
+
+A second, different category is `libmagic`'s `${x?a:b}` ternary message
+formatting (see [Rule compatibility](#rule-compatibility)).
+In ternary formatting `x` reads the scanned file's Unix execute
+permission bit from `stat()`, so it isn't a function of the file's bytes
+at all. The same content can report two different types depending on how
+it's scanned: `chmod +x` changes the answer for the same path, and
+`libmagic`'s buffer-scanning API (`magic_buffer()` for in-memory data)
+never has a real file descriptor to `stat()`, so it can never find the
+permission bit. We believe a magic byte matcher shouldn't give a
+different answer for identical bytes based on external state, so
+`pure-magic` doesn't replicate it.
 
 ## Documentation
 
