@@ -194,6 +194,8 @@ impl_numeric_types!(
     melong(i32),
     meldate(i32),
     guid(u128),
+    leguid(u128),
+    beguid(u128),
 );
 
 impl fmt::Display for Scalar {
@@ -238,7 +240,7 @@ impl fmt::Display for Scalar {
             Scalar::leqdate(value) => write!(f, "leqdate({value})"),
             Scalar::leqldate(value) => write!(f, "leqldate({value})"),
             Scalar::leqwdate(value) => write!(f, "leqwdate({value})"),
-            Scalar::guid(value) => {
+            Scalar::guid(value) | Scalar::leguid(value) | Scalar::beguid(value) => {
                 write!(
                     f,
                     "{}",
@@ -297,7 +299,7 @@ impl DynDisplay for Scalar {
             }
             Scalar::leqldate(value) => Ok(write!(f, "{}", unix_local_time_to_string(*value))?),
             Scalar::leqwdate(value) => Ok(write!(f, "{}", windows_filetime_to_string(*value))?),
-            Scalar::guid(value) => Ok(write!(
+            Scalar::guid(value) | Scalar::leguid(value) | Scalar::beguid(value) => Ok(write!(
                 f,
                 "{}",
                 Uuid::from_u128(*value)
