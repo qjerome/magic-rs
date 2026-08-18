@@ -3,7 +3,7 @@
 // The main rule parses multiple lines in a magic file.
 file = { SOI ~ (rule_dependency | rule | NEWLINE)* ~ EOI }
 
-rule_dependency = { name_entry ~ NEWLINE ~ ((match_depth | use | flag) ~ (NEWLINE+ | EOI))+ }
+rule_dependency = { name_entry ~ NEWLINE+ ~ ((match_depth | use | flag) ~ (NEWLINE+ | EOI))+ }
 name_entry      = { stream_offset ~ "name" ~ rule_name ~ message? }
 
 // A rule consists of an offset, type, test, and optional message or continuation
@@ -16,7 +16,7 @@ match_depth    = { depth+ ~ stream_offset ~ test ~ message? }
 test = { clear_test | scalar_test | default_test | string_test | string16_test | search_test | regex_test | indirect_test | guid_test | float_test }
 
 rule_name         = @{ (ASCII_ALPHANUMERIC | "-" | "_")+ }
-endianness_switch = @{ "\\^" }
+endianness_switch = @{ "\\^" | "^" }
 // use must be defined completely as it doesn't expect a message
 use = { depth+ ~ stream_offset ~ "use" ~ endianness_switch? ~ rule_name ~ message? }
 
@@ -42,7 +42,7 @@ mime_flag       =  { "mime" ~ mime_type }
 exts            = @{ printable_no_ws+ }
 ext_flag        =  { "ext" ~ exts }
 
-apple_ty      = ${ (printable_no_ws | " "){8} }
+apple_ty      = ${ (printable_no_ws | " "){1,8} }
 apple_flag    = ${ "apple" ~ WHITESPACE+ ~ apple_ty }
 strength_flag =  { "strength" ~ (op_add | op_mul | op_sub | op_div | op_sub) ~ pos_number }
 flag          =  { "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) }
@@ -189,9 +189,12 @@ message = @{ (!NEWLINE ~ ANY)* }
 
 depth = @{ ">"+ }
 
-// Parses comments
-// see pest doc to define COMMENT
-COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* ~ (NEWLINE+ | EOI) }
+// Parses comments. Deliberately does NOT consume the trailing newline:
+// COMMENT is inserted implicitly between tokens in non-atomic rules, and if
+// it ate the newline itself, an explicit `NEWLINE+`/`(NEWLINE+ | EOI)` right
+// after a commented line (e.g. a `!:strength` flag followed by `# ...`)
+// would find nothing left to match, aborting the rest of the rule.
+COMMENT = _{ "#" ~ (!NEWLINE ~ ANY)* }
 
 // Special characters
 NEWLINE = _{ "\n" | "\r\n" }
