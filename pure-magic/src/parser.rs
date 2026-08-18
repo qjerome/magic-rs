@@ -327,6 +327,7 @@ impl ScalarDataType {
             bedate,
             beldate,
             beqdate,
+            beqldate,
             byte,
             date,
             ldate,

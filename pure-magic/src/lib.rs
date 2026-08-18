@@ -437,6 +437,7 @@ impl ScalarDataType {
             Self::bedate => Scalar::bedate(_read_be!(i32)),
             Self::beldate => Scalar::beldate(_read_be!(i32)),
             Self::beqdate => Scalar::beqdate(_read_be!(i64)),
+            Self::beqldate => Scalar::beqldate(_read_be!(i64)),
             // unsigned
             Self::ubyte => Scalar::ubyte(read!(from, u8)[0]),
             Self::ushort => Scalar::ushort(_read_ne!(u16)),
@@ -4478,6 +4479,25 @@ HelloWorld
             "0 beqdate 946684800 %s",
             b"\x00\x00\x00\x00\x38\x6D\x43\x80",
             "2000-01-01 00:00:00"
+        );
+    }
+
+    #[test]
+    fn test_beqldate() {
+        assert_magic_match_bin!(
+            "0 beqldate 946684800 Local date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00\x38\x6D\x43\x80"
+        );
+
+        assert_magic_not_match_bin!(
+            "0 beqldate 946684800 Local date (Jan 1, 2000)",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00"
+        );
+
+        assert_magic_match_bin!(
+            "0 beqldate 946684800 %s",
+            b"\x00\x00\x00\x00\x38\x6D\x43\x80",
+            unix_local_time_to_string(946684800)
         );
     }
 

@@ -166,6 +166,7 @@ impl_numeric_types!(
     bedate(i32),
     beldate(i32),
     beqdate(i64),
+    beqldate(i64),
     ledate(i32),
     lelong(i32),
     leshort(i16),
@@ -212,6 +213,7 @@ impl fmt::Display for Scalar {
             Scalar::bedate(value) => write!(f, "bedate({value})"),
             Scalar::beldate(value) => write!(f, "beldate({value})"),
             Scalar::beqdate(value) => write!(f, "beqdate({value})"),
+            Scalar::beqldate(value) => write!(f, "beqldate({value})"),
             Scalar::byte(value) => write!(f, "{value}"),
             Scalar::ledate(value) => write!(f, "ledate({value})"),
             Scalar::lelong(value) => write!(f, "{value}"),
@@ -269,6 +271,7 @@ impl DynDisplay for Scalar {
                 Ok(write!(f, "{}", unix_local_time_to_string(*value as i64))?)
             }
             Scalar::beqdate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value))?),
+            Scalar::beqldate(value) => Ok(write!(f, "{}", unix_local_time_to_string(*value))?),
             Scalar::byte(value) => DynDisplay::dyn_fmt(value, f),
             Scalar::ledate(value) => Ok(write!(f, "{}", unix_utc_time_to_string(*value as i64))?),
             Scalar::lelong(value) => DynDisplay::dyn_fmt(value, f),
