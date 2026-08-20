@@ -2004,7 +2004,7 @@
 # Reference:	https://wiki.osdev.org/UDF
 # Note:		called "UDF Disc Image" by DROID via PUID fmt/1738
 #		verified by udftools `udfinfo nero-UDFv26.iso` and 7-Zip `7z l -tUdf nero-UDF1.iso`
-#
+#		
 # look for type descriptor at relative offset 1 of block 16 if it is an extended descriptor section
 32769	string	BEA01
 >32768	use	extendedarea
@@ -2398,7 +2398,7 @@
 # Note:		called "IBM SKF disk image" by TrID
 #		verfied by 7-Zip `7z l -tFAT -slt *.dsk` and
 #		`deark -l -m loaddskf  06200D19.DSK`
-# Reference:	http://mark0.net/download/triddefs_xml.7z/defs/d/dsk-skf-old.trid.xml
+# Reference:	http://mark0.net/download/triddefs_xml.7z/defs/d/dsk-skf-old.trid.xml 
 0	beshort	0xAA58
 >0	use		SaveDskF
 # Reference:	http://mark0.net/download/triddefs_xml.7z/defs/d/dsk-skf.trid.xml
@@ -2523,7 +2523,7 @@
 # 2nd desc. (optional 0-terminated maximal 32) like:
 # "(1988)." "Advanced - Utility" 'Program Disk 2"
 >0x22		string		>\0		"%.32s"
-# Looks like ascii (like MESSAGES) formatted with attribute bytes (190)?
+# Looks like ascii (like MESSAGES) formatted with attribute bytes (190)? 
 # not needed for disk copy
 #>>0x42		string		x		'%.190s'
 #>>0x88		lestring16	x		"%.8s"
@@ -2688,7 +2688,7 @@
 >>1104		lelong		&16		ZTAILPACKING
 
 # YAFFS
-# The layout itself is undocumented, determined by the memory layout of the
+# The layout itself is undocumented, determined by the memory layout of the 
 # reference implementation. This signature is derived from the
 # reference implementation code and generated test cases
 # We recognize the start of an object header defined by yaffs_obj_hdr:

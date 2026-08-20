@@ -1804,6 +1804,7 @@
 0	name	zipgeneric
 >4	beshort		x			Zip archive data, at least
 !:mime	application/zip
+# LOCAL(qjerome): !:ext zip added here, not upstream. Keep on future syncs.
 !:ext zip
 >4	use		zipversion
 >4	beshort		x			to extract
@@ -2116,12 +2117,14 @@
 >>50		default	x			Zip data
 >>>38		regex	[!-OQ-~]+		(MIME type "%s"?)
 !:mime	application/zip
+# LOCAL(qjerome): !:ext zip added here, not upstream. Keep on future syncs.
 !:ext zip
 #    (mimetype contents other than "application/*")
 >26		string	\x8\0\0\0mimetype
 >>38		string	!application/
 >>>38		regex	[!-OQ-~]+		Zip data (MIME type "%s"?)
 !:mime	application/zip
+# LOCAL(qjerome): !:ext zip added here, not upstream. Keep on future syncs.
 !:ext zip
 
 # Java Jar files (see also APK files above)
@@ -2844,6 +2847,8 @@
 >0	uleshort	0x40	Wasay ImageIt DataPack
 >>8	uleshort	x	v%u
 >>10	uleshort	x	\b.%u
+# LOCAL(qjerome): dropped upstream's "/8" length modifier -- it's parsed but
+# never read back by libmagic's matcher.
 >>16	lestring16	x	\b, "%s"
 >>12	uleshort	x	(%u)
 >>32	byte		x	\b, created on %02d

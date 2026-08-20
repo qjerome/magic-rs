@@ -35,12 +35,12 @@
 
 # Android Backup archive
 # From: Ariel Shkedi
-# Update: Joerg Jenderek
+# Update: Joerg Jenderek 
 # URL: https://github.com/android/platform_frameworks_base/blob/\
 # 0bacfd2ba68d21a68a3df345b830bc2a1e515b5a/services/java/com/\
 # android/server/BackupManagerService.java#L2367
 # Reference: https://sourceforge.net/projects/adbextractor/
-#            android-backup-extractor/perl/backupencrypt.pl
+#            android-backup-extractor/perl/backupencrypt.pl 
 # Note:	only unix line feeds "\n" found
 # After the header comes a tar file
 # If compressed, the entire tar file is compressed with JAVA deflate
@@ -49,7 +49,7 @@
 # false positives
 0	string/b	ANDROID\ BACKUP\n	Android Backup
 # maybe look for some more characteristics like linefeed '\n' or version
-#>16	string		\n
+#>16	string		\n			
 # No mime-type defined officially
 !:mime	application/x-google-ab
 !:ext	ab
@@ -63,17 +63,17 @@
 >19	string		none\n			\b, Not-Encrypted
 # look for backup content after line with encryption info
 #>>19	search/7	\n
-# data part after header for not encrypted Android Backup
+# data part after header for not encrypted Android Backup 
 #>>>&0	ubequad		x	\b, content %#16.16llx...
 # look for zlib compressed by ./compress after message with 1 space at end
-#>>>&0	indirect	x	\b; contains
+#>>>&0	indirect	x	\b; contains 
 # look for tar archive block by ./archive for package name manifest
 >>288	string		ustar	\b; contains
 >>>31	use	tar-file
 # look for zip/jar archive by ./archive ./zip after message with 1 space at end
-#>>2079	search/1025/s	PK\003\004	\b; contains
+#>>2079	search/1025/s	PK\003\004	\b; contains 
 #>>>&0	indirect	x
->19	string		!none
+>19	string		!none			
 >>19    regex/1l	\^([^n\n]|n[^o]|no[^n]|non[^e]|none.+).*	\b, Encrypted (%s)
 # Commented out because they don't seem useful to print
 # (but they are part of the header - the tar file comes after them):
@@ -258,6 +258,8 @@
 # extracted APK Signing Block
 -16	string	APK\x20Sig\x20Block\x2042	APK Signing Block
 
+# LOCAL(qjerome): replaces upstream's simpler duplicate "ABX" rule (dropped
+# here) with this more detailed byte-diagram version. Keep on future syncs.
 # Android Binary XML (ABX)
 # Stream-based binary XML used for Android system files (packages.xml, etc.)
 # Reference: https://cs.android.com/android/platform/superproject/+/main:frameworks/\

@@ -10,11 +10,14 @@
 0	string		rust\x00\x00\x00
 >12	string		\014rustc\x20		Rust compiler metadata
 !:ext	rmeta
+# LOCAL(qjerome): !:mime kept here -- upstream dropped it, we deliberately
+# didn't follow. Keep on future syncs.
 !:mime  application/x-rust-metadata
 >>7	byte		x			\b, version %d
 
 # Rust compiler metadata updated with new layout
 # From: Quentin Jérôme <quentin.jerome@circl.lu>
+# LOCAL(qjerome): entire block below, not upstream. Keep on future syncs.
 # Reference: https://github.com/rust-lang/rust/blob/master/compiler/rustc_metadata/src/rmeta/mod.rs
 0	    string		rust\x00\x00\x00
 >0x11   string	    rustc		Rust compiler metadata
@@ -34,6 +37,7 @@
 
 # Rust source text identification
 # From: Quentin Jérôme <quentin.jerome@circl.lu>
+# LOCAL(qjerome): entire block below, not upstream. Keep on future syncs.
 # we try to search for crate level attribute
 0	string		#![
 >&0 regex/1l  \\w+\\s?.*?\\]$

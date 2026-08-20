@@ -40,6 +40,8 @@
 # These are always zero
 # >14	bequad	x		target HRMOR %llx
 # >22	bequad  x		stack pointer %llx
+# LOCAL(qjerome): "ustring" normalized to "string" -- undocumented,
+# likely-accidental construct, no behavior change.
 >4096	string \xFD7zXZ\x00    XZ compressed
 0	belong	0x1bad1bad	POWER boot firmware
 >256	belong	0x48002030	(PHYP entry point)

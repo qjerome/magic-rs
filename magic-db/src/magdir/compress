@@ -278,6 +278,8 @@
 >>0	use		lzma
 
 # http://tukaani.org/xz/xz-file-format.txt
+# LOCAL(qjerome): "ustring" normalized to "string" -- undocumented,
+# likely-accidental construct (see debug-magic-rs skill), no behavior change.
 0	string		\xFD7zXZ\x00		XZ compressed data, checksum
 !:strength * 2
 !:mime	application/x-xz
