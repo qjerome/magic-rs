@@ -14,7 +14,7 @@
 # skip also \ in DROID fmt-50-signature-id-158.rtf by looking for valid version
 >>5	ubyte		!0x5C		Rich Text Format data
 !:mime	text/rtf
-!:apple	????RTF 
+!:apple	????RTF
 !:ext	rtf
 >>>0	use		rtf-info
 #	display information like version, language and code page of RTF

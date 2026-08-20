@@ -1,5 +1,5 @@
 #------------------------------------------------------------------------------
-# $File: archive,v 1.217 2025/09/06 17:00:32 christos Exp $
+# $File: archive,v 1.223 2026/05/10 01:23:57 christos Exp $
 # archive:  file(1) magic for archive formats (see also "msdos" for self-
 #           extracting compressed archives)
 #
@@ -1595,7 +1595,7 @@
 >>>>3	regex		\^(lh[0-9a-ex]|lz[s2-8]|pm[012]|pc1)		\b 
 !:mime	application/x-lzh-compressed
 # creator type "LHA "
-!:apple	????LHA 
+!:apple	????LHA
 # display archive type name like "LHa/LZS archive data" or "LArc archive"
 >>>>>2	string		-lz		\b 
 !:ext	lzs
@@ -1804,6 +1804,7 @@
 0	name	zipgeneric
 >4	beshort		x			Zip archive data, at least
 !:mime	application/zip
+# LOCAL(qjerome): !:ext zip added here, not upstream. Keep on future syncs.
 !:ext zip
 >4	use		zipversion
 >4	beshort		x			to extract
@@ -2116,12 +2117,14 @@
 >>50		default	x			Zip data
 >>>38		regex	[!-OQ-~]+		(MIME type "%s"?)
 !:mime	application/zip
+# LOCAL(qjerome): !:ext zip added here, not upstream. Keep on future syncs.
 !:ext zip
 #    (mimetype contents other than "application/*")
 >26		string	\x8\0\0\0mimetype
 >>38		string	!application/
 >>>38		regex	[!-OQ-~]+		Zip data (MIME type "%s"?)
 !:mime	application/zip
+# LOCAL(qjerome): !:ext zip added here, not upstream. Keep on future syncs.
 !:ext zip
 
 # Java Jar files (see also APK files above)
@@ -2573,6 +2576,30 @@
 12	string	BB02		Bacula volume
 >20	bedate	x		\b, started %s
 
+# Bareos volume format.
+# URL:
+# https://docs.bareos.org/DeveloperGuide/mediaformat.html#volume-label-format
+# From: Bruno Fiedmann <bruno.friedmann@bareos.com>
+# Note: label_btime (local time) is stored as 8-byte big-endian microseconds;
+# must divide by 1000000 for Unix seconds
+# Note: MediaType detected using search; ProgVersion start at 142
+# (typically after LabelProg field)
+# Note: ProgVersion start at 142, but we want to remove 'Ver. ' anyways
+12	string			BB02		Bareos Volume
+>36	string			Bareos		2.0 immortal
+>93	string  		x		\b, Volume Name: %s
+>100	search/100		File\0		\b, Media Type: File
+>100	search/100		Tape\0		\b, Media Type: Tape
+>100	search/100		VTape\0		\b, Media Type: VTape
+>100	search/100		Fifo\0		\b, Media Type: Fifo
+>61	beqldate/1000000	x		\b, Label Date: %s
+>147	string			x		\b, Version: %s
+
+# Bareos Disaster Recovery Image
+# URL: https://doc.bareos.org/
+# From: Bruno Friedmann <bruno.friedmann@bareos.com>
+0	string			barrifil	Bareos Disaster Recovery Image
+
 # ePub is XHTML + XML inside a ZIP archive.  The first member of the
 #   archive must be an uncompressed file called 'mimetype' with contents
 #   'application/epub+zip'
@@ -2820,6 +2847,8 @@
 >0	uleshort	0x40	Wasay ImageIt DataPack
 >>8	uleshort	x	v%u
 >>10	uleshort	x	\b.%u
+# LOCAL(qjerome): dropped upstream's "/8" length modifier -- it's parsed but
+# never read back by libmagic's matcher.
 >>16	lestring16	x	\b, "%s"
 >>12	uleshort	x	(%u)
 >>32	byte		x	\b, created on %02d
@@ -2862,3 +2891,45 @@
 
 # https://www.vm.ibm.com/devpages/bkw/vmarc.html magic in EBCDIC
 0	string	\x7a\xc3\xc6\xc6\x40\x40\x40\x40	VM Archive
+
+# https://pbs.proxmox.com/docs/file-formats.html
+0	string	\x42\xab\x38\x07\xbe\x83\x70\xa1 Proxmox Backup Server unencrypted uncompressed blob
+
+0	string	\x31\xb9\x58\x42\x6f\xb6\xa3\x7f Proxmox Backup Server unencrypted compressed blob
+
+0	string	\x7b\x67\x85\xbe\x22\x2d\x4c\xf0 Proxmox Backup Server encrypted uncompressed blob
+
+0	string	\xe6\x59\x1b\xbf\x0b\xbf\xd8\x0b Proxmox Backup Server encrypted compressed blob
+
+0	string	\x2f\x7f\x41\xed\x91\xfd\x0f\xcd Proxmox Backup Server fixed index
+
+0	string	\x1c\x91\x4e\xa5\x19\xba\xb3\xcd Proxmox Backup Server dynamic index
+
+0	string	\xef\xac\x88\xe5\x74\x64\x95\xd5 Proxmox File Archive Format v1 / pxar
+
+0	string	\x0d\xa4\x16\xdf\x75\x6c\x0f\x73\x18\x00\x00\x00\x00\x00\x00\x00\x02 Proxmox File Archive Format v2+ / mpxar
+
+0	string	\xd2\x4e\x4a\x19\xc2\x68\x4c\x83\x10 Proxmox File Archive Format payload stream / ppxar
+
+
+# ZIM (Zeno IMproved) file - Archive format used by Kiwix for offline browsing
+# Reference: https://wiki.openzim.org/wiki/ZIM_file_format
+0	ulelong		0x044D495A	ZIM archive data
+!:mime	application/x-zim
+!:ext	zim
+>4	uleshort	x		\b, version %u
+>6	uleshort	x		\b.%u
+>8	beguid		x		\b, UUID %s
+>24	ulelong		x		\b, %u entries
+>28	ulelong		x		\b, %u clusters
+
+# FAR Archive magic
+#
+# The Fuchsia archive format (FAR) is a specific container format used by the 
+# Fuchsia operating system to store directory trees, typically for software packages.
+#
+# https://fuchsia.dev/fuchsia-src/development/source_code/archive_format
+#
+# From <ysaxenax@gmail.com> "Yuvraj Saxena"
+#
+0	ubequad	0xc8bf0b48adabc511	 Fuchsia OS FAR Archive

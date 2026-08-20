@@ -28,9 +28,9 @@
 >0	string	B\n\0\0\0	R RDS (Native (big-endian) word order format
 >>0	use RDS_binary_version_info
 >0	string	B\n\2\0\0	R RDS (Native (little-endian) word order format
->>0	use \^RDS_binary_version_info
+>>0	use ^RDS_binary_version_info
 >0	string	B\n\3\0\0	R RDS (Native (little-endian) word order format
->>0	use \^RDS_binary_version_info
+>>0	use ^RDS_binary_version_info
 # Check for RDS XDR binary save format.
 >0	string	X\n\0\0\0	R RDS (XDR binary save format
 >>0	use RDS_binary_version_info

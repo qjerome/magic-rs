@@ -28,6 +28,8 @@
 0	string	#!\ /usr/bin/env\ perl	Perl script text executable
 !:mime	text/x-perl
 0	string	#!
+# LOCAL(qjerome): "/1l" added -- limits the regex search to 1 line for
+# performance, same fix as in varied.script. Keep on future syncs.
 >0	regex/1l	\^#!.*/bin/perl([[:space:]].*)*$	Perl script text executable
 !:mime	text/x-perl
 
