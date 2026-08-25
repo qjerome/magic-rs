@@ -25,8 +25,6 @@ pub use cache::LazyCache;
 mod slice;
 pub use slice::BufReader;
 
-use crate::FILE_BYTES_MAX;
-
 /// A trait for reading data with position tracking and range-based access.
 ///
 /// Implementors provide efficient random access to byte data for file magic
@@ -166,18 +164,18 @@ impl DataReader<'_> {
     /// Creates a new `DataReader` backed by a file with lazy caching.
     ///
     /// The file is wrapped in a [`LazyCache`] with:
-    /// - A hot cache of 14 MiB (2 × [`FILE_BYTES_MAX`])
-    /// - A warm cache of 100 MiB
-    ///
-    /// This configuration is optimized for file-based magic number detection,
-    /// balancing memory usage with I/O efficiency.
+    /// - A hot cache of 8 KiB (4 KiB head, 4 KiB tail), always loaded up
+    ///   front so most magic rules (which read near the start or end of
+    ///   a file) never need a further read
+    /// - A warm cache of 100 MiB, lazily populated per 4 KiB block for
+    ///   reads that fall outside the hot cache
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be read or if cache initialization fails.
     pub fn from_file(r: File) -> Result<Self, io::Error> {
         let x = LazyCache::<File>::from_read_seek(r)
-            .and_then(|lc| lc.with_hot_cache(2 * FILE_BYTES_MAX))
+            .and_then(|lc| lc.with_hot_cache(4096 * 2))
             .map(|lc| lc.with_warm_cache(100 << 20))?;
         Ok(Self::File(x))
     }

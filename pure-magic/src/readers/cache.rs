@@ -3,7 +3,7 @@
 use std::{
     cmp::{max, min},
     fs::File,
-    io::{self, Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom},
     ops::Range,
     path::Path,
 };
@@ -55,6 +55,7 @@ where
         self.stream_pos
     }
 
+    #[inline]
     fn read_range(&mut self, range: Range<u64>) -> Result<&[u8], io::Error> {
         self.get_range_u64(range)
     }
@@ -135,10 +136,12 @@ where
         self.read_exact_range(start..start + end)
     }
 
+    #[inline]
     fn data_size(&self) -> u64 {
         self.pos_end
     }
 
+    #[inline]
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.stream_pos = self.offset_from_start(pos);
         Ok(self.stream_pos)
@@ -237,18 +240,17 @@ where
     pub fn with_hot_cache(mut self, size: usize) -> Result<Self, io::Error> {
         let head_tail_size = size / 2;
 
+        let head_size = min(head_tail_size, self.pos_end as usize);
         self.source.seek(SeekFrom::Start(0))?;
+        self.hot_head.reserve_exact(head_size);
+        self.hot_head.resize(head_size, 0);
+        self.source.read_exact(self.hot_head.as_mut())?;
 
         if self.pos_end > size as u64 {
-            self.hot_head = vec![0u8; head_tail_size];
-            self.source.read_exact(self.hot_head.as_mut_slice())?;
-
             self.source.seek(SeekFrom::End(-(head_tail_size as i64)))?;
-            self.hot_tail = vec![0u8; head_tail_size];
+            self.hot_tail.reserve_exact(head_tail_size);
+            self.hot_tail.resize(head_tail_size, 0);
             self.source.read_exact(self.hot_tail.as_mut_slice())?;
-        } else {
-            self.hot_head = vec![0u8; self.pos_end as usize];
-            self.source.read_exact(self.hot_head.as_mut())?;
         }
 
         Ok(self)
@@ -276,34 +278,53 @@ where
                 self.warm_size.unwrap_or_default() as usize
             )?);
         }
-        Ok(self.warm.as_mut().unwrap())
+        Ok(self
+            .warm
+            .as_mut()
+            .expect("warm cache just initialized above when unset"))
     }
 
     #[inline(always)]
     fn range_warmup(&mut self, range: Range<u64>) -> Result<(), io::Error> {
-        let start_chunk_id = range.start / self.block_size;
-        let end_chunk_id = (range.end.saturating_sub(1)) / self.block_size;
-
         if self.loaded.is_empty() {
             return Ok(());
         }
 
-        for chunk_id in start_chunk_id..=end_chunk_id {
+        let start_chunk_id = range.start / self.block_size;
+        let end_chunk_id = (range.end.saturating_sub(1)) / self.block_size;
+
+        self.warm()?;
+        let warm = self
+            .warm
+            .as_mut()
+            .expect("warm() above guarantees the warm cache is initialized");
+
+        let mut chunk_id = start_chunk_id;
+        while chunk_id <= end_chunk_id {
             if self.loaded[chunk_id as usize] {
+                chunk_id += 1;
                 continue;
             }
 
-            let offset = chunk_id * self.block_size;
-            let buf_size = min(
-                self.block_size as usize,
-                (self.pos_end.saturating_sub(offset)) as usize,
-            );
-            let mut buf = vec![0u8; buf_size];
-            self.source.seek(SeekFrom::Start(offset))?;
-            self.source.read_exact(&mut buf)?;
+            // Coalesce a contiguous run of not-yet-loaded blocks into a
+            // single seek + read
+            let run_start = chunk_id;
+            let mut run_end = chunk_id;
+            while run_end < end_chunk_id && !self.loaded[(run_end + 1) as usize] {
+                run_end += 1;
+            }
 
-            (&mut self.warm()?[offset as usize..]).write_all(&buf)?;
-            self.loaded[chunk_id as usize] = true;
+            let start_offset = run_start * self.block_size;
+            let end_offset = min((run_end + 1) * self.block_size, self.pos_end);
+            let len = (end_offset - start_offset) as usize;
+
+            self.source.seek(SeekFrom::Start(start_offset))?;
+            self.source
+                .read_exact(&mut warm[start_offset as usize..start_offset as usize + len])?;
+
+            self.loaded[run_start as usize..=run_end as usize].fill(true);
+
+            chunk_id = run_end + 1;
         }
 
         Ok(())
@@ -360,6 +381,7 @@ where
                 let n = self
                     .source
                     .read(self.cold[..range_len_ext as usize].as_mut())?;
+                self.cold_range = range.start..range.start + n as u64;
                 self.seek(SeekFrom::Start(range.end))?;
 
                 Ok(&self.cold[..min(range_len as usize, n)])
