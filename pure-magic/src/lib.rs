@@ -465,10 +465,12 @@ impl ScalarDataType {
             Self::lemsdosdate => Scalar::lemsdosdate(_read_le!(u16)),
             Self::lemsdostime => Scalar::lemsdostime(_read_le!(u16)),
             // Microsoft mixed-endian GUID: data1/data2/data3 little-endian, data4 raw.
-            Self::guid => Scalar::guid((_read_le!(u32) as u128) << 96
-                                | (_read_le!(u16) as u128) << 80
-                                | (_read_le!(u16) as u128) << 64
-                                | (_read_be!(u64) as u128)),
+            Self::guid => Scalar::guid(
+                (_read_le!(u32) as u128) << 96
+                    | (_read_le!(u16) as u128) << 80
+                    | (_read_le!(u16) as u128) << 64
+                    | (_read_be!(u64) as u128),
+            ),
             Self::leguid => Scalar::leguid(
                 (_read_le!(u32) as u128) << 96
                     | (_read_le!(u16) as u128) << 80
