@@ -715,18 +715,6 @@ struct RegexTest {
 }
 
 impl RegexTest {
-    #[inline(always)]
-    fn is_binary(&self) -> bool {
-        self.binary
-            || self.mods.contains(ReMod::ForceBin)
-            || self.str_mods.contains(StringMod::ForceBin)
-    }
-
-    #[inline(always)]
-    fn is_text(&self) -> bool {
-        self.mods.contains(ReMod::ForceText) || self.str_mods.contains(StringMod::ForceText)
-    }
-
     fn match_buf<'buf>(
         &self,
         off_buf: u64, // absolute buffer offset in content
@@ -961,16 +949,6 @@ impl StringTest {
             TestValue::Any => 0,
         }
     }
-
-    #[inline(always)]
-    fn is_binary(&self) -> bool {
-        self.binary || self.mods.contains(StringMod::ForceBin)
-    }
-
-    #[inline(always)]
-    fn is_text(&self) -> bool {
-        self.mods.contains(StringMod::ForceText)
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -1013,15 +991,6 @@ impl From<SearchTest> for Test {
 }
 
 impl SearchTest {
-    #[inline(always)]
-    fn is_binary(&self) -> bool {
-        (self.binary
-            || self.str_mods.contains(StringMod::ForceBin)
-            || self.re_mods.contains(ReMod::ForceBin))
-            && !(self.str_mods.contains(StringMod::ForceText)
-                || self.re_mods.contains(ReMod::ForceText))
-    }
-
     // off_buf: absolute buffer offset in content
     #[inline]
     fn match_buf<'buf>(&self, off_buf: u64, buf: &'buf [u8]) -> Option<MatchRes<'buf>> {
@@ -1841,47 +1810,89 @@ impl Test {
         }
     }
 
+    /// Whether this test carries an explicit `/b` (force-binary)
+    /// modifier, as opposed to a type's default classification.
     #[inline(always)]
-    fn is_binary(&self) -> bool {
+    fn has_explicit_bin_mod(&self) -> bool {
         match self {
-            Self::Name(_) => true,
-            Self::Use(_, _) => true,
-            Self::Scalar(_) => true,
-            Self::Float(_) => true,
-            Self::String(t) => !t.is_binary() & !t.is_text() || t.is_binary(),
-            Self::Search(t) => t.is_binary(),
-            Self::PString(_) => true,
-            Self::Regex(t) => !t.is_binary() & !t.is_text() || t.is_binary(),
-            Self::Clear => true,
-            Self::Default => true,
-            Self::Indirect(_) => true,
-            Self::String16(_) => true,
-            Self::Der => true,
+            Self::String(t) => t.mods.contains(StringMod::ForceBin),
+            Self::Search(t) => t.str_mods.contains(StringMod::ForceBin),
+            Self::Regex(t) => {
+                t.mods.contains(ReMod::ForceBin) || t.str_mods.contains(StringMod::ForceBin)
+            }
+            _ => false,
         }
     }
 
+    /// Same as [`Test::has_explicit_bin_mod`], for an explicit `/t`
+    /// (force-text) modifier.
     #[inline(always)]
-    fn is_text(&self) -> bool {
+    fn has_explicit_text_mod(&self) -> bool {
         match self {
-            Self::Name(_) => true,
-            Self::Use(_, _) => true,
-            Self::Indirect(_) => true,
-            Self::Clear => true,
-            Self::Default => true,
-            Self::String(t) => !t.is_binary() & !t.is_text() || t.is_text(),
-            Self::Regex(t) => !t.is_binary() & !t.is_text() || t.is_text(),
-            _ => !self.is_binary(),
+            Self::String(t) => t.mods.contains(StringMod::ForceText),
+            Self::Search(t) => t.str_mods.contains(StringMod::ForceText),
+            Self::Regex(t) => {
+                t.mods.contains(ReMod::ForceText) || t.str_mods.contains(StringMod::ForceText)
+            }
+            _ => false,
         }
     }
 
+    /// Type-based binary/text default, ignoring explicit `/b`/`/t`.
+    /// Numeric/string/pstring/string16/DER default to binary;
+    /// `regex`/`search` are content-sniffed; structural types have no
+    /// binary-or-text nature, hence `None`.
     #[inline(always)]
-    fn is_only_text(&self) -> bool {
-        self.is_text() && !self.is_binary()
+    fn type_default_is_binary(&self) -> Option<bool> {
+        match self {
+            Self::Scalar(_) | Self::Float(_) | Self::Der => Some(true),
+            Self::String(_) | Self::PString(_) | Self::String16(_) => Some(true),
+            Self::Search(t) => Some(t.binary),
+            Self::Regex(t) => Some(t.binary),
+            Self::Name(_) | Self::Use(_, _) | Self::Indirect(_) | Self::Clear | Self::Default => {
+                None
+            }
+        }
     }
 
+    /// Classifies the runtime stream-kind gate for this entry (cached on
+    /// [`Match`]). `/bt` together means never skip, not a contradiction.
+    /// Binary-default entries never skip either way; only default-text
+    /// skips, and only on a binary stream.
     #[inline(always)]
-    fn is_only_binary(&self) -> bool {
-        self.is_binary() && !self.is_text()
+    fn stream_gate(&self) -> StreamGate {
+        let explicit_bin = self.has_explicit_bin_mod();
+        let explicit_text = self.has_explicit_text_mod();
+        if explicit_bin && explicit_text {
+            return StreamGate::Never;
+        }
+        if explicit_bin {
+            return StreamGate::SkipOnText;
+        }
+        if explicit_text || self.type_default_is_binary() == Some(false) {
+            return StreamGate::SkipOnBinary;
+        }
+        StreamGate::Never
+    }
+}
+
+/// Cached classification of an entry's runtime stream-kind gate. See
+/// [`Test::stream_gate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum StreamGate {
+    SkipOnText,
+    SkipOnBinary,
+    Never,
+}
+
+impl StreamGate {
+    #[inline(always)]
+    fn should_skip(self, stream_kind: StreamKind) -> bool {
+        match self {
+            Self::SkipOnText => stream_kind.is_text(),
+            Self::SkipOnBinary => stream_kind.is_binary(),
+            Self::Never => false,
+        }
     }
 }
 
@@ -2109,12 +2120,14 @@ struct Match {
     test: Test,
     test_strength: u64,
     message: Option<Message>,
+    stream_gate: StreamGate,
 }
 
 impl From<Use> for Match {
     fn from(value: Use) -> Self {
         let test = Test::Use(value.switch_endianness, value.rule_name);
         let test_strength = test.strength();
+        let stream_gate = test.stream_gate();
         Self {
             line: value.line,
             depth: value.depth,
@@ -2122,6 +2135,7 @@ impl From<Use> for Match {
             test,
             test_strength,
             message: value.message,
+            stream_gate,
         }
     }
 }
@@ -2130,6 +2144,7 @@ impl From<Name> for Match {
     fn from(value: Name) -> Self {
         let test = Test::Name(value.name);
         let test_strength = test.strength();
+        let stream_gate = test.stream_gate();
         Self {
             line: value.line,
             depth: 0,
@@ -2137,11 +2152,18 @@ impl From<Name> for Match {
             test,
             test_strength,
             message: value.message,
+            stream_gate,
         }
     }
 }
 
 impl Match {
+    /// Whether the runtime stream-kind gate should skip this entry.
+    #[inline(always)]
+    fn should_skip_for_stream(&self, stream_kind: StreamKind) -> bool {
+        self.stream_gate.should_skip(stream_kind)
+    }
+
     /// Turns the `Match`'s offset into an absolute offset from the start of the stream
     #[inline(always)]
     fn offset_from_start<D: DataRead>(
@@ -2612,18 +2634,9 @@ impl EntryNode {
         let source = opt_source.unwrap_or("unknown");
         let line = self.entry.line;
 
-        // Mirrors libmagic's softmagic.c::match(): the binary/text gate only
-        // applies to top-level entries, not their sub-tests.
-        if self.root {
-            if self.entry.test.is_only_binary() && stream_kind.is_text() {
-                trace!("skip binary test source={source} line={line} stream_kind={stream_kind:?}");
-                return Ok(0);
-            }
-
-            if self.entry.test.is_only_text() && !stream_kind.is_text() {
-                trace!("skip text test source={source} line={line} stream_kind={stream_kind:?}");
-                return Ok(0);
-            }
+        if self.root && self.entry.should_skip_for_stream(stream_kind) {
+            trace!("skip test source={source} line={line} stream_kind={stream_kind:?}");
+            return Ok(0);
         }
 
         let (ok, opt_match_res) = self.entry.matches(
@@ -2768,6 +2781,8 @@ pub struct MagicRule {
     extensions: HashSet<String>,
     /// score used for rule ranking
     score: u64,
+    /// cached result of the (non-trivial) text/binary classification
+    is_text: bool,
     finalized: bool,
 }
 
@@ -2787,8 +2802,9 @@ impl MagicRule {
         Ok(v)
     }
 
-    /// Finalize a rule by searching for all extensions and computing its score
-    /// for ranking. In the `MagicRule` is already finalized it returns immediately.
+    /// Finalize a rule by searching for all extensions and computing its
+    /// score and text/binary classification for ranking. If the
+    /// `MagicRule` is already finalized it returns immediately.
     fn try_finalize(&mut self, deps: &HashMap<String, DependencyRule>) -> Result<(), Error> {
         if self.finalized {
             return Ok(());
@@ -2799,6 +2815,7 @@ impl MagicRule {
 
         self.extensions.extend(v.exts);
         self.score = v.score;
+        self.is_text = self.compute_is_text();
         self.finalized = true;
 
         Ok(())
@@ -2859,14 +2876,44 @@ impl MagicRule {
         )
     }
 
-    /// Checks if the rule is for matching against text content
+    /// Checks if the rule is for matching against text content.
     ///
     /// # Returns
     ///
     /// * `bool` - True if the rule is for text files
+    #[inline(always)]
     pub fn is_text(&self) -> bool {
-        self.entries.entry.test.is_text()
-            && self.entries.children.iter().all(|e| e.entry.test.is_text())
+        self.is_text
+    }
+
+    /// Computes the rule's text/binary classification, used for rule
+    /// ranking. Decided per rule group, not per entry: an explicit
+    /// `/b`/`/t` on the top-level entry decides the whole group;
+    /// otherwise it's an OR of each entry's own type default across the
+    /// group (top + children), with binary taking priority over text if
+    /// both appear.
+    fn compute_is_text(&self) -> bool {
+        let top = &self.entries.entry.test;
+
+        if top.has_explicit_bin_mod() {
+            return false;
+        }
+        if top.has_explicit_text_mod() {
+            return true;
+        }
+
+        // Binary wins on conflict, so the first `Some(true)` already
+        // pins the answer to `false` -- no need to scan further.
+        let mut any_text = false;
+        for t in std::iter::once(top).chain(self.entries.children.iter().map(|e| &e.entry.test)) {
+            match t.type_default_is_binary() {
+                Some(true) => return false,
+                Some(false) => any_text = true,
+                None => {}
+            }
+        }
+
+        any_text
     }
 
     /// Gets the rule's score used for ranking rules between them
