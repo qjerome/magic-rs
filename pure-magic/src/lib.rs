@@ -1874,6 +1874,15 @@ impl Test {
         }
         StreamGate::Never
     }
+
+    /// Returns true if the [`Test`] consumes bytes
+    #[inline(always)]
+    fn consumes_bytes(&self) -> bool {
+        !matches!(
+            self,
+            Test::Use(_, _) | Test::Indirect(_) | Test::Default | Test::Clear | Test::Name(_)
+        )
+    }
 }
 
 /// Cached classification of an entry's runtime stream-kind gate. See
@@ -1936,12 +1945,12 @@ impl IndOffset {
     fn read_offset<D: DataRead>(
         &self,
         haystack: &mut D,
-        rule_base_offset: Option<u64>,
+        offset_base: Option<u64>,
         last_upper_match_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
         let offset_address = match self.off_addr {
             DirOffset::Start(s) => {
-                let Some(o) = s.checked_add(rule_base_offset.unwrap_or_default()) else {
+                let Some(o) = s.checked_add(offset_base.unwrap_or_default()) else {
                     return Ok(None);
                 };
 
@@ -2169,7 +2178,7 @@ impl Match {
     fn offset_from_start<D: DataRead>(
         &self,
         haystack: &mut D,
-        rule_base_offset: Option<u64>,
+        offset_base: Option<u64>,
         last_level_offset: Option<u64>,
     ) -> Result<Option<u64>, io::Error> {
         match self.offset {
@@ -2183,8 +2192,7 @@ impl Match {
                 DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
             Offset::Indirect(ind_offset) => {
-                let Some(o) =
-                    ind_offset.read_offset(haystack, rule_base_offset, last_level_offset)?
+                let Some(o) = ind_offset.read_offset(haystack, offset_base, last_level_offset)?
                 else {
                     return Ok(None);
                 };
@@ -2192,6 +2200,33 @@ impl Match {
                 Ok(Some(o))
             }
         }
+    }
+
+    /// This entry's own absolute anchor position.
+    #[inline(always)]
+    fn anchor_offset<D: DataRead>(
+        &self,
+        haystack: &mut D,
+        buf_base_offset: Option<u64>,
+        offset_base: Option<u64>,
+        last_level_offset: Option<u64>,
+    ) -> Result<Option<u64>, io::Error> {
+        let Some(offset) = self.offset_from_start(haystack, offset_base, last_level_offset)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(match self.offset {
+            // the result we get for an indirect offset is relative to
+            // the start of the libmagic buffer so we need to add base to
+            // make it absolute.
+            Offset::Indirect(_) => buf_base_offset.unwrap_or_default().saturating_add(offset),
+            // Bare offsets are relative to offset_base -- see
+            // EntryNode::matches for how it's computed.
+            Offset::Direct(DirOffset::Start(_)) => {
+                offset_base.unwrap_or_default().saturating_add(offset)
+            }
+            _ => offset,
+        }))
     }
 
     /// this method emulates the buffer based matching
@@ -2214,9 +2249,7 @@ impl Match {
         magic: &mut Magic<'a>,
         stream_kind: StreamKind,
         state: &mut MatchState,
-        buf_base_offset: Option<u64>,
-        rule_base_offset: Option<u64>,
-        last_level_offset: Option<u64>,
+        offset: u64,
         haystack: &'h mut D,
         switch_endianness: bool,
         db: &'a MagicDb,
@@ -2232,28 +2265,6 @@ impl Match {
                 Error::MaximumRecursion(MAX_RECURSION),
             ));
         }
-
-        let Ok(Some(mut offset)) = self
-            .offset_from_start(haystack, rule_base_offset, last_level_offset)
-            .inspect_err(|e| debug!("source={source} line={line} failed at computing offset: {e}"))
-        else {
-            return Ok((false, None));
-        };
-
-        offset = match self.offset {
-            Offset::Indirect(_) => {
-                // the result we get for an indirect offset
-                // is relative to the start of the libmagic
-                // buffer so we need to add base to make it
-                // absolute.
-                buf_base_offset.unwrap_or_default().saturating_add(offset)
-            }
-            // offset from start are computed from rule base
-            Offset::Direct(DirOffset::Start(_)) => {
-                rule_base_offset.unwrap_or_default().saturating_add(offset)
-            }
-            _ => offset,
-        };
 
         match &self.test {
             Test::Clear => {
@@ -2623,7 +2634,7 @@ impl EntryNode {
         state: &mut MatchState,
         stream_kind: StreamKind,
         buf_base_offset: Option<u64>,
-        rule_base_offset: Option<u64>,
+        offset_base: Option<u64>,
         last_level_offset: Option<u64>,
         haystack: &mut D,
         db: &'r MagicDb,
@@ -2639,14 +2650,24 @@ impl EntryNode {
             return Ok(0);
         }
 
+        // Entry's own anchor position
+        let Some(own_anchor) = self
+            .entry
+            .anchor_offset(haystack, buf_base_offset, offset_base, last_level_offset)
+            .inspect_err(|e| debug!("source={source} line={line} failed at computing offset: {e}"))
+            .ok()
+            .flatten()
+        else {
+            // we cannot resolve offset at which we should match
+            return Ok(0);
+        };
+
         let (ok, opt_match_res) = self.entry.matches(
             opt_source,
             magic,
             stream_kind,
             state,
-            buf_base_offset,
-            rule_base_offset,
-            last_level_offset,
+            own_anchor,
             haystack,
             switch_endianness,
             db,
@@ -2731,24 +2752,28 @@ impl EntryNode {
 
             magic.update_strength(strength);
 
-            let end_upper_level = haystack.stream_position();
-
-            // we have to fix rule_base_offset if
-            // the rule_base_starts from end otherwise it
-            // breaks some offset computation in match
-            // see test_offset_bug_1 and test_offset_bug_2
-            // they implement the same test logic yet indirect
-            // offsets have to be different so that it works
-            // in libmagic/file
-            let rule_base_offset = if self.root {
-                match self.entry.offset {
-                    Offset::Direct(DirOffset::End(o)) => {
-                        Some(haystack.offset_from_start(SeekFrom::End(o)))
-                    }
-                    _ => rule_base_offset,
-                }
+            // Position handed to this entry's children as their `&`-relative
+            // base: the shared stream cursor, unless this entry doesn't
+            // consume bytes itself, in which case that cursor can't be
+            // trusted (e.g. left wherever `use`'s sub-scan ended up).
+            let end_upper_level = if self.entry.test.consumes_bytes() {
+                haystack.stream_position()
             } else {
-                rule_base_offset
+                own_anchor
+            };
+
+            // Anchor point for this entry's children: what a bare offset
+            // like `>>0` (or the "N" in an indirect `(N.b)`) counts from.
+            let offset_base = match self.entry.offset {
+                // A true end-relative top-level entry (`-N`) establishes a
+                // fresh anchor for its children
+                Offset::Direct(DirOffset::End(_)) if self.root => Some(own_anchor),
+                // An `&`-relative entry (`>&N`) clears the anchor for its
+                // own children, back to absolute file start.
+                Offset::Direct(DirOffset::LastUpper(_)) => None,
+                // Anything else (a plain `Start` continuation, or a
+                // non-end-relative root) leaves the inherited anchor as-is.
+                _ => offset_base,
             };
 
             for e in self.children.iter() {
@@ -2758,7 +2783,7 @@ impl EntryNode {
                     state,
                     stream_kind,
                     buf_base_offset,
-                    rule_base_offset,
+                    offset_base,
                     Some(end_upper_level),
                     haystack,
                     db,
@@ -2855,7 +2880,7 @@ impl MagicRule {
         magic: &mut Magic<'r>,
         stream_kind: StreamKind,
         buf_base_offset: Option<u64>,
-        rule_base_offset: Option<u64>,
+        offset_base: Option<u64>,
         haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
@@ -2867,7 +2892,7 @@ impl MagicRule {
             &mut MatchState::empty(),
             stream_kind,
             buf_base_offset,
-            rule_base_offset,
+            offset_base,
             None,
             haystack,
             db,
@@ -5097,6 +5122,99 @@ HelloWorld
         ",
             b"\x00TEST\x06toast\x00\x06twice\x00",
             "Bread is Toasted twice"
+        );
+    }
+
+    #[test]
+    fn test_offset_bug_8() {
+        // A bare (non-'&') nested offset under an '&'-relative sibling
+        // must resolve as absolute from file start, not relative to the
+        // enclosing end-relative top-level anchor.
+        //   -2 uleshort 0
+        //   >&-22 string PK\005\006
+        //   >>0 string SIG  <- must check absolute offset 0, not
+        //                      "top-level anchor" + 0.
+        assert_magic_match_bin!(
+            r"
+-2	uleshort	0
+>&-22	string	PK\005\006
+>>0	string	SIG	found SIG at absolute start
+            ",
+            b"SIG\x00\x00\x00\x00\x00PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            "found SIG at absolute start"
+        );
+    }
+
+    #[test]
+    fn test_offset_bug_9() {
+        // Same root cause as test_offset_bug_8, but for the "N" in an
+        // indirect `(N.b)` offset expression instead of a bare `>>N`
+        // continuation. Byte 0 holds 3: if `(0.b)` resolves absolute
+        // (correct, matching real file), it reads that 3 and dispatches
+        // `whichbyte` at offset 3, where "YES" sits. If it wrongly
+        // resolves relative to the stale end-relative anchor (byte 28,
+        // part of the `-2 uleshort 0` test, always 0 here), it
+        // dispatches at offset 0 instead, landing back on the literal
+        // byte 3 itself.
+        assert_magic_match_bin!(
+            r"
+-2	uleshort	0
+>&-22	string	PK\005\006
+>>(0.b)	use	whichbyte
+
+0	name	whichbyte
+>0	byte	0x03	found byte 0x03 (wrong: stale anchor)
+>0	string	YES	found YES marker (correct: absolute)
+            ",
+            b"\x03\x00\x00YES\x00\x00PK\x05\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            "found YES marker (correct: absolute)"
+        );
+    }
+
+    #[test]
+    fn test_offset_bug_10() {
+        // Regression (real-world case: magic-db/src/magdir/msooxml
+        // failing to detect .xlsx/.docx/.pptx). `inner`'s failed
+        // `search/1000` for "NEEDLE" scans all the way to EOF, leaving
+        // the shared stream cursor there. The sibling `default` entry
+        // reads nothing of its own, so it must use its own anchor
+        // (0x10) for its children's `&`-relative offsets instead of
+        // that leftover EOF cursor -- otherwise `>>&5` computes
+        // 40 + 5 = 45 (out of bounds) instead of landing on "TARGET"
+        // at byte 21.
+        assert_magic_match_bin!(
+            r"
+0	string	MAGIC
+>0x10	use	inner
+>0x10	default	x
+>>&5	string	TARGET	found target via correct anchor
+
+0	name	inner
+>0	search/1000	NEEDLE
+            ",
+            b"MAGIC\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00TARGET\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            "found target via correct anchor"
+        );
+    }
+
+    #[test]
+    fn test_offset_bug_11() {
+        // Same root cause as test_offset_bug_10, confirmed independently
+        // for `clear` (a `default` sibling isn't the only entry type that
+        // reads nothing of its own and so is vulnerable to inheriting a
+        // preceding `use`'s leftover stream position).
+        assert_magic_match_bin!(
+            r"
+0	string	MAGIC
+>0x10	use	inner
+>0x10	clear	x
+>>&5	string	TARGET	found target via correct anchor
+
+0	name	inner
+>0	search/1000	NEEDLE
+            ",
+            b"MAGIC\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00TARGET\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+            "found target via correct anchor"
         );
     }
 
