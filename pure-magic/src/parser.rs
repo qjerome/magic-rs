@@ -1015,21 +1015,22 @@ impl Test {
 
                 match test_type.as_rule() {
                     Rule::string => {
-                        let mut bin = false;
                         let v = match test_value.as_rule() {
                             Rule::string_value => {
-                                let s;
-                                (bin, s) = unescape_string_to_vec(test_value.as_str());
+                                let (_, s) = unescape_string_to_vec(test_value.as_str());
                                 TestValue::Value(s)
                             }
                             Rule::any_value => TestValue::Any,
                             _ => unimplemented!(),
                         };
 
+                        // libmagic always treats a plain `string` test
+                        // as binary by default regardless of content --
+                        // only an explicit /b or /t overrides this.
                         StringTest::from_pair_with_value(
                             test_type,
                             v,
-                            bin,
+                            true,
                             cmp_op.unwrap_or(CmpOp::Eq),
                         )?
                         .into()
@@ -1341,6 +1342,7 @@ impl Match {
         // parser guarantee not to panic
         let test = test.unwrap();
         let test_strength = test.strength();
+        let stream_gate = test.stream_gate();
 
         Ok(Self {
             line,
@@ -1350,6 +1352,7 @@ impl Match {
             test,
             test_strength,
             message,
+            stream_gate,
         })
     }
 }
@@ -1493,6 +1496,7 @@ impl MagicRule {
             entries,
             extensions: HashSet::new(),
             score: 0,
+            is_text: false,
             finalized: false,
         })
     }
