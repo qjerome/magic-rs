@@ -2559,7 +2559,6 @@ impl EntryNodeVisitor {
 
     fn merge(&mut self, other: Self) {
         self.exts.extend(other.exts);
-        self.score += other.score;
     }
 }
 
@@ -2573,21 +2572,19 @@ impl EntryNode {
             }
         }
 
-        // update score if depth
+        // score is the root entry's own strength alone
         if depth == 0 {
-            v.score += self.entry.test_strength;
+            let mut score = self.entry.test_strength;
+            if let Some(sm) = self.strength_mod.as_ref() {
+                score = sm.apply(score);
+            }
+            // libmagic gives entries with no message/description a bonus,
+            // since they rely on later continuations to print anything.
+            if self.entry.message.is_none() {
+                score += 1;
+            }
+            v.score = score;
         }
-
-        // Tests at deeper levels contribute less to the overall score.
-        // We use the minimum value to establish a lower bound for the rule's score,
-        // which helps prioritize rules based on their importance.
-        v.score += self
-            .children
-            .iter()
-            .map(|e| e.entry.test_strength)
-            .min()
-            .unwrap_or_default()
-            / max(1, depth as u64);
     }
 
     fn visit(
