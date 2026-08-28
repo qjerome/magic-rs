@@ -803,6 +803,22 @@ enum StringMod {
     OptBlank = 1 << 7,
 }
 
+impl StringModFlags {
+    /// Whether a match's consumption can genuinely exceed the matched
+    /// pattern's own length
+    #[inline(always)]
+    fn has_unbounded_length(&self) -> bool {
+        !self.is_disjoint(StringMod::CompactWhitespace | StringMod::OptBlank)
+    }
+
+    /// FullWordMatch needs to peek one byte past the pattern's own
+    /// length, to check that byte isn't part of the same word.
+    #[inline(always)]
+    fn word_boundary_lookahead(&self) -> u64 {
+        self.contains(StringMod::FullWordMatch) as u64
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StringTest {
     test_val: TestValue<Vec<u8>>,
@@ -998,10 +1014,17 @@ impl SearchTest {
 
         let needle = self.str.first()?;
 
-        while i < buf.len() {
+        // A match may only *start* within n_pos -- same as libmagic's own
+        // `idx < str_range` candidate loop
+        let scan_end = self
+            .n_pos
+            .map(|n| n.saturating_add(1).min(buf.len()))
+            .unwrap_or(buf.len());
+
+        while i < scan_end {
             // we cannot match if the first character isn't the same
             // so we accelerate the search by finding potential matches
-            let Some(k) = memchr(*needle, &buf[i..]) else {
+            let Some(k) = memchr(*needle, &buf[i..scan_end]) else {
                 break;
             };
 
@@ -1022,12 +1045,6 @@ impl SearchTest {
                     i += 1;
                     continue;
                 }
-            }
-
-            if let Some(npos) = self.n_pos
-                && i > npos
-            {
-                break;
             }
 
             let pos = i;
@@ -1386,10 +1403,12 @@ impl Test {
 
                             match t.cmp_op {
                                 CmpOp::Eq | CmpOp::Neq => {
-                                    if !t.has_length_mod() {
-                                        haystack.read_exact_count(str.len() as u64)?
-                                    } else {
+                                    if t.mods.has_unbounded_length() {
                                         haystack.read_count(FILE_BYTES_MAX as u64)?
+                                    } else {
+                                        let len =
+                                            str.len() as u64 + t.mods.word_boundary_lookahead();
+                                        haystack.read_count(len)?
                                     }
                                 }
                                 CmpOp::Lt | CmpOp::Gt => {
@@ -1458,8 +1477,17 @@ impl Test {
                 Ok(Some(ReadValue::Bytes(test_value_offset, read)))
             }
 
-            Self::Search(_) => {
-                let buf = haystack.read_count(FILE_BYTES_MAX as u64)?;
+            Self::Search(s) => {
+                let length = if s.str_mods.has_unbounded_length() {
+                    FILE_BYTES_MAX as u64
+                } else {
+                    s.n_pos
+                        .map(|n| n as u64)
+                        .unwrap_or(FILE_BYTES_MAX as u64)
+                        .saturating_add(s.str.len() as u64)
+                        .saturating_add(s.str_mods.word_boundary_lookahead())
+                };
+                let buf = haystack.read_count(length)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
             }
 
