@@ -1378,15 +1378,32 @@ impl DependencyRule {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct State {
+    root: bool,
+    is_named: bool,
+    strength_mod: Option<StrengthMod>,
+}
+
+impl State {
+    fn root() -> Self {
+        Self {
+            root: true,
+            ..Default::default()
+        }
+    }
+}
+
 impl EntryNode {
     fn from_entries(entries: Vec<Entry>) -> Result<Self, Error> {
-        Self::from_peekable(&mut entries.into_iter().peekable(), true)
+        Self::from_peekable(&mut entries.into_iter().peekable(), &mut State::root())
     }
 
     fn from_peekable<'span>(
         entries: &mut Peekable<impl Iterator<Item = Entry<'span>>>,
-        root: bool,
+        state: &mut State,
     ) -> Result<Self, Error> {
+        let root = state.root;
         let parent = match entries
             .next()
             .ok_or(Error::msg("rule must have at least one entry"))?
@@ -1397,9 +1414,12 @@ impl EntryNode {
 
         let mut children = vec![];
         let mut mimetype = None;
-        let mut strength_mod = None;
         let mut exts = HashSet::new();
         let mut apple = None;
+
+        if root {
+            state.is_named = matches!(parent.test, Test::Name(_));
+        }
 
         while let Some(e) = entries.peek() {
             match e {
@@ -1407,8 +1427,9 @@ impl EntryNode {
                     if m.depth <= parent.depth {
                         break;
                     } else if m.depth == parent.depth + 1 {
+                        state.root = false;
                         // we cannot panic since we guarantee first item is a Match
-                        children.push(EntryNode::from_peekable(entries, false)?)
+                        children.push(EntryNode::from_peekable(entries, state)?)
                     } else {
                         return Err(Error::parser(
                             format!("unexpected continuation level={}", m.depth),
@@ -1419,16 +1440,37 @@ impl EntryNode {
 
                 Entry::Flag(_, _) => {
                     // it cannot be otherwise
-                    if let Some(Entry::Flag(_, f)) = entries.next() {
+                    if let Some(Entry::Flag(span, f)) = entries.next() {
                         match f {
                             Flag::Mime(m) => mimetype = Some(m),
-                            Flag::Strength(s) => strength_mod = Some(s),
+                            Flag::Strength(s) => {
+                                if state.is_named {
+                                    return Err(Error::parser(
+                                        "strength setting is not supported in \"name\" magic entries",
+                                        span,
+                                    ));
+                                }
+
+                                if state.strength_mod.is_some() {
+                                    return Err(Error::parser(
+                                        "entry already has a strength type: only one !:strength is allowed per rule",
+                                        span,
+                                    ));
+                                }
+
+                                state.strength_mod = Some(s)
+                            }
                             Flag::Ext(s) => exts = s,
                             Flag::Apple(a) => apple = Some(a),
                         }
                     }
                 }
             }
+        }
+
+        let mut strength_mod = None;
+        if root {
+            strength_mod = state.strength_mod.take();
         }
 
         Ok(Self {

@@ -4120,7 +4120,7 @@ mod tests {
     }
 
     macro_rules! parse_assert {
-        ($rule:literal) => {
+        ($rule:expr) => {
             FileMagicParser::parse_str($rule, None)
                 .inspect_err(|e| eprintln!("{e}"))
                 .unwrap()
@@ -4483,6 +4483,86 @@ HelloWorld
             .expect_err("expect div by zero error");
         FileMagicParser::parse_str("0 ubyte/0 div by zero", None)
             .expect_err("expect div by zero error");
+    }
+
+    #[test]
+    fn test_strength_hoisted_to_root() {
+        // `!:strength` declared on a nested continuation must be treated
+        // exactly as if it had been declared on the group's root
+        let base_rule = r"
+0	string	MAGIC	found it
+>0	byte	x	x
+        ";
+        let with_strength_rule = r"
+0	string	MAGIC	found it
+>0	byte	x	x
+!:strength +100
+        ";
+
+        let mut db = MagicDb::new();
+        db.load(parse_assert!(base_rule));
+        db.load(parse_assert!(with_strength_rule));
+
+        // reached the top at load time
+        let modded_score = db.rules()[0].score();
+        let base_score = db.rules()[1].score();
+
+        assert_eq!(
+            modded_score,
+            base_score + 100,
+            "!:strength on a nested continuation must still affect the root's static score"
+        );
+
+        let base_strength = first_magic(base_rule, b"MAGIC", StreamKind::Binary)
+            .unwrap()
+            .strength();
+        let modded_strength = first_magic(with_strength_rule, b"MAGIC", StreamKind::Binary)
+            .unwrap()
+            .strength();
+
+        assert_eq!(
+            modded_strength,
+            base_strength + 100,
+            "!:strength on a nested continuation must still affect the runtime strength"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_strength_rejected() {
+        // real libmagic rejects a second !:strength in the same rule
+        FileMagicParser::parse_str(
+            r"
+0	string	MAGIC	found it
+!:strength +10
+>0	byte	x	x
+!:strength +20
+            ",
+            None,
+        )
+        .expect_err("a second !:strength in the same rule must be rejected");
+    }
+
+    #[test]
+    fn test_strength_on_name_entry_rejected() {
+        FileMagicParser::parse_str(
+            r"
+0	name	dep
+!:strength +10
+>0	byte	x	x
+            ",
+            None,
+        )
+        .expect_err("!:strength directly on a name entry must be rejected");
+
+        FileMagicParser::parse_str(
+            r"
+0	name	dep
+>0	byte	x	x
+!:strength +10
+            ",
+            None,
+        )
+        .expect_err("!:strength anywhere in a name-headed group must be rejected");
     }
 
     #[test]
