@@ -20,7 +20,7 @@ use crate::{
     ScalarTransform, SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod,
     StringModFlags, StringTest, Test, TestValue, Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
-    utils::nonmagic,
+    utils::{nonmagic, run_utf8_validation},
 };
 
 pub(crate) fn prepare_bytes_re(s: &[u8]) -> String {
@@ -123,18 +123,10 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
     result
 }
 
-#[inline(always)]
-fn is_printable_ascii(c: u8) -> bool {
-    c.is_ascii() && (c.is_ascii_graphic() || c.is_ascii_whitespace())
-}
-
 pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
     let mut result = Vec::new();
     let mut chars = s.bytes().peekable();
-    // this flags wether we replaced some binary values encoded in the
-    // pattern. It seems libmagic doesn't care if the encoded value is
-    // actually a valid ASCII character.
-    let mut binary = false;
+    let mut c_str = false;
     while let Some(c) = chars.next() {
         if c == b'\\' {
             if let Some(next_char) = chars.peek() {
@@ -175,11 +167,11 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
 
                         if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
                             // we reached end of string
-                            if chars.peek().is_none() && !binary && hex == 0 {
+                            if chars.peek().is_none() && hex == 0 {
+                                c_str = true;
                                 continue;
                             }
 
-                            binary = !is_printable_ascii(hex);
                             result.push(hex);
                         } else {
                             result.push(c); // Push the backslash if the hex sequence is invalid
@@ -201,11 +193,11 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                         }
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
                             // we reached end of string
-                            if chars.peek().is_none() && !binary && octal == 0 {
+                            if chars.peek().is_none() && octal == 0 {
+                                c_str = true;
                                 continue;
                             }
 
-                            binary = !is_printable_ascii(octal);
                             result.push(octal);
                         } else {
                             result.push(c); // Push the backslash if the octal sequence is invalid
@@ -223,6 +215,10 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
         }
     }
 
+    let binary = run_utf8_validation(&result).is_err();
+    if binary && c_str {
+        result.push(0)
+    }
     (binary, result)
 }
 

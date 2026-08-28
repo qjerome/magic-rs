@@ -4566,6 +4566,23 @@ HelloWorld
     }
 
     #[test]
+    fn test_search_binary_default_matches_libmagic_text_chars() {
+        // libmagic counts BEL (0x07) as text, not binary. Both
+        // assertions need a message, or a silent match looks identical
+        // to a correctly-skipped one.
+        assert_magic_not_match_bin!(r"0	search	\007test	found", b"\x07test");
+        assert_magic_match_text!(r"0	search	\007test	found", b"\x07test", "found");
+    }
+
+    #[test]
+    fn test_search_binary_default_accepts_valid_utf8() {
+        // A valid multi-byte UTF-8 escape sequence must default to
+        // text, not binary just because its bytes are >= 0x80.
+        assert_magic_not_match_bin!(r"0	search	caf\xc3\xa9	found", b"caf\xc3\xa9");
+        assert_magic_match_text!(r"0	search	caf\xc3\xa9	found", b"caf\xc3\xa9", "found");
+    }
+
+    #[test]
     fn test_belong() {
         // Test that a file with a four-byte value at offset 0 that matches the given value in big-endian byte order
         assert_magic_match_bin!("0 belong 0x12345678 Big-endian long", b"\x12\x34\x56\x78");
