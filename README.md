@@ -36,6 +36,51 @@ code.
 These come with a trade-off: see [Differences from
 libmagic](#differences-from-libmagic) below for what's out of scope.
 
+## Benchmarks
+
+### APIs
+
+This benchmark measures the speed of `pure-magic` vs `libmagic`, via the
+[`magic` crate](https://crates.io/crates/magic).
+
+| Benchmark | API | pure_magic | libmagic | Speedup |
+| --- | --- | --- | --- | --- |
+| single_large_file | file | **1.64 ms** | 4.17 ms | pure_magic 2.54x |
+| medium_file | file | **190.23 µs** | 318.31 µs | pure_magic 1.67x |
+| many_small_files_with_ext | file | **96.26 ms** | 287.78 ms | pure_magic 2.99x |
+| many_small_files_no_ext | file | **236.69 ms** | 290.14 ms | pure_magic 1.23x |
+| single_large_file | buffer | **108.70 µs** | 254.24 µs | pure_magic 2.34x |
+| medium_file | buffer | **44.68 µs** | 247.55 µs | pure_magic 5.54x |
+| many_small_files_with_ext | buffer | **82.36 ms** | 268.93 ms | pure_magic 3.27x |
+| many_small_files_no_ext | buffer | **228.93 ms** | 289.25 ms | pure_magic 1.26x |
+
+### CLI
+
+CLI benchmarks were run with [`hyperfine`](https://github.com/sharkdp/hyperfine),
+across corpus sizes sampled from a broad range of file types found in
+the user's home directory.
+
+|  files |        wiza (ms) |        file (ms) |  wiza/file | wiza ms/file | file ms/file | faster |
+| -------|------------------|------------------|------------|--------------|--------------|------- |
+|     50 |     62.9 ± 2.3   |     39.0 ± 2.5   |      1.61x |       1.258  |       0.780  |   file |
+|    100 |     82.1 ± 5.4   |     59.4 ± 2.9   |      1.38x |       0.821  |       0.594  |   file |
+|    250 |    138.1 ± 5.5   |    138.8 ± 3.6   |      0.99x |       0.552  |       0.555  |   wiza |
+|    500 |    271.2 ± 16.3  |    334.4 ± 15.8  |      0.81x |       0.542  |       0.669  |   wiza |
+|   1000 |    467.9 ± 12.8  |    701.9 ± 39.6  |      0.67x |       0.468  |       0.702  |   wiza |
+|   2000 |   1193.0 ± 49.0  |   1739.0 ± 46.0  |      0.69x |       0.597  |       0.870  |   wiza |
+|   4000 |   2723.0 ± 182.0 |   3089.0 ± 395.0 |      0.88x |       0.681  |       0.772  |   wiza |
+|   8000 |   3531.0 ± 87.0  |   5476.0 ± 130.0 |      0.64x |       0.441  |       0.684  |   wiza |
+
+What explains the crossover between `wiza` and `file`? `file` `mmap`s its
+precompiled `.mgc` database and casts the mapped bytes directly into its
+rule structs. `wiza` instead deserializes its entire embedded
+database into owned Rust values up front, so every invocation pays that
+full cost before it can evaluate a single rule, even when scanning just
+one file. Once that fixed cost is amortized across the corpus (around
+250 files in the table above), `wiza` is consistently faster. This
+matches the API benchmarks above, which don't include database loading
+at all, since the database is built once outside the timed loop.
+
 ## Crates
 
 | Crate | Description |
