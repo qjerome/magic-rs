@@ -32,6 +32,12 @@ code.
 - **Native Python bindings.** `pure-magic-rs` ships as a self-contained
   wheel with an embedded database, with no `libmagic` system dependency
   to install or link against.
+- **Single-pass, structured results.** One `first_magic_file`/
+  `first_magic_slice` call returns a `Magic` with message, MIME type,
+  extensions, and strength together. `libmagic`'s C API ties these to
+  mutually exclusive flags (`MAGIC_NONE`, `MAGIC_MIME_TYPE`,
+  `MAGIC_EXTENSION`) — getting all three means reconfiguring the cookie
+  with `magic_setflags()` and rescanning the same data 2-3 times.
 
 These come with a trade-off: see [Differences from
 libmagic](#differences-from-libmagic) below for what's out of scope.
