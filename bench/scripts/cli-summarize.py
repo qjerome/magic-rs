@@ -21,9 +21,21 @@ for f in glob.glob("target/benchmarks/cli/wiza_vs_file_*.md"):
 
 rows.sort()
 
-print(f"| {'files':>6} | {'wiza (ms)':>16} | {'file (ms)':>16} | {'wiza/file':>10} | {'wiza ms/file':>12} | {'file ms/file':>12} | {'faster':>6} |")
+print(f"| {'files':>6} | {'wiza (ms)':>16} | {'file (ms)':>16} | {'file/wiza':>10} | {'wiza ms/file':>12} | {'file ms/file':>12} | {'faster':>6} |")
 print(f"| {'-'*6}-|-{'-'*16}-|-{'-'*16}-|-{'-'*10}-|-{'-'*12}-|-{'-'*12}-|-{'-'*6} |")
 for n, w, we, f, fe in rows:
-    ratio = w / f
-    faster = "wiza" if ratio < 1 else "file"
-    print(f"| {n:>6} | {w:>8.1f} ± {we:<5.1f} | {f:>8.1f} ± {fe:<5.1f} | {ratio:>9.2f}x | {w/n:>11.3f}  | {f/n:>11.3f}  | {faster:>6} |")
+    ratio = f / w
+    faster = "wiza" if ratio > 1 else "file"
+
+    w_str = f"{w:.1f} ± {we:<5.1f}"
+    f_str = f"{f:.1f} ± {fe:<5.1f}"
+    w_per_file = f"{w/n:.3f}"
+    f_per_file = f"{f/n:.3f}"
+    if faster == "wiza":
+        w_str = f"**{w_str}**"
+        w_per_file = f"**{w_per_file}**"
+    else:
+        f_str = f"**{f_str}**"
+        f_per_file = f"**{f_per_file}**"
+
+    print(f"| {n:>6} | {w_str:>16} | {f_str:>16} | {ratio:>9.2f}x | {w_per_file:>12} | {f_per_file:>12} | {faster:>6} |")
