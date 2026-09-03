@@ -66,16 +66,17 @@ CLI benchmarks were run with [`hyperfine`](https://github.com/sharkdp/hyperfine)
 across corpus sizes sampled from a broad range of file types found in
 the user's home directory.
 
-|  files |        wiza (ms) |        file (ms) |  wiza/file | wiza ms/file | file ms/file | faster |
+|  files |        wiza (ms) |        file (ms) |  file/wiza | wiza ms/file | file ms/file | faster |
 | -------|------------------|------------------|------------|--------------|--------------|------- |
-|     50 |     62.9 ± 2.3   |     39.0 ± 2.5   |      1.61x |       1.258  |       0.780  |   file |
-|    100 |     82.1 ± 5.4   |     59.4 ± 2.9   |      1.38x |       0.821  |       0.594  |   file |
-|    250 |    138.1 ± 5.5   |    138.8 ± 3.6   |      0.99x |       0.552  |       0.555  |   wiza |
-|    500 |    271.2 ± 16.3  |    334.4 ± 15.8  |      0.81x |       0.542  |       0.669  |   wiza |
-|   1000 |    467.9 ± 12.8  |    701.9 ± 39.6  |      0.67x |       0.468  |       0.702  |   wiza |
-|   2000 |   1193.0 ± 49.0  |   1739.0 ± 46.0  |      0.69x |       0.597  |       0.870  |   wiza |
-|   4000 |   2723.0 ± 182.0 |   3089.0 ± 395.0 |      0.88x |       0.681  |       0.772  |   wiza |
-|   8000 |   3531.0 ± 87.0  |   5476.0 ± 130.0 |      0.64x |       0.441  |       0.684  |   wiza |
+|     50 |       61.1 ± 2.3 |   **38.0 ± 1.5** |      0.62x |        1.222 |    **0.760** |   file |
+|    100 |       89.4 ± 5.3 |   **65.9 ± 3.6** |      0.74x |        0.894 |    **0.659** |   file |
+|    250 |  **156.1 ± 6.4** |      176.9 ± 6.1 |      1.13x |    **0.624** |        0.708 |   wiza |
+|    500 | **280.3 ± 13.4** |     473.6 ± 26.2 |      1.69x |    **0.561** |        0.947 |   wiza |
+|   1000 | **492.5 ± 27.3** |     759.6 ± 29.9 |      1.54x |    **0.492** |        0.760 |   wiza |
+|   2000 | **993.1 ± 55.9** |    1530.3 ± 78.6 |      1.54x |    **0.497** |        0.765 |   wiza |
+|   4000 | **2552.0 ± 86.0** |    3678.0 ± 59.0 |      1.44x |    **0.638** |        0.919 |   wiza |
+|   8000 | **6100.0 ± 69.0** |   8501.0 ± 102.0 |      1.39x |    **0.762** |        1.063 |   wiza |
+
 
 What explains the crossover between `wiza` and `file`? `file` `mmap`s its
 precompiled `.mgc` database and casts the mapped bytes directly into its
