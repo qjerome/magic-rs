@@ -9,14 +9,13 @@ use std::{
 use dyf::FormatString;
 use pest::{Parser, iterators::Pair};
 use pest_derive::Parser;
-use regex::bytes;
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::{
     CmpOp, DependencyRule, DirOffset, Entry, EntryNode, Error, Flag, FloatTest, FloatTransform,
     IndOffset, IndirectMod, IndirectModFlags, MagicRule, MagicSource, Match, Message, Name, Offset,
-    OffsetType, Op, PStringLen, PStringTest, ReMod, ReModFlags, RegexTest, ScalarTest,
+    OffsetType, Op, PStringLen, PStringTest, ReMod, ReModFlags, Regex, RegexTest, ScalarTest,
     ScalarTransform, SearchTest, Shift, StrengthMod, String16Encoding, String16Test, StringMod,
     StringModFlags, StringTest, Test, TestValue, Use,
     numeric::{FloatDataType, Scalar, ScalarDataType},
@@ -879,7 +878,7 @@ impl RegexTest {
         let ascii_re = format!("(?-u){prep_re}");
 
         Ok(Self {
-            re: bytes::Regex::new(&ascii_re)?,
+            re: Regex::new(ascii_re)?,
             length,
             mods,
             str_mods,

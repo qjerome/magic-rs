@@ -156,10 +156,11 @@ use std::{
     io::{self, Read, SeekFrom, Write},
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
+    sync::OnceLock,
 };
 use tar::Archive;
 use thiserror::Error;
-use tracing::{Level, debug, enabled, trace};
+use tracing::{Level, debug, enabled, error, trace};
 
 use crate::{
     numeric::{Float, FloatDataType, Scalar, ScalarDataType},
@@ -684,28 +685,77 @@ enum ReMod {
     TrimMatch = 1 << 5,
 }
 
-fn serialize_regex<S>(re: &bytes::Regex, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    re.as_str().serialize(serializer)
+#[derive(Debug, Clone)]
+struct Regex {
+    s: String,
+    captures_len: usize,
+    re: OnceLock<bytes::Regex>,
 }
 
-fn deserialize_regex<'de, D>(deserializer: D) -> Result<bytes::Regex, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let wrapper = String::deserialize(deserializer)?;
-    bytes::Regex::new(&wrapper).map_err(serde::de::Error::custom)
+#[derive(Serialize, Deserialize)]
+struct SerializedRegex {
+    s: String,
+    captures_len: usize,
+}
+
+impl Serialize for Regex {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        SerializedRegex {
+            s: self.s.clone(),
+            captures_len: self.captures_len,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Regex {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let sr = SerializedRegex::deserialize(deserializer)?;
+        Ok(Self {
+            s: sr.s,
+            captures_len: sr.captures_len,
+            re: OnceLock::new(),
+        })
+    }
+}
+
+impl Regex {
+    #[inline]
+    fn new(s: String) -> Result<Self, regex::Error> {
+        let compiled = bytes::Regex::new(&s)?;
+        let captures_len = compiled.captures_len();
+        let re = OnceLock::from(compiled);
+        Ok(Self {
+            s,
+            captures_len,
+            re,
+        })
+    }
+
+    #[inline]
+    fn get_re(&self) -> Result<&bytes::Regex, regex::Error> {
+        match self.re.get() {
+            Some(re) => Ok(re),
+            None => {
+                let _ = self.re.set(bytes::Regex::new(self.s.as_str())?);
+                Ok(self
+                    .re
+                    .get()
+                    .expect("unreachable: cell is guaranteed to contain a value"))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RegexTest {
-    #[serde(
-        serialize_with = "serialize_regex",
-        deserialize_with = "deserialize_regex"
-    )]
-    re: bytes::Regex,
+    re: Regex,
     length: Option<usize>,
     mods: ReModFlags,
     str_mods: StringModFlags,
@@ -735,7 +785,18 @@ impl RegexTest {
                         break;
                     }
 
-                    if let Some(re_match) = self.re.find(line) {
+                    if let Some(re_match) = self
+                        .re
+                        .get_re()
+                        .inspect_err(|e| {
+                            error!(
+                                "deferred compile of regex pattern {:?} failed: {e}",
+                                self.re.s
+                            )
+                        })
+                        .ok()?
+                        .find(line)
+                    {
                         // the offset of the string is computed from the start of the buffer
                         let start_offset = off_txt + re_match.start() as u64;
 
@@ -763,15 +824,25 @@ impl RegexTest {
             }
 
             StreamKind::Binary => {
-                self.re.find(buf).map(|re_match| {
-                    MatchRes::Bytes(
-                        // the offset of the string is computed from the start of the buffer
-                        off_buf + re_match.start() as u64,
-                        None,
-                        re_match.as_bytes(),
-                        Encoding::Utf8,
-                    )
-                })
+                self.re
+                    .get_re()
+                    .inspect_err(|e| {
+                        error!(
+                            "deferred compile of regex pattern {:?} failed: {e}",
+                            self.re.s
+                        )
+                    })
+                    .ok()?
+                    .find(buf)
+                    .map(|re_match| {
+                        MatchRes::Bytes(
+                            // the offset of the string is computed from the start of the buffer
+                            off_buf + re_match.start() as u64,
+                            None,
+                            re_match.as_bytes(),
+                            Encoding::Utf8,
+                        )
+                    })
             }
         };
 
@@ -1739,7 +1810,7 @@ impl Test {
                 // we divide length by the number of capture group
                 // which gives us a value close to he average string
                 // length match in the regex.
-                let v = r.non_magic_len / r.re.captures_len();
+                let v = r.non_magic_len / r.re.captures_len.max(1);
 
                 let len = r
                     .length
