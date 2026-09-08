@@ -9,7 +9,7 @@ for f in glob.glob("target/benchmarks/cli/wiza_vs_file_*.md"):
     unit = unit_match.group(1)
     mult = 1000.0 if unit == 's' else 1.0
 
-    wiza_line = re.search(r'\| `[^`]*wiza`\s*\|\s*([\d.]+)\s*±\s*([\d.]+)', text)
+    wiza_line = re.search(r'\| `[^`]*wiza.*?`\s*\|\s*([\d.]+)\s*±\s*([\d.]+)', text)
     file_line = re.search(r'\| `[^`]*\bfile`\s*\|\s*([\d.]+)\s*±\s*([\d.]+)', text)
 
     wiza_ms = float(wiza_line.group(1)) * mult
