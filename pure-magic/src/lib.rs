@@ -154,6 +154,7 @@ use std::{
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
+    mem::swap,
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
     sync::OnceLock,
@@ -2352,12 +2353,13 @@ impl Match {
         haystack: &'h mut D,
         switch_endianness: bool,
         db: &'a MagicDb,
-        depth: usize,
+        rec_depth: usize,
+        test_depth: usize,
     ) -> Result<(bool, Option<MatchRes<'h>>), Error> {
         let source = source.unwrap_or("unknown");
         let line = self.line;
 
-        if depth >= MAX_RECURSION {
+        if rec_depth >= MAX_RECURSION {
             return Err(Error::localized(
                 source,
                 line,
@@ -2405,7 +2407,8 @@ impl Match {
                     haystack,
                     db,
                     switch_endianness,
-                    depth.saturating_add(1),
+                    rec_depth.saturating_add(1),
+                    test_depth,
                 )?;
 
                 // The name is always true, so we consider there to be a match
@@ -2443,7 +2446,8 @@ impl Match {
                         haystack,
                         db,
                         false,
-                        depth.saturating_add(1),
+                        rec_depth.saturating_add(1),
+                        test_depth,
                     )?);
 
                     if nmatch > 0 {
@@ -2647,6 +2651,7 @@ struct EntryNode {
 struct EntryNodeVisitor {
     exts: HashSet<String>,
     score: u64,
+    max_score: u64,
 }
 
 impl EntryNodeVisitor {
@@ -2658,6 +2663,7 @@ impl EntryNodeVisitor {
 
     fn merge(&mut self, other: Self) {
         self.exts.extend(other.exts);
+        self.max_score += other.max_score;
     }
 }
 
@@ -2671,8 +2677,7 @@ impl EntryNode {
             }
         }
 
-        // score is the root entry's own strength alone
-        if depth == 0 {
+        if self.root {
             let mut score = self.entry.test_strength;
             if let Some(sm) = self.strength_mod.as_ref() {
                 score = sm.apply(score);
@@ -2683,7 +2688,28 @@ impl EntryNode {
                 score += 1;
             }
             v.score = score;
+
+            v.max_score = v
+                .max_score
+                .saturating_add(score)
+                .saturating_add(self.best_path_bonus(depth));
         }
+    }
+
+    /// The strongest additional strength achievable from a single
+    /// root-to-leaf path through this node's local continuation tree.
+    fn best_path_bonus(&self, depth: usize) -> u64 {
+        self.children
+            .iter()
+            // `Test::Use` is excluded -- handled separately via `EntryNodeVisitor::merge`.
+            .filter(|c| !matches!(c.entry.test, Test::Use(_, _)))
+            .map(|c| {
+                let d = depth.saturating_add(1);
+                // Mirror runtime computation
+                (c.entry.test_strength >> d).saturating_add(c.best_path_bonus(d))
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     fn visit(
@@ -2696,24 +2722,24 @@ impl EntryNode {
         // updating visitor
         self.update_visitor(v, depth);
 
+        // Merge the dependency's contribution too, without skipping
+        // recursion into this entry's own children below.
+        if let Test::Use(_, ref name) = self.entry.test
+            && !marked.contains(name)
+        {
+            marked.insert(name.clone());
+
+            if let Some(r) = deps.get(name) {
+                let dv = r.rule.visit_all_entries(deps, marked, depth)?;
+                v.merge(dv);
+            } else {
+                return Err(Error::MissingRule(name.clone()));
+            }
+        }
+
         // recursively visiting
         for c in self.children.iter() {
-            if let Test::Use(_, ref name) = c.entry.test {
-                if marked.contains(name) {
-                    continue;
-                }
-
-                marked.insert(name.clone());
-
-                if let Some(r) = deps.get(name) {
-                    let dv = r.rule.visit_all_entries(deps, marked)?;
-                    v.merge(dv);
-                } else {
-                    return Err(Error::MissingRule(name.clone()));
-                }
-            } else {
-                c.visit(v, deps, marked, depth + 1)?;
-            }
+            c.visit(v, deps, marked, depth + 1)?;
         }
 
         Ok(())
@@ -2735,7 +2761,8 @@ impl EntryNode {
         haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
-        depth: usize,
+        rec_depth: usize,  // recursion depth
+        test_depth: usize, // test entry depth
     ) -> Result<u64, Error> {
         let mut nmatch = 0u64;
         let source = opt_source.unwrap_or("unknown");
@@ -2767,7 +2794,8 @@ impl EntryNode {
             haystack,
             switch_endianness,
             db,
-            depth,
+            rec_depth,
+            test_depth,
         )?;
 
         if ok {
@@ -2832,11 +2860,9 @@ impl EntryNode {
             // to implementation differences. Let's wait and see if that is a real issue.
             let mut strength = self.entry.test_strength;
 
-            let continuation_level = self.entry.continuation_level().0 as u64;
-            if self.entry.message.is_none() && continuation_level < 3 {
-                strength = strength.saturating_add(continuation_level);
-            }
+            strength >>= test_depth;
 
+            // `strength_mod` is only ever `Some` on the root entry
             if let Some(sm) = self.strength_mod.as_ref() {
                 strength = sm.apply(strength);
             }
@@ -2884,7 +2910,8 @@ impl EntryNode {
                     haystack,
                     db,
                     switch_endianness,
-                    depth,
+                    rec_depth,
+                    test_depth.saturating_add(1),
                 )?);
             }
         }
@@ -2905,6 +2932,7 @@ pub struct MagicRule {
     /// cached result of the (non-trivial) text/binary classification
     is_text: bool,
     finalized: bool,
+    max_score: u64,
 }
 
 impl MagicRule {
@@ -2917,9 +2945,10 @@ impl MagicRule {
         &self,
         deps: &HashMap<String, DependencyRule>,
         marked: &mut HashSet<String>,
+        depth: usize,
     ) -> Result<EntryNodeVisitor, Error> {
         let mut v = EntryNodeVisitor::new();
-        self.entries.visit(&mut v, deps, marked, 0)?;
+        self.entries.visit(&mut v, deps, marked, depth)?;
         Ok(v)
     }
 
@@ -2932,17 +2961,19 @@ impl MagicRule {
         }
 
         // rule can be finalized all deps are found
-        let v = self.visit_all_entries(deps, &mut HashSet::new())?;
+        let v = self.visit_all_entries(deps, &mut HashSet::new(), 0)?;
 
         self.extensions.extend(v.exts);
         self.score = v.score;
         self.is_text = self.compute_is_text();
         self.finalized = true;
+        self.max_score = v.max_score;
 
         Ok(())
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn magic_entrypoint<'r, D: DataRead>(
         &'r self,
         magic: &mut Magic<'r>,
@@ -2950,7 +2981,8 @@ impl MagicRule {
         haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
-        depth: usize,
+        rec_depth: usize,
+        test_depth: usize,
     ) -> Result<u64, Error> {
         self.entries.matches(
             self.source.as_deref(),
@@ -2963,7 +2995,8 @@ impl MagicRule {
             haystack,
             db,
             switch_endianness,
-            depth,
+            rec_depth,
+            test_depth,
         )
     }
 
@@ -2980,7 +3013,8 @@ impl MagicRule {
         haystack: &mut D,
         db: &'r MagicDb,
         switch_endianness: bool,
-        depth: usize,
+        rec_depth: usize,
+        test_depth: usize,
     ) -> Result<u64, Error> {
         self.entries.matches(
             self.source.as_deref(),
@@ -2993,7 +3027,8 @@ impl MagicRule {
             haystack,
             db,
             switch_endianness,
-            depth,
+            rec_depth,
+            test_depth,
         )
     }
 
@@ -3367,8 +3402,9 @@ impl<'m> Magic<'m> {
 
     #[inline(always)]
     fn update_strength(&mut self, value: u64) {
+        debug!("update strength = {} + {value}", self.strength);
         self.strength = self.strength.saturating_add(value);
-        debug!("updated strength = {:?}", self.strength)
+        debug!("updated strength = {}", self.strength)
     }
 
     /// Gets the detected MIME type
@@ -3818,11 +3854,9 @@ impl MagicDb {
             return Ok(magic);
         }
 
-        let mut marked = vec![false; self.rules.len()];
-
         macro_rules! do_magic {
             ($rule: expr) => {{
-                $rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0)?;
+                $rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0, 0)?;
 
                 if !magic.message.is_empty() {
                     magic.set_stream_kind(stream_kind);
@@ -3837,21 +3871,25 @@ impl MagicDb {
         if let Some(ext) = extension.map(|e| e.to_lowercase())
             && !ext.is_empty()
         {
+            let mut marked = vec![false; self.rules.len()];
             for rule in self.rules.iter().filter(|r| r.extensions.contains(&ext)) {
                 do_magic!(rule);
                 if let Some(f) = marked.get_mut(rule.id) {
                     *f = true
                 }
             }
-        }
-
-        for rule in self
-            .rules
-            .iter()
-            // we don't run again rules run by extension
-            .filter(|r| !*marked.get(r.id).unwrap_or(&false))
-        {
-            do_magic!(rule)
+            for rule in self
+                .rules
+                .iter()
+                // we don't run again rules run by extension
+                .filter(|r| !*marked.get(r.id).unwrap_or(&false))
+            {
+                do_magic!(rule)
+            }
+        } else {
+            for rule in self.rules.iter() {
+                do_magic!(rule)
+            }
         }
 
         Self::magic_default(haystack, stream_kind, &mut magic);
@@ -3940,7 +3978,7 @@ impl MagicDb {
         }
 
         for rule in self.rules.iter() {
-            rule.magic_entrypoint(&mut magic, stream_kind, haystack, self, false, 0)?;
+            rule.magic_entrypoint(&mut magic, stream_kind, haystack, self, false, 0, 0)?;
 
             // it is possible we have a strength with no message
             if !magic.message.is_empty() {
@@ -4008,18 +4046,66 @@ impl MagicDb {
     #[inline(always)]
     fn best_magic_with_stream_kind<R: DataRead>(
         &self,
-        reader: &mut R,
+        haystack: &mut R,
         stream_kind: StreamKind,
+        extension: Option<&str>,
     ) -> Result<Magic<'_>, Error> {
-        let magics = self.all_magics_sort_with_stream_kind(reader, stream_kind)?;
+        // re-using magic makes this function faster
+        let mut magic = Magic::default();
+        let mut best = Magic::default();
+        let mut best_id = None;
 
-        // magics is guaranteed to contain at least the
-        // default magic but we unwrap to avoid any panic
-        Ok(magics.into_iter().next().unwrap_or_else(|| {
-            let mut magic = Magic::default();
-            Self::magic_default(reader, stream_kind, &mut magic);
-            magic
-        }))
+        if Self::try_hard_magic(haystack, stream_kind, &mut magic)? {
+            swap(&mut magic, &mut best);
+            magic.reset();
+        }
+
+        macro_rules! do_best {
+            ($rule: expr) => {{
+                $rule.magic_entrypoint(&mut magic, stream_kind, haystack, &self, false, 0, 0)?;
+
+                if !magic.message.is_empty()
+                    && (magic.strength > best.strength || best.message.is_empty())
+                {
+                    magic.set_stream_kind(stream_kind);
+                    magic.set_source($rule.source.as_deref());
+                    swap(&mut magic, &mut best);
+                    let _ = best_id.insert($rule.id);
+                }
+
+                magic.reset();
+            }};
+        }
+
+        let ext = extension.map(|e| e.to_lowercase());
+        if let Some(ext) = ext.as_ref()
+            && !ext.is_empty()
+        {
+            for rule in self.rules.iter().filter(|r| r.extensions.contains(ext)) {
+                // don't prune while best is empty -- a 0-strength match still beats none
+                if !best.message.is_empty() && rule.max_score <= best.strength {
+                    continue;
+                }
+                do_best!(rule);
+            }
+        }
+
+        for rule in self.rules.iter() {
+            // don't prune while best is empty -- a 0-strength match still beats none
+            if (!best.message.is_empty() && rule.max_score <= best.strength)
+                || best_id == Some(rule.id)
+            {
+                continue;
+            }
+
+            do_best!(rule)
+        }
+
+        if best.message.is_empty() {
+            Self::magic_default(haystack, stream_kind, &mut best);
+        }
+
+        Ok(best)
     }
 
     /// Detects the best [`Magic`] matching a given content.
@@ -4037,9 +4123,13 @@ impl MagicDb {
     /// * Use this method **only** if you need to re-use a `reader` for future **read** operations.
     /// * Use [`DataReader`] to create a generic `reader`
     #[inline]
-    pub fn best_magic<R: DataRead>(&self, r: &mut R) -> Result<Magic<'_>, Error> {
+    pub fn best_magic<R: DataRead>(
+        &self,
+        r: &mut R,
+        extension: Option<&str>,
+    ) -> Result<Magic<'_>, Error> {
         let stream_kind = guess_stream_kind(r.read_range(0..FILE_BYTES_MAX as u64)?);
-        self.best_magic_with_stream_kind(r, stream_kind)
+        self.best_magic_with_stream_kind(r, stream_kind, extension)
     }
 
     /// Detects the best matching [`Magic`] from a file path.
@@ -4051,7 +4141,8 @@ impl MagicDb {
     ///
     /// Returns an error if the file cannot be opened or if magic detection fails.
     pub fn best_magic_file<P: AsRef<Path>>(&self, path: P) -> Result<Magic<'_>, Error> {
-        self.best_magic(&mut DataReader::from_file(File::open(path)?)?)
+        let ext = path.as_ref().extension().and_then(|e| e.to_str());
+        self.best_magic(&mut DataReader::from_file(File::open(&path)?)?, ext)
     }
 
     /// Detects the best matching [`Magic`] from an in-memory byte slice.
@@ -4062,8 +4153,12 @@ impl MagicDb {
     /// # Errors
     ///
     /// Returns an error if magic detection fails.
-    pub fn best_magic_slice<S: AsRef<[u8]>>(&self, slice: S) -> Result<Magic<'_>, Error> {
-        self.best_magic(&mut DataReader::from_slice(slice.as_ref()))
+    pub fn best_magic_slice<S: AsRef<[u8]>>(
+        &self,
+        slice: S,
+        extension: Option<&str>,
+    ) -> Result<Magic<'_>, Error> {
+        self.best_magic(&mut DataReader::from_slice(slice.as_ref()), extension)
     }
 
     /// Serializes the database to a generic writer implementing [`io::Write`]
@@ -4164,7 +4259,7 @@ mod tests {
         };
     }
 
-    fn first_magic(
+    fn best_magic(
         rule: &str,
         content: &[u8],
         stream_kind: StreamKind,
@@ -4176,7 +4271,7 @@ mod tests {
                 .unwrap(),
         );
         let mut reader = BufReader::from_slice(content);
-        let v = md.best_magic_with_stream_kind(&mut reader, stream_kind)?;
+        let v = md.best_magic_with_stream_kind(&mut reader, stream_kind, None)?;
         Ok(v.into_owned())
     }
 
@@ -4199,10 +4294,10 @@ mod tests {
     }
 
     macro_rules! assert_magic_match_bin {
-        ($rule: literal, $content:literal) => {{ first_magic($rule, $content, StreamKind::Binary).unwrap() }};
+        ($rule: literal, $content:literal) => {{ best_magic($rule, $content, StreamKind::Binary).unwrap() }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
-                first_magic($rule, $content, StreamKind::Binary)
+                best_magic($rule, $content, StreamKind::Binary)
                     .unwrap()
                     .message(),
                 $message
@@ -4211,10 +4306,10 @@ mod tests {
     }
 
     macro_rules! assert_magic_match_text {
-        ($rule: literal, $content:literal) => {{ first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8)).unwrap() }};
+        ($rule: literal, $content:literal) => {{ best_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8)).unwrap() }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
-                first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
+                best_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
                     .unwrap()
                     .message(),
                 $message
@@ -4225,7 +4320,7 @@ mod tests {
     macro_rules! assert_magic_not_match_text {
         ($rule: literal, $content:literal) => {{
             assert!(
-                first_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
+                best_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
                     .unwrap()
                     .is_default()
             );
@@ -4235,7 +4330,7 @@ mod tests {
     macro_rules! assert_magic_not_match_bin {
         ($rule: literal, $content:literal) => {{
             assert!(
-                first_magic($rule, $content, StreamKind::Binary)
+                best_magic($rule, $content, StreamKind::Binary)
                     .unwrap()
                     .is_default()
             );
@@ -4406,7 +4501,7 @@ HelloWorld
 
     #[test]
     fn test_max_recursion() {
-        let res = first_magic(
+        let res = best_magic(
             r#"0	indirect x"#,
             b"#!          /usr/bin/luatex ",
             StreamKind::Binary,
@@ -4534,10 +4629,10 @@ HelloWorld
 0 string CD nested match
 "#;
 
-        let m = first_magic(rule, b"ABCD", StreamKind::Binary).unwrap();
+        let m = best_magic(rule, b"ABCD", StreamKind::Binary).unwrap();
         assert_eq!(m.message(), "contains: nested match");
 
-        let m = first_magic(rule, b"ABXX", StreamKind::Binary).unwrap();
+        let m = best_magic(rule, b"ABXX", StreamKind::Binary).unwrap();
         assert!(m.is_default());
     }
 
@@ -4584,10 +4679,10 @@ HelloWorld
             "!:strength on a nested continuation must still affect the root's static score"
         );
 
-        let base_strength = first_magic(base_rule, b"MAGIC", StreamKind::Binary)
+        let base_strength = best_magic(base_rule, b"MAGIC", StreamKind::Binary)
             .unwrap()
             .strength();
-        let modded_strength = first_magic(with_strength_rule, b"MAGIC", StreamKind::Binary)
+        let modded_strength = best_magic(with_strength_rule, b"MAGIC", StreamKind::Binary)
             .unwrap()
             .strength();
 
@@ -5413,7 +5508,7 @@ HelloWorld
 
     #[test]
     fn test_message_parts() {
-        let m = first_magic(
+        let m = best_magic(
             r#"0	string/W	#!/usr/bin/env\ python  PYTHON"#,
             b"#!/usr/bin/env    python",
             StreamKind::Text(TextEncoding::Ascii),
@@ -5429,15 +5524,15 @@ HelloWorld
         db.load(parse_assert!("0\tsearch\t__NEVER_MATCH__\tnope\n"));
 
         let mut ascii = BufReader::from_slice(b"hello world");
-        let m = db.best_magic(&mut ascii).unwrap();
+        let m = db.best_magic(&mut ascii, None).unwrap();
         assert_eq!(m.stream_kind(), Some(StreamKind::Text(TextEncoding::Ascii)));
 
         let mut utf8 = BufReader::from_slice("héllo wörld".as_bytes());
-        let m = db.best_magic(&mut utf8).unwrap();
+        let m = db.best_magic(&mut utf8, None).unwrap();
         assert_eq!(m.stream_kind(), Some(StreamKind::Text(TextEncoding::Utf8)));
 
         let mut binary = BufReader::from_slice(&[0x00u8, 0x01, 0x02, 0xff, 0xfe, 0x00, 0x00, 0x00]);
-        let m = db.best_magic(&mut binary).unwrap();
+        let m = db.best_magic(&mut binary, None).unwrap();
         assert_eq!(m.stream_kind(), Some(StreamKind::Binary));
     }
 
@@ -5487,7 +5582,7 @@ HelloWorld
     // try_csv runs before any rule; pass a never-matching rule so the
     // harness only exercises the hardcoded CSV detector.
     fn csv_magic(content: &[u8]) -> Magic<'static> {
-        first_magic(
+        best_magic(
             "0\tstring\t__NEVER_MATCH__\tnope\n",
             content,
             StreamKind::Text(TextEncoding::Utf8),
@@ -5571,7 +5666,7 @@ HelloWorld
         // offset 0x3c holds a 4-byte LE offset pointing far past EOF
         content[0x3c..0x40].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
 
-        let m = first_magic(
+        let m = best_magic(
             "0\tstring\tMZ\n>(0x3c.l)\tstring\t!PE\\0\\0\tMS-DOS executable\n",
             &content,
             StreamKind::Binary,
@@ -5587,7 +5682,7 @@ HelloWorld
         content[1] = b'Z';
         content[0x3c..0x40].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
 
-        let m = first_magic(
+        let m = best_magic(
             "0\tstring\tMZ\n>(0x3c.l)\tstring\tPE\\0\\0\tPE executable\n",
             &content,
             StreamKind::Binary,

@@ -1533,6 +1533,7 @@ impl MagicRule {
             entries,
             extensions: HashSet::new(),
             score: 0,
+            max_score: 0,
             is_text: false,
             finalized: false,
         })

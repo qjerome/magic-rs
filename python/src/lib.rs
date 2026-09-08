@@ -34,7 +34,7 @@
 //!
 //! ```python
 //! # Detect the best match for a buffer
-//! result = db.best_magic_buffer(png_data)
+//! result = db.best_magic_buffer(png_data, None)
 //! print(f"Best match: {result.message}")
 //! ```
 //!
@@ -237,6 +237,7 @@ impl MagicDb {
     ///
     /// Args:
     ///     input (bytes): The buffer to analyze.
+    ///     extension (Optional[str]): Optional file extension hint.
     ///
     /// Returns:
     ///     Magic: The best detected magic result.
@@ -247,9 +248,14 @@ impl MagicDb {
     /// Example:
     ///     >>> with open("example.txt", "rb") as f:
     ///     ...     buffer = f.read()
-    ///     >>> result = db.best_magic_buffer(buffer)
-    pub fn best_magic_buffer(&self, py: Python<'_>, input: &[u8]) -> PyResult<Magic> {
-        py.detach(|| self.0.best_magic_slice(input).map(Magic::from))
+    ///     >>> result = db.best_magic_buffer(buffer, "txt")
+    pub fn best_magic_buffer(
+        &self,
+        py: Python<'_>,
+        input: &[u8],
+        extension: Option<&str>,
+    ) -> PyResult<Magic> {
+        py.detach(|| self.0.best_magic_slice(input, extension).map(Magic::from))
             .map_err(py_err)
     }
 

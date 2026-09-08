@@ -89,11 +89,12 @@ class MagicDb:
             >>> result = db.first_magic_file("example.txt")
         """
 
-    def best_magic_buffer(self, input: bytes) -> Magic:
+    def best_magic_buffer(self, input: bytes, extension: str | None = ...) -> Magic:
         """Detect the best magic match for an in-memory buffer.
 
         Args:
             input (bytes): The buffer to analyze.
+            extension (Optional[str]): Optional file extension hint.
 
         Returns:
             Magic: The best detected magic result.
@@ -104,7 +105,7 @@ class MagicDb:
         Example:
             >>> with open("example.txt", "rb") as f:
             ...     buffer = f.read()
-            >>> result = db.best_magic_buffer(buffer)
+            >>> result = db.best_magic_buffer(buffer, "txt")
         """
 
     def best_magic_file(self, path: str) -> Magic:
