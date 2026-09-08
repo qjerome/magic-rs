@@ -1,0 +1,2 @@
+[alias]
+wiza="run -r --bin wiza --"
