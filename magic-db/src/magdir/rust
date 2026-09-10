@@ -18,7 +18,7 @@
 # Rust compiler metadata updated with new layout
 # From: Quentin Jérôme <quentin.jerome@circl.lu>
 # LOCAL(qjerome): entire block below, not upstream. Keep on future syncs.
-# Reference: https://github.com/rust-lang/rust/blob/master/compiler/rustc_metadata/src/rmeta/mod.rs
+# Reference: https://github.com/rust-lang/rust/blob/master/compiler/rustc_metadata/src/rmeta/mod.rs
 0	    string		rust\x00\x00\x00
 >0x11   string	    rustc		Rust compiler metadata
 # version number 
@@ -44,9 +44,9 @@
 >>0 use rust-src
 
 # we search for rust keywords in the first 4096 bytes
-# don't put the question mark on macro_rules otherwise we don't match \b
+# don't put the question mark on macro_rules otherwise we don't match \b
 0   regex/4096s \\b(impl|fn|macro_rules)\\b
-# sometimes impl lines are quite long, searching on 3 lines increases
+# sometimes impl lines are quite long, searching on 3 lines increases
 # the number of bytes read in the tested value to 240 bytes
 >&0 regex/3l impl(<.*?>)?(\\s+[a-zA-Z0-9_:]+\\s+for)?\\s+[a-zA-Z0-9_]+.*?
 >>0 use rust-src
