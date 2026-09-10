@@ -25,6 +25,30 @@
 //! `medium_file` has its real content (an ISO 9660 signature) at a fixed
 //! offset of 32769 bytes -- see `medium_file`'s doc comment.
 //!
+//! ## `best_magic` vs `first_magic`
+//!
+//! `pure_magic::MagicDb::best_magic_file`/`best_magic_slice` evaluate
+//! every loaded rule and keep the strongest match, instead of stopping
+//! at the first one that fires (see README's "Advantages over
+//! libmagic"). Real `libmagic` has no equivalent to benchmark against:
+//! its closest flag, `MAGIC_CONTINUE` (`-k`), still walks the same
+//! static, pre-sorted rule list and just keeps going instead of
+//! stopping early -- it never re-evaluates or re-sorts by actual match
+//! strength, so it answers a different question ("list every rule that
+//! matches, in original order") than `best_magic` does ("of everything
+//! that matches, which one is actually strongest"). Benchmarking
+//! `Cookie::file`/`buffer` with `Flags::CONTINUE` against
+//! `best_magic_file`/`_slice` would misrepresent both sides as doing
+//! the same job.
+//!
+//! Every scenario gets a `pure_magic/best_file` (or `/best_buffer`) bar
+//! alongside the existing `pure_magic/first_file` (or `/first_buffer`)
+//! and `libmagic/file` (or `/buffer`) ones -- function names encode both
+//! the match strategy (`first`/`best`) and the API (`file`/`buffer`) so
+//! the cost is shown as what it actually is: the price `pure_magic`
+//! itself pays to go from "first match" to "best match", not a
+//! cross-library comparison.
+//!
 //! Run with: `cargo bench -p magic-bench`
 
 use std::{
@@ -49,8 +73,8 @@ const SMALL_FILE_COUNT: usize = 2000;
 /// functions listed in `criterion_group!` at the bottom of this file
 /// sequentially, matches their declaration order there. Prefixing group
 /// names with it (`NN/scenario`, sanitized to `NN_scenario` on disk like
-/// the `pure_magic/file` function names) lets `summarize.rs` sort groups
-/// without hardcoding that order a second time.
+/// the `pure_magic/first_file` function names) lets `summarize.rs` sort
+/// groups without hardcoding that order a second time.
 static GROUP_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
 fn group_id(name: &str) -> String {
@@ -204,8 +228,11 @@ fn bench_single_large_file(c: &mut Criterion) {
 
     let mut group = c.benchmark_group(group_id("single_large_file"));
     group.sample_size(20);
-    group.bench_function("pure_magic/file", |b| {
+    group.bench_function("pure_magic/first_file", |b| {
         b.iter(|| black_box(db.first_magic_file(&path).unwrap()))
+    });
+    group.bench_function("pure_magic/best_file", |b| {
+        b.iter(|| black_box(db.best_magic_file(&path).unwrap()))
     });
     group.bench_function("libmagic/file", |b| {
         b.iter(|| black_box(cookie.file(&path).unwrap()))
@@ -220,8 +247,11 @@ fn bench_medium_file(c: &mut Criterion) {
     let cookie = libmagic_cookie();
 
     let mut group = c.benchmark_group(group_id("medium_file"));
-    group.bench_function("pure_magic/file", |b| {
+    group.bench_function("pure_magic/first_file", |b| {
         b.iter(|| black_box(db.first_magic_file(&path).unwrap()))
+    });
+    group.bench_function("pure_magic/best_file", |b| {
+        b.iter(|| black_box(db.best_magic_file(&path).unwrap()))
     });
     group.bench_function("libmagic/file", |b| {
         b.iter(|| black_box(cookie.file(&path).unwrap()))
@@ -237,8 +267,11 @@ fn bench_medium_file_buffer(c: &mut Criterion) {
     let cookie = libmagic_cookie();
 
     let mut group = c.benchmark_group(group_id("medium_file"));
-    group.bench_function("pure_magic/buffer", |b| {
+    group.bench_function("pure_magic/first_buffer", |b| {
         b.iter(|| black_box(db.first_magic_slice(&bytes, None).unwrap()))
+    });
+    group.bench_function("pure_magic/best_buffer", |b| {
+        b.iter(|| black_box(db.best_magic_slice(&bytes, None).unwrap()))
     });
     group.bench_function("libmagic/buffer", |b| {
         b.iter(|| black_box(cookie.buffer(&bytes).unwrap()))
@@ -254,10 +287,17 @@ fn bench_many_small_files(c: &mut Criterion, with_ext: bool, group_name: &str) {
 
     let mut group = c.benchmark_group(group_name);
     group.throughput(Throughput::Elements(files.len() as u64));
-    group.bench_function("pure_magic/file", |b| {
+    group.bench_function("pure_magic/first_file", |b| {
         b.iter(|| {
             for f in &files {
                 black_box(db.first_magic_file(f).unwrap());
+            }
+        })
+    });
+    group.bench_function("pure_magic/best_file", |b| {
+        b.iter(|| {
+            for f in &files {
+                black_box(db.best_magic_file(f).unwrap());
             }
         })
     });
@@ -288,8 +328,11 @@ fn bench_single_large_file_buffer(c: &mut Criterion) {
 
     let mut group = c.benchmark_group(group_id("single_large_file"));
     group.sample_size(20);
-    group.bench_function("pure_magic/buffer", |b| {
+    group.bench_function("pure_magic/first_buffer", |b| {
         b.iter(|| black_box(db.first_magic_slice(&bytes, None).unwrap()))
+    });
+    group.bench_function("pure_magic/best_buffer", |b| {
+        b.iter(|| black_box(db.best_magic_slice(&bytes, None).unwrap()))
     });
     group.bench_function("libmagic/buffer", |b| {
         b.iter(|| black_box(cookie.buffer(&bytes).unwrap()))
@@ -321,10 +364,17 @@ fn bench_many_small_files_buffer(c: &mut Criterion, with_ext: bool, group_name: 
 
     let mut group = c.benchmark_group(group_name);
     group.throughput(Throughput::Elements(buffers.len() as u64));
-    group.bench_function("pure_magic/buffer", |b| {
+    group.bench_function("pure_magic/first_buffer", |b| {
         b.iter(|| {
             for (bytes, ext) in &buffers {
                 black_box(db.first_magic_slice(bytes, ext.as_deref()).unwrap());
+            }
+        })
+    });
+    group.bench_function("pure_magic/best_buffer", |b| {
+        b.iter(|| {
+            for (bytes, ext) in &buffers {
+                black_box(db.best_magic_slice(bytes, ext.as_deref()).unwrap());
             }
         })
     });

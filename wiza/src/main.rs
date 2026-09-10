@@ -155,10 +155,39 @@ impl<'a, 'r> Scan<'a, 'r> {
             .inspect_err(|e| error!("failed to get magic file=stdin: {e}"))?;
 
         if !o.json {
+            let enc = magic.stream_kind().map(|k| k.as_str()).unwrap_or("none");
+
             println!(
-                "{} source:{} strength:{} mime:{} magic:{}",
+                "{} source:{} strength:{} mime:{} encoding:{enc} magic:{}",
                 self.path.to_string_lossy(),
-                magic.source().unwrap_or(&Cow::Borrowed("none")),
+                magic.source().unwrap_or("none"),
+                magic.strength(),
+                magic.mime_type(),
+                magic.message()
+            )
+        } else {
+            let mr = SerMagicResult::from_path_and_magic(Some(self.path), &magic);
+            let json = serde_json::to_string(&mr)
+                .inspect_err(|e| error!("failed to serialize magic: {e}"))?;
+
+            println!("{json}");
+        }
+
+        Ok(())
+    }
+
+    fn best_match(&mut self, o: &ScanOpt) -> Result<(), anyhow::Error> {
+        let magic = self
+            .db
+            .best_magic(&mut self.reader, self.ext)
+            .inspect_err(|e| error!("failed to get magic file=stdin: {e}"))?;
+
+        if !o.json {
+            let enc = magic.stream_kind().map(|k| k.as_str()).unwrap_or("none");
+            println!(
+                "{} source:{} strength:{} mime:{} encoding:{enc} magic:{}",
+                self.path.to_string_lossy(),
+                magic.source().unwrap_or("none"),
                 magic.strength(),
                 magic.mime_type(),
                 magic.message()
@@ -197,8 +226,10 @@ impl<'a, 'r> Scan<'a, 'r> {
             println!("{json}")
         } else {
             for magic in magics {
+                let enc = magic.stream_kind().map(|k| k.as_str()).unwrap_or("none");
+
                 println!(
-                    "{} source:{} strength:{} mime:{} magic:{}",
+                    "{} source:{} strength:{} mime:{} encoding:{enc} magic:{}",
                     self.path.to_string_lossy(),
                     magic.source().unwrap_or(&Cow::Borrowed("unknown")),
                     magic.strength(),
@@ -226,6 +257,10 @@ struct Cli {
     /// not only the first one
     #[arg(short, long)]
     all: bool,
+    /// Check every rule and return the one that actually fits best,
+    /// instead of stopping at the first match
+    #[arg(short, long)]
+    best: bool,
     /// Disable file extension acceleration (matches first
     /// rules where the file extension is defined)
     #[arg(long)]
@@ -288,6 +323,8 @@ impl Command {
 
                 if o.all {
                     let _ = s.all_matches(&o);
+                } else if o.best {
+                    let _ = s.best_match(&o);
                 } else {
                     let _ = s.first_match(&o);
                 }
@@ -325,6 +362,8 @@ impl Command {
 
                 if o.all {
                     let _ = s.all_matches(&o);
+                } else if o.best {
+                    let _ = s.best_match(&o);
                 } else {
                     let ext: Option<&str> = if o.no_accel {
                         None
@@ -350,6 +389,11 @@ struct ScanOpt {
     /// not only the first one
     #[arg(short, long)]
     all: bool,
+    /// Check every rule and return the one that actually fits best,
+    /// instead of stopping at the first match (slower; ignored if
+    /// --all is also given)
+    #[arg(short, long)]
+    best: bool,
     /// Enable file extension acceleration. Matches first the
     /// rules where file extension is defined.
     #[arg(long)]
@@ -398,6 +442,7 @@ struct SerMagicResult<'m> {
     magic: String,
     mime_type: &'m str,
     creator_code: Option<Cow<'m, str>>,
+    encoding: Option<&'m str>,
     strength: u64,
     extensions: &'m HashSet<Cow<'m, str>>,
 }
@@ -416,6 +461,7 @@ impl<'m> SerMagicResult<'m> {
             magic: m.message(),
             mime_type: m.mime_type(),
             creator_code: m.creator_code().map(|s| s.into()),
+            encoding: m.stream_kind().map(|k| k.as_str()),
             strength: m.strength(),
             extensions: m.extensions(),
         }
@@ -541,6 +587,7 @@ fn main() -> Result<(), anyhow::Error> {
         None => Command::scan(ScanOpt {
             silent: cli.silent,
             all: cli.all,
+            best: cli.best,
             no_accel: cli.no_accel,
             json: cli.json,
             rules: cli.rules,

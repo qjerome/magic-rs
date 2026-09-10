@@ -10,10 +10,10 @@ magic = "0.16.7"
 magic-db = { path = "../magic-db" }
 pure-magic = { path = "../pure-magic" }
 serde_json = "1.0.145"
+tempfile = "3.15"
 
 [dev-dependencies]
 criterion = "0.8"
-tempfile = "3.15"
 
 [[bench]]
 name = "vs_libmagic"

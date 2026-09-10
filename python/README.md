@@ -41,7 +41,7 @@ print(f"Detected: {result.message} (MIME: {result.mime_type})")
 
 ```python
 # Detect the best match for a buffer
-result = db.best_magic_buffer(png_data)
+result = db.best_magic_buffer(png_data, None)
 print(f"Best match: {result.message}")
 ```
 

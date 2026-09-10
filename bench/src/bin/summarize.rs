@@ -11,7 +11,7 @@
 //!
 //! This tool doesn't hardcode a scenario ordering of its own: each
 //! `vs_libmagic.rs` benchmark group is named `NN/scenario` (criterion
-//! sanitizes the `/` to `_` on disk, same as the `pure_magic/file` /
+//! sanitizes the `/` to `_` on disk, same as the `pure_magic/first_file` /
 //! `libmagic/buffer` function names), so the intended display order lives
 //! entirely in the benchmark's own output and this tool just sorts by the
 //! `NN` prefix it finds there.
@@ -61,14 +61,15 @@ fn order_and_name(group: &str) -> (usize, &str) {
 /// The API a benchmark was run through. The scenario name carries no
 /// `_buffer`/`_file` marker of its own (that would just duplicate what's
 /// already in the function names), so this is detected straight from
-/// which function subdirectory criterion actually wrote: `pure_magic/file`
-/// / `libmagic/buffer` etc. sanitize to `pure_magic_file` / `libmagic_buffer`
-/// on disk.
+/// which function subdirectory criterion actually wrote: `libmagic/file`
+/// / `libmagic/buffer` sanitize to `libmagic_file` / `libmagic_buffer` on
+/// disk (checked instead of the `pure_magic_*` names, since those now
+/// come in both `first_` and `best_` flavors per API).
 fn detect_api(criterion_dir: &Path, group: &str) -> Option<&'static str> {
     for api in ["file", "buffer"] {
         if criterion_dir
             .join(group)
-            .join(format!("pure_magic_{api}"))
+            .join(format!("libmagic_{api}"))
             .is_dir()
         {
             return Some(api);
@@ -98,16 +99,16 @@ fn main() {
         (order, name.to_string())
     });
 
-    println!("| Benchmark | API | pure_magic | libmagic | Speedup |");
-    println!("| --- | --- | --- | --- | --- |");
+    println!("| Benchmark | API | pure_magic (first) | libmagic | Speedup | pure_magic (best) |");
+    println!("| --- | --- | --- | --- | --- | --- |");
 
     for group in &groups {
         let (_, name) = order_and_name(group);
         let Some(api) = detect_api(&criterion_dir, group) else {
-            eprintln!("skipping {group}: no pure_magic_file/pure_magic_buffer subdirectory");
+            eprintln!("skipping {group}: no libmagic_file/libmagic_buffer subdirectory");
             continue;
         };
-        let pm_function = format!("pure_magic_{api}");
+        let pm_function = format!("pure_magic_first_{api}");
         let lm_function = format!("libmagic_{api}");
 
         let (Some(pm), Some(lm)) = (
@@ -130,6 +131,16 @@ fn main() {
             format!("libmagic {:.2}x", pm / lm)
         };
 
-        println!("| {name} | {api} | {pm_cell} | {lm_cell} | {speedup} |");
+        // `best_magic` has no libmagic counterpart to compare against (see
+        // the benchmark's own module doc comment for why), so it's shown
+        // as extra context on `pure_magic` alone: its absolute cost, and
+        // the multiple of `first_magic`'s time it takes on this scenario.
+        let best_function = format!("pure_magic_best_{api}");
+        let best_cell = match mean_ns(&criterion_dir, group, &best_function) {
+            Some(best) => format!("{} ({:.1}x first)", format_ns(best), best / pm),
+            None => "--".to_string(),
+        };
+
+        println!("| {name} | {api} | {pm_cell} | {lm_cell} | {speedup} | {best_cell} |");
     }
 }

@@ -9,7 +9,7 @@ for f in glob.glob("target/benchmarks/cli/wiza_vs_file_*.md"):
     unit = unit_match.group(1)
     mult = 1000.0 if unit == 's' else 1.0
 
-    wiza_line = re.search(r'\| `[^`]*wiza`\s*\|\s*([\d.]+)\s*±\s*([\d.]+)', text)
+    wiza_line = re.search(r'\| `[^`]*wiza.*?`\s*\|\s*([\d.]+)\s*±\s*([\d.]+)', text)
     file_line = re.search(r'\| `[^`]*\bfile`\s*\|\s*([\d.]+)\s*±\s*([\d.]+)', text)
 
     wiza_ms = float(wiza_line.group(1)) * mult
@@ -27,10 +27,10 @@ for n, w, we, f, fe in rows:
     ratio = f / w
     faster = "wiza" if ratio > 1 else "file"
 
-    w_str = f"{w:.1f} ± {we:<5.1f}"
-    f_str = f"{f:.1f} ± {fe:<5.1f}"
-    w_per_file = f"{w/n:.3f}"
-    f_per_file = f"{f/n:.3f}"
+    w_str = f"{w:.1f} ± {we:<5.1f}".strip()
+    f_str = f"{f:.1f} ± {fe:<5.1f}".strip()
+    w_per_file = f"{w/n:.3f}".strip()
+    f_per_file = f"{f/n:.3f}".strip()
     if faster == "wiza":
         w_str = f"**{w_str}**"
         w_per_file = f"**{w_per_file}**"

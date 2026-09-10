@@ -38,6 +38,10 @@ code.
   mutually exclusive flags (`MAGIC_NONE`, `MAGIC_MIME_TYPE`,
   `MAGIC_EXTENSION`) — getting all three means reconfiguring the cookie
   with `magic_setflags()` and rescanning the same data 2-3 times.
+- **A real "give me the best answer" mode.** For speed, both tools
+  normally stop at the first rule that matches, which is usually but
+  not always the most accurate one. `pure-magic`'s `best_magic` checks
+  every rule and returns the one that actually fits best.
 
 These come with a trade-off: see [Differences from
 libmagic](#differences-from-libmagic) below for what's out of scope.
@@ -49,16 +53,16 @@ libmagic](#differences-from-libmagic) below for what's out of scope.
 This benchmark measures the speed of `pure-magic` vs `libmagic`, via the
 [`magic` crate](https://crates.io/crates/magic).
 
-| Benchmark | API | pure_magic | libmagic | Speedup |
-| --- | --- | --- | --- | --- |
-| single_large_file | file | **1.64 ms** | 4.17 ms | pure_magic 2.54x |
-| medium_file | file | **190.23 µs** | 318.31 µs | pure_magic 1.67x |
-| many_small_files_with_ext | file | **96.26 ms** | 287.78 ms | pure_magic 2.99x |
-| many_small_files_no_ext | file | **236.69 ms** | 290.14 ms | pure_magic 1.23x |
-| single_large_file | buffer | **108.70 µs** | 254.24 µs | pure_magic 2.34x |
-| medium_file | buffer | **44.68 µs** | 247.55 µs | pure_magic 5.54x |
-| many_small_files_with_ext | buffer | **82.36 ms** | 268.93 ms | pure_magic 3.27x |
-| many_small_files_no_ext | buffer | **228.93 ms** | 289.25 ms | pure_magic 1.26x |
+| Benchmark | API | pure_magic (first) | libmagic | Speedup | pure_magic (best) |
+| --- | --- | --- | --- | --- | --- |
+| single_large_file | file | **1.59 ms** | 4.09 ms | pure_magic 2.57x | 1.73 ms (1.1x first) |
+| medium_file | file | **177.03 µs** | 293.10 µs | pure_magic 1.66x | 206.31 µs (1.2x first) |
+| many_small_files_with_ext | file | **92.02 ms** | 267.71 ms | pure_magic 2.91x | 262.88 ms (2.9x first) |
+| many_small_files_no_ext | file | **219.07 ms** | 268.39 ms | pure_magic 1.23x | 248.43 ms (1.1x first) |
+| single_large_file | buffer | **99.72 µs** | 231.62 µs | pure_magic 2.32x | 134.00 µs (1.3x first) |
+| medium_file | buffer | **41.76 µs** | 231.82 µs | pure_magic 5.55x | 67.93 µs (1.6x first) |
+| many_small_files_with_ext | buffer | **75.24 ms** | 248.91 ms | pure_magic 3.31x | 242.61 ms (3.2x first) |
+| many_small_files_no_ext | buffer | **198.71 ms** | 245.13 ms | pure_magic 1.23x | 227.22 ms (1.1x first) |
 
 ### CLI
 
@@ -66,16 +70,17 @@ CLI benchmarks were run with [`hyperfine`](https://github.com/sharkdp/hyperfine)
 across corpus sizes sampled from a broad range of file types found in
 the user's home directory.
 
-|  files |        wiza (ms) |        file (ms) |  wiza/file | wiza ms/file | file ms/file | faster |
+|  files |        wiza (ms) |        file (ms) |  file/wiza | wiza ms/file | file ms/file | faster |
 | -------|------------------|------------------|------------|--------------|--------------|------- |
-|     50 |     62.9 ± 2.3   |     39.0 ± 2.5   |      1.61x |       1.258  |       0.780  |   file |
-|    100 |     82.1 ± 5.4   |     59.4 ± 2.9   |      1.38x |       0.821  |       0.594  |   file |
-|    250 |    138.1 ± 5.5   |    138.8 ± 3.6   |      0.99x |       0.552  |       0.555  |   wiza |
-|    500 |    271.2 ± 16.3  |    334.4 ± 15.8  |      0.81x |       0.542  |       0.669  |   wiza |
-|   1000 |    467.9 ± 12.8  |    701.9 ± 39.6  |      0.67x |       0.468  |       0.702  |   wiza |
-|   2000 |   1193.0 ± 49.0  |   1739.0 ± 46.0  |      0.69x |       0.597  |       0.870  |   wiza |
-|   4000 |   2723.0 ± 182.0 |   3089.0 ± 395.0 |      0.88x |       0.681  |       0.772  |   wiza |
-|   8000 |   3531.0 ± 87.0  |   5476.0 ± 130.0 |      0.64x |       0.441  |       0.684  |   wiza |
+|     50 |       61.1 ± 2.3 |   **38.0 ± 1.5** |      0.62x |        1.222 |    **0.760** |   file |
+|    100 |       89.4 ± 5.3 |   **65.9 ± 3.6** |      0.74x |        0.894 |    **0.659** |   file |
+|    250 |  **156.1 ± 6.4** |      176.9 ± 6.1 |      1.13x |    **0.624** |        0.708 |   wiza |
+|    500 | **280.3 ± 13.4** |     473.6 ± 26.2 |      1.69x |    **0.561** |        0.947 |   wiza |
+|   1000 | **492.5 ± 27.3** |     759.6 ± 29.9 |      1.54x |    **0.492** |        0.760 |   wiza |
+|   2000 | **993.1 ± 55.9** |    1530.3 ± 78.6 |      1.54x |    **0.497** |        0.765 |   wiza |
+|   4000 | **2552.0 ± 86.0** |    3678.0 ± 59.0 |      1.44x |    **0.638** |        0.919 |   wiza |
+|   8000 | **6100.0 ± 69.0** |   8501.0 ± 102.0 |      1.39x |    **0.762** |        1.063 |   wiza |
+
 
 What explains the crossover between `wiza` and `file`? `file` `mmap`s its
 precompiled `.mgc` database and casts the mapped bytes directly into its
