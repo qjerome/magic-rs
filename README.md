@@ -38,6 +38,10 @@ code.
   mutually exclusive flags (`MAGIC_NONE`, `MAGIC_MIME_TYPE`,
   `MAGIC_EXTENSION`) — getting all three means reconfiguring the cookie
   with `magic_setflags()` and rescanning the same data 2-3 times.
+- **A real "give me the best answer" mode.** For speed, both tools
+  normally stop at the first rule that matches, which is usually but
+  not always the most accurate one. `pure-magic`'s `best_magic` checks
+  every rule and returns the one that actually fits best.
 
 These come with a trade-off: see [Differences from
 libmagic](#differences-from-libmagic) below for what's out of scope.
@@ -49,16 +53,16 @@ libmagic](#differences-from-libmagic) below for what's out of scope.
 This benchmark measures the speed of `pure-magic` vs `libmagic`, via the
 [`magic` crate](https://crates.io/crates/magic).
 
-| Benchmark | API | pure_magic | libmagic | Speedup |
-| --- | --- | --- | --- | --- |
-| single_large_file | file | **1.64 ms** | 4.17 ms | pure_magic 2.54x |
-| medium_file | file | **190.23 µs** | 318.31 µs | pure_magic 1.67x |
-| many_small_files_with_ext | file | **96.26 ms** | 287.78 ms | pure_magic 2.99x |
-| many_small_files_no_ext | file | **236.69 ms** | 290.14 ms | pure_magic 1.23x |
-| single_large_file | buffer | **108.70 µs** | 254.24 µs | pure_magic 2.34x |
-| medium_file | buffer | **44.68 µs** | 247.55 µs | pure_magic 5.54x |
-| many_small_files_with_ext | buffer | **82.36 ms** | 268.93 ms | pure_magic 3.27x |
-| many_small_files_no_ext | buffer | **228.93 ms** | 289.25 ms | pure_magic 1.26x |
+| Benchmark | API | pure_magic (first) | libmagic | Speedup | pure_magic (best) |
+| --- | --- | --- | --- | --- | --- |
+| single_large_file | file | **1.59 ms** | 4.09 ms | pure_magic 2.57x | 1.73 ms (1.1x first) |
+| medium_file | file | **177.03 µs** | 293.10 µs | pure_magic 1.66x | 206.31 µs (1.2x first) |
+| many_small_files_with_ext | file | **92.02 ms** | 267.71 ms | pure_magic 2.91x | 262.88 ms (2.9x first) |
+| many_small_files_no_ext | file | **219.07 ms** | 268.39 ms | pure_magic 1.23x | 248.43 ms (1.1x first) |
+| single_large_file | buffer | **99.72 µs** | 231.62 µs | pure_magic 2.32x | 134.00 µs (1.3x first) |
+| medium_file | buffer | **41.76 µs** | 231.82 µs | pure_magic 5.55x | 67.93 µs (1.6x first) |
+| many_small_files_with_ext | buffer | **75.24 ms** | 248.91 ms | pure_magic 3.31x | 242.61 ms (3.2x first) |
+| many_small_files_no_ext | buffer | **198.71 ms** | 245.13 ms | pure_magic 1.23x | 227.22 ms (1.1x first) |
 
 ### CLI
 
