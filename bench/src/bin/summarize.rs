@@ -99,7 +99,7 @@ fn main() {
         (order, name.to_string())
     });
 
-    println!("| Benchmark | API | pure_magic | libmagic | Speedup | pure_magic/best |");
+    println!("| Benchmark | API | pure_magic (first) | libmagic | Speedup | pure_magic (best) |");
     println!("| --- | --- | --- | --- | --- | --- |");
 
     for group in &groups {
