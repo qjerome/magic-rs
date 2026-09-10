@@ -27,10 +27,12 @@
 !:mime	text/x-perl
 0	string	#!\ /usr/bin/env\ perl	Perl script text executable
 !:mime	text/x-perl
+
+# LOCAL(qjerome): search for perl -x + following perl shebang
 0	string	#!
-# LOCAL(qjerome): "/1l" added -- limits the regex search to 1 line for
-# performance, same fix as in varied.script. Keep on future syncs.
->0	regex/1l	\^#!.*/bin/perl([[:space:]].*)*$	Perl script text executable
+>0 regex [[:space:]]perl[[:space:]].*?-x.*?$
+>>&0 regex/10l \^#!.*/bin/perl([[:space:]].*)*$ Perl script text executable
+!:strength + 70
 !:mime	text/x-perl
 
 # by Dmitry V. Levin and Alexey Tourbin
