@@ -1,2 +1,3 @@
 [alias]
 wiza="run -r --bin wiza --"
+summarize="run -r --bin summarize --"
