@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "magic-bench"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "magic",
@@ -622,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "magic-db"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "magic-embed",
  "pure-magic",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "magic-embed"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "fs-walk",
  "proc-macro2",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "pure-magic"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "chrono",
@@ -846,7 +846,7 @@ dependencies = [
 
 [[package]]
 name = "pure-magic-rs"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "magic-db",
  "pure-magic",
@@ -1460,7 +1460,7 @@ dependencies = [
 
 [[package]]
 name = "wiza"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
