@@ -204,6 +204,7 @@ impl MagicDb {
     ///     >>> with open("example.txt", "rb") as f:
     ///     ...     buffer = f.read()
     ///     >>> result = db.first_magic_buffer(buffer, "txt")
+    #[pyo3(signature = (input, extension=None))]
     pub fn first_magic_buffer(
         &self,
         py: Python<'_>,
@@ -249,6 +250,7 @@ impl MagicDb {
     ///     >>> with open("example.txt", "rb") as f:
     ///     ...     buffer = f.read()
     ///     >>> result = db.best_magic_buffer(buffer, "txt")
+    #[pyo3(signature = (input, extension=None))]
     pub fn best_magic_buffer(
         &self,
         py: Python<'_>,
