@@ -29,7 +29,7 @@ def test_magic_db_new(magic_db):
 def test_first_magic_buffer(magic_db):
     # Test with a PNG buffer
     png_buffer = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-    result = magic_db.first_magic_buffer(png_buffer, None)
+    result = magic_db.first_magic_buffer(png_buffer)
     assert isinstance(result, Magic)
     assert "PNG" in result.message
     assert result.mime_type == "image/png"
@@ -44,7 +44,7 @@ def test_first_magic_file(magic_db, sample_png_path):
 
 def test_best_magic_buffer(magic_db):
     png_buffer = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-    result = magic_db.best_magic_buffer(png_buffer, None)
+    result = magic_db.best_magic_buffer(png_buffer)
     assert isinstance(result, Magic)
     assert "PNG" in result.message
     assert result.mime_type == "image/png"
@@ -80,7 +80,7 @@ def test_all_magics_file(magic_db, sample_png_path):
 
 def test_to_dict(magic_db):
     png_buffer = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-    result = magic_db.first_magic_buffer(png_buffer, None)
+    result = magic_db.first_magic_buffer(png_buffer)
     d = result.to_dict()
     assert d["message"] == result.message
     assert d["mime_type"] == result.mime_type
@@ -90,12 +90,12 @@ def test_to_dict(magic_db):
 
 def test_stream_kind_binary(magic_db):
     png_buffer = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-    result = magic_db.first_magic_buffer(png_buffer, None)
+    result = magic_db.first_magic_buffer(png_buffer)
     assert result.stream_kind == "binary"
 
 
 def test_stream_kind_text(magic_db):
-    result = magic_db.best_magic_buffer(b"hello world\n", None)
+    result = magic_db.best_magic_buffer(b"hello world\n")
     assert result.stream_kind == "text/ascii"
 
 
