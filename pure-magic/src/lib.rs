@@ -2860,7 +2860,7 @@ impl EntryNode {
             // to implementation differences. Let's wait and see if that is a real issue.
             let mut strength = self.entry.test_strength;
 
-            strength >>= test_depth;
+            strength = strength.checked_shr(test_depth as u32).unwrap_or_default();
 
             // `strength_mod` is only ever `Some` on the root entry
             if let Some(sm) = self.strength_mod.as_ref() {
@@ -2869,7 +2869,7 @@ impl EntryNode {
 
             // entries with no message get a bonus
             if self.entry.message.is_none() {
-                strength += 1
+                strength = strength.saturating_add(1)
             }
 
             magic.update_strength(strength);
