@@ -281,13 +281,13 @@ pub enum Error {
     #[error("regex: {0}")]
     Regex(#[from] regex::Error),
 
-    /// Wraps a serialization error from `bincode`.
+    /// Wraps a serialization error from `postcard`.
     #[error("{0}")]
-    Serialize(#[from] bincode::error::EncodeError),
+    Serialize(#[from] postcard::Error),
 
-    /// Wraps a deserialization error from `bincode`.
+    /// Wraps a deserialization error from `postcard`.
     #[error("{0}")]
-    Deserialize(#[from] bincode::error::DecodeError),
+    Deserialize(postcard::Error),
 }
 
 impl Error {
@@ -4169,7 +4169,7 @@ impl MagicDb {
     pub fn serialize<W: Write>(self, w: &mut W) -> Result<(), Error> {
         let mut encoder = GzEncoder::new(w, Compression::best());
 
-        bincode::serde::encode_into_std_write(&self, &mut encoder, bincode::config::standard())?;
+        postcard::to_io(&self, &mut encoder)?;
         encoder.finish()?;
         Ok(())
     }
@@ -4186,11 +4186,9 @@ impl MagicDb {
     pub fn deserialize<R: Read>(r: &mut R) -> Result<Self, Error> {
         let mut buf = vec![];
         let mut gz = GzDecoder::new(r);
-        gz.read_to_end(&mut buf).map_err(|e| {
-            bincode::error::DecodeError::OtherString(format!("failed to read: {e}"))
-        })?;
-        let (sdb, _): (MagicDb, usize) =
-            bincode::serde::decode_from_slice(&buf, bincode::config::standard())?;
+        gz.read_to_end(&mut buf)
+            .map_err(|e| Error::msg(format!("failed to read: {e}")))?;
+        let sdb = postcard::from_bytes(&buf).map_err(Error::Deserialize)?;
         Ok(sdb)
     }
 
