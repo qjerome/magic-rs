@@ -376,14 +376,16 @@ where
             } else {
                 // we read one block in advance
                 let range_len_ext = range_len.saturating_add(self.block_size);
-                if range_len_ext > self.cold.len() as u64 {
-                    self.cold.resize(range_len_ext as usize, 0);
-                }
 
                 self.source.seek(SeekFrom::Start(range.start))?;
+                // a failed read must not leave a stale range over a cleared buffer
+                self.cold_range = 0..0;
+                self.cold.clear();
                 let n = self
                     .source
-                    .read(self.cold[..range_len_ext as usize].as_mut())?;
+                    .by_ref()
+                    .take(range_len_ext)
+                    .read_to_end(&mut self.cold)?;
                 self.cold_range = range.start..range.start + n as u64;
                 self.seek(SeekFrom::Start(range.end))?;
 
