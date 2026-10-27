@@ -360,7 +360,7 @@ where
             self.seek(SeekFrom::Start(range.end))?;
 
             Ok(&self.hot_tail[start as usize..end as usize])
-        } else if range.end < self.warm_size.unwrap_or_default() {
+        } else if range.end <= self.warm_size.unwrap_or_default() {
             self.range_warmup(range.clone())?;
             self.seek(SeekFrom::Start(range.end))?;
 
