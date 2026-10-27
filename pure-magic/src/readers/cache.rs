@@ -360,7 +360,7 @@ where
             self.seek(SeekFrom::Start(range.end))?;
 
             Ok(&self.hot_tail[start as usize..end as usize])
-        } else if range.end < self.warm_size.unwrap_or_default() {
+        } else if range.end <= self.warm_size.unwrap_or_default() {
             self.range_warmup(range.clone())?;
             self.seek(SeekFrom::Start(range.end))?;
 
@@ -752,5 +752,18 @@ mod tests {
         let mut c = lazy_cache!(b"hello world").with_warm_cache(100 << 20);
         assert_eq!(c.loaded.len(), 1);
         assert_eq!(c.read_range(0..11).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn test_range_ending_at_warm_size_uses_warm_cache() {
+        let warm_size = 2 * BLOCK_SIZE as u64;
+        let data = vec![0u8; 8 * BLOCK_SIZE];
+
+        let mut c = LazyCache::from_read_seek(io::Cursor::new(&data))
+            .unwrap()
+            .with_warm_cache(warm_size);
+
+        assert_eq!(c.read_range(0..warm_size).unwrap().len() as u64, warm_size);
+        assert!(c.loaded.iter().all(|l| *l));
     }
 }
