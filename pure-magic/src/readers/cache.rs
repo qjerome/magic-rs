@@ -801,4 +801,17 @@ mod tests {
         .unwrap();
         assert_eq!(c.read_range(0..11).unwrap(), b"hello world");
     }
+
+    #[test]
+    fn test_unaligned_warm_size() {
+        let bs = BLOCK_SIZE as u64;
+        let data = vec![0u8; 2 * BLOCK_SIZE];
+
+        let mut c = LazyCache::from_read_seek(io::Cursor::new(&data))
+            .unwrap()
+            .with_warm_cache(bs + bs / 2);
+
+        assert_eq!(c.read_range(bs..bs + 1).unwrap().len(), 1);
+        assert!(c.loaded.iter().all(|l| *l));
+    }
 }
