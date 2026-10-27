@@ -724,4 +724,30 @@ mod tests {
             0
         );
     }
+
+    #[test]
+    fn test_loaded_sized_to_warm_cache() {
+        let bs = BLOCK_SIZE as u64;
+        let warm_size = 2 * bs;
+        let data = vec![0u8; 8 * BLOCK_SIZE];
+
+        let mut c = LazyCache::from_read_seek(io::Cursor::new(&data)).unwrap();
+        assert!(c.loaded.is_empty());
+
+        c = c.with_warm_cache(warm_size);
+        assert_eq!(c.loaded.len() as u64, warm_size / bs);
+
+        assert_eq!(
+            c.read_range(0..warm_size - 1).unwrap().len() as u64,
+            warm_size - 1
+        );
+        assert!(c.loaded.iter().all(|l| *l));
+    }
+
+    #[test]
+    fn test_loaded_sized_to_small_file() {
+        let mut c = lazy_cache!(b"hello world").with_warm_cache(100 << 20);
+        assert_eq!(c.loaded.len(), 1);
+        assert_eq!(c.read_range(0..11).unwrap(), b"hello world");
+    }
 }
