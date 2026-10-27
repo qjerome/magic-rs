@@ -258,14 +258,17 @@ where
     /// Enables the warm cache with the specified size.
     ///
     /// The warm cache uses memory-mapped storage for improved performance when
-    /// reading larger regions. The size is clamped to be at least as large as
-    /// the block size to ensure proper alignment.
+    /// reading larger regions. The size is rounded up to a multiple of the
+    /// block size, with a minimum of one block, to ensure proper alignment.
     ///
     /// Note: The memory mapping is performed lazily on first access.
     pub fn with_warm_cache(mut self, mut warm_size: u64) -> Self {
-        // if warm_size is smaller than block_size we will not
-        // be able to write chunks into the warm cache
-        warm_size = max(warm_size, self.block_size);
+        // the warm cache is filled with whole blocks, so a partial last block would
+        // overrun the mmap
+        let bs = self.block_size;
+        warm_size = max(warm_size, bs)
+            .checked_next_multiple_of(bs)
+            .unwrap_or(u64::MAX / bs * bs);
         self.warm_size = Some(warm_size);
         // only blocks below warm_size are ever tracked; sizing on pos_end would let a
         // sparse file claiming exabytes abort the process on allocation
@@ -800,5 +803,18 @@ mod tests {
         })
         .unwrap();
         assert_eq!(c.read_range(0..11).unwrap(), b"hello world");
+    }
+
+    #[test]
+    fn test_unaligned_warm_size() {
+        let bs = BLOCK_SIZE as u64;
+        let data = vec![0u8; 2 * BLOCK_SIZE];
+
+        let mut c = LazyCache::from_read_seek(io::Cursor::new(&data))
+            .unwrap()
+            .with_warm_cache(bs + bs / 2);
+
+        assert_eq!(c.read_range(bs..bs + 1).unwrap().len(), 1);
+        assert_eq!(c.loaded, [false, true]);
     }
 }
