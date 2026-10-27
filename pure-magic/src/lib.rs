@@ -4593,6 +4593,17 @@ HelloWorld
         assert_magic_match_bin!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
     }
 
+    // libmagic parses numbers with strtoull(.., 0), so a leading 0 means octal
+    #[test]
+    fn test_octal_number() {
+        assert_magic_match_bin!("0 leshort 070707 octal value", b"\xc7\x71", "octal value");
+        assert_magic_match_bin!(
+            "010 ubyte 0x42 octal offset",
+            b"\x00\x00\x00\x00\x00\x00\x00\x00\x42",
+            "octal offset"
+        );
+    }
+
     #[test]
     fn test_relative_offset() {
         assert_magic_match_bin!(
