@@ -150,7 +150,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::max,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
@@ -2644,6 +2644,7 @@ struct EntryNode {
     mimetype: Option<String>,
     apple: Option<String>,
     strength_mod: Option<StrengthMod>,
+    #[serde(serialize_with = "serialize_sorted_set")]
     exts: HashSet<String>,
 }
 
@@ -2926,6 +2927,7 @@ pub struct MagicRule {
     id: usize,
     source: Option<String>,
     entries: EntryNode,
+    #[serde(serialize_with = "serialize_sorted_set")]
     extensions: HashSet<String>,
     /// score used for rule ranking
     score: u64,
@@ -3127,6 +3129,7 @@ struct DependencyRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MagicSource {
     rules: Vec<MagicRule>,
+    #[serde(serialize_with = "serialize_sorted_map")]
     dependencies: HashMap<String, DependencyRule>,
 }
 
@@ -3515,8 +3518,25 @@ impl<'m> Magic<'m> {
 pub struct MagicDb {
     rule_id: usize,
     rules: Vec<MagicRule>,
+    #[serde(serialize_with = "serialize_sorted_map")]
     dependencies: HashMap<String, DependencyRule>,
     finalized: usize,
+}
+
+// Hash collections iterate in a random order, so they are serialized sorted
+// to make the same rules always give the same bytes.
+fn serialize_sorted_map<S: serde::Serializer>(
+    map: &HashMap<String, DependencyRule>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.collect_map(map.iter().collect::<BTreeMap<_, _>>())
+}
+
+fn serialize_sorted_set<S: serde::Serializer>(
+    set: &HashSet<String>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.collect_seq(set.iter().collect::<BTreeSet<_>>())
 }
 
 #[inline(always)]
