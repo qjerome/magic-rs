@@ -766,4 +766,37 @@ mod tests {
         assert_eq!(c.read_range(0..warm_size).unwrap().len() as u64, warm_size);
         assert!(c.loaded.iter().all(|l| *l));
     }
+
+    /// Returns one byte per `read`, after an `Interrupted` error each time.
+    struct ShortReads {
+        inner: io::Cursor<&'static [u8]>,
+        interrupt: bool,
+    }
+
+    impl Read for ShortReads {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.interrupt = !self.interrupt;
+            if self.interrupt {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let n = min(buf.len(), 1);
+            self.inner.read(&mut buf[..n])
+        }
+    }
+
+    impl Seek for ShortReads {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn test_cold_read_retries_short_reads() {
+        let mut c = LazyCache::from_read_seek(ShortReads {
+            inner: io::Cursor::new(b"hello world"),
+            interrupt: false,
+        })
+        .unwrap();
+        assert_eq!(c.read_range(0..11).unwrap(), b"hello world");
+    }
 }
