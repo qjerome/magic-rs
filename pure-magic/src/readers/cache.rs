@@ -211,7 +211,6 @@ where
     pub fn from_read_seek(mut rs: R) -> Result<Self, io::Error> {
         let block_size = BLOCK_SIZE as u64;
         let pos_end = rs.seek(SeekFrom::End(0))?;
-        let cache_cap = pos_end.div_ceil(BLOCK_SIZE as u64);
 
         Ok(Self {
             source: rs,
@@ -220,7 +219,7 @@ where
             warm: None,
             cold_range: 0..0,
             cold: vec![0; block_size as usize],
-            loaded: vec![false; cache_cap as usize],
+            loaded: vec![],
             block_size,
             warm_size: None,
             stream_pos: 0,
@@ -268,6 +267,10 @@ where
         // be able to write chunks into the warm cache
         warm_size = max(warm_size, self.block_size);
         self.warm_size = Some(warm_size);
+        // only blocks below warm_size are ever tracked; sizing on pos_end would let a
+        // sparse file claiming exabytes abort the process on allocation
+        let cache_cap = min(self.pos_end, warm_size).div_ceil(self.block_size);
+        self.loaded = vec![false; cache_cap as usize];
         self
     }
 
