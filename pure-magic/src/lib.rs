@@ -149,11 +149,12 @@ use regex::bytes::{self};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cmp::max,
+    cmp::{Ordering, max},
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
+    iter,
     mem::swap,
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
@@ -1686,15 +1687,16 @@ impl Test {
                                     None
                                 }
                             }
-                            CmpOp::Gt => {
-                                if buf.len() > str.len() {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
-                                } else {
-                                    None
-                                }
-                            }
-                            CmpOp::Lt => {
-                                if buf.len() < str.len() {
+                            CmpOp::Gt | CmpOp::Lt => {
+                                // the parser drops the trailing NUL of `>\0`, libmagic keeps it
+                                let pat: &[u8] = if str.is_empty() { b"\0" } else { str };
+                                // libmagic compares over the pattern length, data being NUL padded
+                                let ord =
+                                    buf.iter().chain(iter::repeat(&0)).take(pat.len()).cmp(pat);
+                                if matches!(
+                                    (st.cmp_op, ord),
+                                    (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
+                                ) {
                                     Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
                                 } else {
                                     None
