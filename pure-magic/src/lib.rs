@@ -4314,7 +4314,13 @@ mod tests {
     }
 
     macro_rules! assert_magic_match_bin {
-        ($rule: literal, $content:literal) => {{ best_magic($rule, $content, StreamKind::Binary).unwrap() }};
+        ($rule: literal, $content:literal) => {{
+            assert!(
+                !best_magic($rule, $content, StreamKind::Binary)
+                    .unwrap()
+                    .is_default()
+            );
+        }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
                 best_magic($rule, $content, StreamKind::Binary)
@@ -4326,7 +4332,13 @@ mod tests {
     }
 
     macro_rules! assert_magic_match_text {
-        ($rule: literal, $content:literal) => {{ best_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8)).unwrap() }};
+        ($rule: literal, $content:literal) => {{
+            assert!(
+                !best_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
+                    .unwrap()
+                    .is_default()
+            );
+        }};
         ($rule: literal, $content:literal, $message:expr) => {{
             assert_eq!(
                 best_magic($rule, $content, StreamKind::Text(TextEncoding::Utf8))
@@ -4537,9 +4549,9 @@ HelloWorld
 
     #[test]
     fn test_string_ops() {
-        assert_magic_match_text!("0	string/b MZ MZ File", b"MZ\0");
+        assert_magic_match_bin!("0	string/b MZ MZ File", b"MZ\0");
         assert_magic_match_text!("0	string !MZ Not MZ File", b"AZ\0");
-        assert_magic_match_text!("0	string >\0 Any String", b"A\0");
+        assert_magic_match_text!(r"0	string >\0 Any String", b"A\0");
         assert_magic_match_text!("0	string >Test Any String", b"Test 1\0");
         assert_magic_match_text!("0	string <Test Any String", b"\0");
         assert_magic_not_match_text!("0	string >Test Any String", b"\0");
