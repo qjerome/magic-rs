@@ -4616,6 +4616,52 @@ HelloWorld
         );
     }
 
+    fn assert_serialize_deterministic(rules: &str) {
+        let serialize = || {
+            let mut md = MagicDb::new();
+            md.load(parse_assert!(rules));
+            let mut out = vec![];
+            md.serialize(&mut out).unwrap();
+            out
+        };
+        let first = serialize();
+        for _ in 0..8 {
+            assert_eq!(serialize(), first);
+        }
+    }
+
+    #[test]
+    fn test_serialize_deterministic_dependencies() {
+        assert_serialize_deterministic(
+            r#"
+0 name a
+>0 string A a
+0 name b
+>0 string B b
+0 name c
+>0 string C c
+0 name d
+>0 string D d
+0 name e
+>0 string E e
+0 name f
+>0 string F f
+0 string X test
+>1 use a
+"#,
+        );
+    }
+
+    #[test]
+    fn test_serialize_deterministic_extensions() {
+        assert_serialize_deterministic(
+            r#"
+0 string X test
+!:ext a/b/c/d/e/f
+"#,
+        );
+    }
+
     // An `indirect` line's own message only prints if the recursive scan at
     // its target offset actually finds something (softmagic.c's
     // FILE_INDIRECT case prints `desc` conditionally, then the nested
