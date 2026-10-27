@@ -240,6 +240,9 @@ fn parse_pos_number(pair: Pair<'_, Rule>) -> Result<i64, Error> {
         )
         .map_err(|e| Error::parser(e, number_token.as_span()))?
             as i64),
+        Rule::b8_number => Ok(u64::from_str_radix(number_token.as_str(), 8)
+            .map_err(|e| Error::parser(e, number_token.as_span()))?
+            as i64),
         _ => panic!("unexpected number"),
     }
 }

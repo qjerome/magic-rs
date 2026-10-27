@@ -48,9 +48,10 @@ strength_flag =  { "strength" ~ (op_add | op_mul | op_sub | op_div | op_sub) ~ p
 flag          =  { "!:" ~ (mime_flag | ext_flag | apple_flag | strength_flag) }
 
 neg_number = ${ "-" ~ pos_number }
-// hex must be checked first as 0 is also b10 number
-pos_number = ${ "+"? ~ (b16_number | b10_number) }
+// hex and octal must be checked first as 0 is also b10 number
+pos_number = ${ "+"? ~ (b8_number | b16_number | b10_number) }
 number     =  { pos_number | neg_number }
+b8_number  = @{ "0" ~ ASCII_OCT_DIGIT+ }
 b10_number = @{ ASCII_DIGIT+ }
 b16_number = @{ ("0x" | "0X") ~ ASCII_HEX_DIGIT+ }
 
