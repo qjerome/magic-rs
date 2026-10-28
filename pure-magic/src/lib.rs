@@ -354,7 +354,7 @@ impl Message {
             } => {
                 if let Some(mr) = mr {
                     match mr {
-                        MatchRes::Float(_, _) | MatchRes::Bytes(_, _, _, _) => {
+                        MatchRes::Float(_, _) | MatchRes::Bytes(..) => {
                             Ok(Cow::Owned(dformat!(fs, mr)?))
                         }
                         MatchRes::Scalar(_, scalar) => {
@@ -813,6 +813,7 @@ impl RegexTest {
                             stop_offset,
                             re_match.as_bytes(),
                             Encoding::Utf8,
+                            SEARCH_PRINT_MAX,
                         ));
                     }
 
@@ -842,6 +843,7 @@ impl RegexTest {
                             None,
                             re_match.as_bytes(),
                             Encoding::Utf8,
+                            SEARCH_PRINT_MAX,
                         )
                     })
             }
@@ -849,7 +851,13 @@ impl RegexTest {
 
         // handle the case where we want the regex not to match
         if self.cmp_op.is_neq() && mr.is_none() {
-            return Some(MatchRes::Bytes(off_buf, None, buf, Encoding::Utf8));
+            return Some(MatchRes::Bytes(
+                off_buf,
+                None,
+                buf,
+                Encoding::Utf8,
+                SEARCH_PRINT_MAX,
+            ));
         }
 
         mr
@@ -1173,6 +1181,7 @@ impl SearchTest {
                     None,
                     &buf[i..i + consumed],
                     Encoding::Utf8,
+                    SEARCH_PRINT_MAX,
                 ));
             } else {
                 i += max(consumed, 1)
@@ -1181,7 +1190,13 @@ impl SearchTest {
 
         // handles the case where we want the string not to be found
         if self.cmp_op.is_neq() {
-            return Some(MatchRes::Bytes(off_buf, None, buf, Encoding::Utf8));
+            return Some(MatchRes::Bytes(
+                off_buf,
+                None,
+                buf,
+                Encoding::Utf8,
+                SEARCH_PRINT_MAX,
+            ));
         }
 
         None
@@ -1267,6 +1282,10 @@ enum Encoding {
     Utf8,
 }
 
+// libmagic prints string types from a 128-byte buffer and regex/search from a 512-byte one
+const STRING_PRINT_MAX: usize = 127;
+const SEARCH_PRINT_MAX: usize = 511;
+
 // Carry the offset of the start of the data in the stream
 // and the data itself
 enum MatchRes<'buf> {
@@ -1274,7 +1293,8 @@ enum MatchRes<'buf> {
     // Bytes.1: optional end of match (to address the need of EOL adjustment in string regex)
     // Bytes.2: the bytes matching
     // Bytes.3: encoding of the buffer
-    Bytes(u64, Option<u64>, &'buf [u8], Encoding),
+    // Bytes.4: maximum number of characters printed by %s
+    Bytes(u64, Option<u64>, &'buf [u8], Encoding, usize),
     Scalar(u64, Scalar),
     Float(u64, Float),
 }
@@ -1290,12 +1310,11 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
-            // libmagic caps %s output at 127 bytes
-            Self::Bytes(_, _, v, enc) => match enc {
-                Encoding::Utf8 => String::from_utf8_lossy(&v[..v.len().min(127)]).dyn_fmt(f),
+            Self::Bytes(_, _, v, enc, max) => match enc {
+                Encoding::Utf8 => String::from_utf8_lossy(&v[..v.len().min(*max)]).dyn_fmt(f),
                 Encoding::Utf16(enc) => {
                     let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
-                    String::from_utf16_lossy(&utf16[..utf16.len().min(127)]).dyn_fmt(f)
+                    String::from_utf16_lossy(&utf16[..utf16.len().min(*max)]).dyn_fmt(f)
                 }
             },
         }
@@ -1307,7 +1326,7 @@ impl MatchRes<'_> {
     #[inline]
     fn start_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(o, _, _, _) => *o,
+            MatchRes::Bytes(o, _, _, _, _) => *o,
             MatchRes::Scalar(o, _) => *o,
             MatchRes::Float(o, _) => *o,
         }
@@ -1317,7 +1336,7 @@ impl MatchRes<'_> {
     #[inline]
     fn end_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(start, end, buf, _) => match end {
+            MatchRes::Bytes(start, end, buf, _, _) => match end {
                 Some(end) => *end,
                 None => start.saturating_add(buf.len() as u64),
             },
@@ -1719,14 +1738,26 @@ impl Test {
                         match st.cmp_op {
                             CmpOp::Eq => {
                                 if let (true, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(str), Encoding::Utf8))
+                                    Some(MatchRes::Bytes(
+                                        *o,
+                                        None,
+                                        trim_buf!(str),
+                                        Encoding::Utf8,
+                                        STRING_PRINT_MAX,
+                                    ))
                                 } else {
                                     None
                                 }
                             }
                             CmpOp::Neq => {
                                 if let (false, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(str), Encoding::Utf8))
+                                    Some(MatchRes::Bytes(
+                                        *o,
+                                        None,
+                                        trim_buf!(str),
+                                        Encoding::Utf8,
+                                        STRING_PRINT_MAX,
+                                    ))
                                 } else {
                                     None
                                 }
@@ -1745,7 +1776,13 @@ impl Test {
                                     } else {
                                         buf
                                     };
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(msg), Encoding::Utf8))
+                                    Some(MatchRes::Bytes(
+                                        *o,
+                                        None,
+                                        trim_buf!(msg),
+                                        Encoding::Utf8,
+                                        STRING_PRINT_MAX,
+                                    ))
                                 } else {
                                     None
                                 }
@@ -1761,21 +1798,37 @@ impl Test {
                             }
                         }
                     }
-                    TestValue::Any => {
-                        Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
-                    }
+                    TestValue::Any => Some(MatchRes::Bytes(
+                        *o,
+                        None,
+                        trim_buf!(buf),
+                        Encoding::Utf8,
+                        STRING_PRINT_MAX,
+                    )),
                 }
             }
 
             (Self::PString(m), ReadValue::Bytes(o, buf)) => match m.test_val.as_ref() {
                 TestValue::Value(psv) => {
                     if buf == psv {
-                        Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf8))
+                        Some(MatchRes::Bytes(
+                            *o,
+                            None,
+                            buf,
+                            Encoding::Utf8,
+                            STRING_PRINT_MAX,
+                        ))
                     } else {
                         None
                     }
                 }
-                TestValue::Any => Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf8)),
+                TestValue::Any => Some(MatchRes::Bytes(
+                    *o,
+                    None,
+                    buf,
+                    Encoding::Utf8,
+                    STRING_PRINT_MAX,
+                )),
             },
 
             (Self::String16(t), ReadValue::Bytes(o, buf)) => {
@@ -1798,12 +1851,17 @@ impl Test {
                             None,
                             t.orig.as_bytes(),
                             Encoding::Utf16(t.encoding),
+                            STRING_PRINT_MAX,
                         ))
                     }
 
-                    TestValue::Any => {
-                        Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf16(t.encoding)))
-                    }
+                    TestValue::Any => Some(MatchRes::Bytes(
+                        *o,
+                        None,
+                        buf,
+                        Encoding::Utf16(t.encoding),
+                        STRING_PRINT_MAX,
+                    )),
                 }
             }
 
