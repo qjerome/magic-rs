@@ -122,10 +122,22 @@ pub(crate) fn unescape_string_to_string(s: &str) -> String {
     result
 }
 
-pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
+/// Unescapes `s` and returns whether the result is binary (not UTF-8),
+/// dropping a trailing NUL from non-binary values.
+pub(crate) fn unescape_classify(s: &str) -> (bool, Vec<u8>) {
+    let mut result = unescape_bytes(s);
+    let binary = run_utf8_validation(&result).is_err();
+    if !binary && result.last() == Some(&0) {
+        result.pop();
+    }
+    (binary, result)
+}
+
+/// Unescapes `s` as magic(5) does, keeping every byte, including a
+/// trailing NUL.
+fn unescape_bytes(s: &str) -> Vec<u8> {
     let mut result = Vec::new();
     let mut chars = s.bytes().peekable();
-    let mut c_str = false;
     while let Some(c) = chars.next() {
         if c == b'\\' {
             if let Some(next_char) = chars.peek() {
@@ -165,12 +177,6 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                         }
 
                         if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
-                            // we reached end of string
-                            if chars.peek().is_none() && hex == 0 {
-                                c_str = true;
-                                continue;
-                            }
-
                             result.push(hex);
                         } else {
                             result.push(c); // Push the backslash if the hex sequence is invalid
@@ -191,12 +197,6 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
                             break;
                         }
                         if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
-                            // we reached end of string
-                            if chars.peek().is_none() && octal == 0 {
-                                c_str = true;
-                                continue;
-                            }
-
                             result.push(octal);
                         } else {
                             result.push(c); // Push the backslash if the octal sequence is invalid
@@ -214,11 +214,7 @@ pub(crate) fn unescape_string_to_vec(s: &str) -> (bool, Vec<u8>) {
         }
     }
 
-    let binary = run_utf8_validation(&result).is_err();
-    if binary && c_str {
-        result.push(0)
-    }
-    (binary, result)
+    result
 }
 
 #[inline]
@@ -809,7 +805,7 @@ impl SearchTest {
                 Rule::op_neq => cmp_op = CmpOp::Neq,
                 Rule::op_eq => cmp_op = CmpOp::Eq,
                 Rule::string_value => {
-                    let (bin, v) = unescape_string_to_vec(pair.as_str());
+                    let (bin, v) = unescape_classify(pair.as_str());
                     binary = bin;
                     value = Some(v.to_vec());
                 }
@@ -867,7 +863,7 @@ impl RegexTest {
                 Rule::op_neq => cmp_op = CmpOp::Neq,
                 Rule::op_eq => cmp_op = CmpOp::Eq,
                 Rule::string_value => {
-                    let (bin, s) = unescape_string_to_vec(pair.as_str());
+                    let (bin, s) = unescape_classify(pair.as_str());
                     binary = bin;
                     prep_re = Some(prepare_bytes_re(&s));
                 }
@@ -1015,8 +1011,7 @@ impl Test {
                     Rule::string => {
                         let v = match test_value.as_rule() {
                             Rule::string_value => {
-                                let (_, s) = unescape_string_to_vec(test_value.as_str());
-                                TestValue::Value(s)
+                                TestValue::Value(unescape_bytes(test_value.as_str()))
                             }
                             Rule::any_value => TestValue::Any,
                             _ => unimplemented!(),
@@ -1035,7 +1030,7 @@ impl Test {
                     }
 
                     Rule::pstring => {
-                        let val = unescape_string_to_vec(test_value.as_str()).1;
+                        let val = unescape_classify(test_value.as_str()).1;
 
                         match test_value.as_rule() {
                             Rule::string_value => Self::PString(PStringTest::from_pair_with_value(
@@ -1066,7 +1061,7 @@ impl Test {
                         Rule::string_value => {
                             orig = Some(unescape_string_to_string(p.as_str()));
                             str16 = Some(TestValue::Value(
-                                unescape_string_to_vec(p.as_str())
+                                unescape_classify(p.as_str())
                                     .1
                                     .iter()
                                     .map(|b| *b as u16)
@@ -1551,20 +1546,14 @@ mod test {
     #[test]
     fn test_unescape() {
         assert_eq!(
-            str::from_utf8(&unescape_string_to_vec(r#"\ hello"#).1).unwrap(),
+            str::from_utf8(&unescape_classify(r#"\ hello"#).1).unwrap(),
             " hello"
         );
-        assert_eq!(unescape_string_to_vec(r#"hello\ world"#).1, b"hello world");
-        assert_eq!(
-            unescape_string_to_vec(r#"\^[[:space:]]"#).1,
-            b"^[[:space:]]"
-        );
-        assert_eq!(unescape_string_to_vec(r#"\x41"#).1, b"A");
-        assert_eq!(unescape_string_to_vec(r#"\xF\xA"#).1, b"\x0f\n");
-        assert_eq!(unescape_string_to_vec(r#"\101"#).1, b"A");
-        println!(
-            "{:?}",
-            unescape_string_to_vec(r#"\1\0\0\0\0\0\0\300\0\2\0\0"#)
-        );
+        assert_eq!(unescape_classify(r#"hello\ world"#).1, b"hello world");
+        assert_eq!(unescape_classify(r#"\^[[:space:]]"#).1, b"^[[:space:]]");
+        assert_eq!(unescape_classify(r#"\x41"#).1, b"A");
+        assert_eq!(unescape_classify(r#"\xF\xA"#).1, b"\x0f\n");
+        assert_eq!(unescape_classify(r#"\101"#).1, b"A");
+        println!("{:?}", unescape_classify(r#"\1\0\0\0\0\0\0\300\0\2\0\0"#));
     }
 }

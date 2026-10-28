@@ -1687,13 +1687,11 @@ impl Test {
                                 }
                             }
                             CmpOp::Gt | CmpOp::Lt => {
-                                // the parser drops the trailing NUL of `>\0`, libmagic keeps it
-                                let pat: &[u8] = if str.is_empty() { b"\0" } else { str };
                                 // libmagic compares over the pattern length, data being NUL padded
                                 let ord = buf
                                     .iter()
                                     .chain(iter::repeat(&0))
-                                    .zip(pat)
+                                    .zip(str)
                                     .map(|(&b, &p)| {
                                         if st.mods.contains(StringMod::LowerInsensitive)
                                             && p.is_ascii_lowercase()
@@ -1707,13 +1705,13 @@ impl Test {
                                             b
                                         }
                                     })
-                                    .cmp(pat.iter().copied());
+                                    .cmp(str.iter().copied());
                                 if matches!(
                                     (st.cmp_op, ord),
                                     (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
                                 ) {
                                     // libmagic cuts the message at CR/LF when the pattern starts with NUL
-                                    let msg = if pat[0] == 0 {
+                                    let msg = if str.starts_with(b"\0") {
                                         buf.split(|b| matches!(b, b'\r' | b'\n'))
                                             .next()
                                             .unwrap_or(buf)
