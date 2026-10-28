@@ -154,7 +154,6 @@ use std::{
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
-    iter,
     mem::swap,
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
@@ -1020,6 +1019,51 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
     }
 }
 
+/// Orders NUL padded `buf` against `str` like libmagic `file_strncmp`.
+fn string_cmp(str: &[u8], mods: StringModFlags, buf: &[u8]) -> Ordering {
+    // C isspace, which unlike u8::is_ascii_whitespace includes \v
+    let is_space = |b: u8| matches!(b, b' ' | b'\t'..=b'\r');
+    // byte at index in buf
+    let at = |i: usize| buf.get(i).copied().unwrap_or(0);
+    // index in buf
+    let mut i = 0;
+
+    for (j, &p) in str.iter().enumerate() {
+        if mods.contains(StringMod::CompactWhitespace) && is_space(p) {
+            if !is_space(at(i)) {
+                return Ordering::Greater;
+            }
+            i += 1;
+            if !str.get(j + 1).is_some_and(|&p| is_space(p)) {
+                while is_space(at(i)) {
+                    i += 1;
+                }
+            }
+        } else if mods.contains(StringMod::OptBlank) && is_space(p) {
+            while is_space(at(i)) {
+                i += 1;
+            }
+        } else {
+            let b = if mods.contains(StringMod::LowerInsensitive) && p.is_ascii_lowercase() {
+                at(i).to_ascii_lowercase()
+            } else if mods.contains(StringMod::UpperInsensitive) && p.is_ascii_uppercase() {
+                at(i).to_ascii_uppercase()
+            } else {
+                at(i)
+            };
+            i += 1;
+            if b != p {
+                return b.cmp(&p);
+            }
+        }
+    }
+
+    if mods.contains(StringMod::FullWordMatch) && at(i) != 0 && !is_space(at(i)) {
+        return Ordering::Greater;
+    }
+    Ordering::Equal
+}
+
 impl StringTest {
     fn has_length_mod(&self) -> bool {
         !self.mods.is_disjoint(
@@ -1688,25 +1732,7 @@ impl Test {
                                 }
                             }
                             CmpOp::Gt | CmpOp::Lt => {
-                                // libmagic compares over the pattern length, data being NUL padded
-                                let ord = buf
-                                    .iter()
-                                    .chain(iter::repeat(&0))
-                                    .zip(str)
-                                    .map(|(&b, &p)| {
-                                        if st.mods.contains(StringMod::LowerInsensitive)
-                                            && p.is_ascii_lowercase()
-                                        {
-                                            b.to_ascii_lowercase()
-                                        } else if st.mods.contains(StringMod::UpperInsensitive)
-                                            && p.is_ascii_uppercase()
-                                        {
-                                            b.to_ascii_uppercase()
-                                        } else {
-                                            b
-                                        }
-                                    })
-                                    .cmp(str.iter().copied());
+                                let ord = string_cmp(str, st.mods, buf);
                                 if matches!(
                                     (st.cmp_op, ord),
                                     (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
