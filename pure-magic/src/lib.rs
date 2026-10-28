@@ -1246,11 +1246,12 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
+            // libmagic caps %s output at 127 bytes
             Self::Bytes(_, _, v, enc) => match enc {
-                Encoding::Utf8 => String::from_utf8_lossy(v).to_string().dyn_fmt(f),
+                Encoding::Utf8 => String::from_utf8_lossy(&v[..v.len().min(127)]).dyn_fmt(f),
                 Encoding::Utf16(enc) => {
                     let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
-                    String::from_utf16_lossy(&utf16).dyn_fmt(f)
+                    String::from_utf16_lossy(&utf16[..utf16.len().min(127)]).dyn_fmt(f)
                 }
             },
         }
