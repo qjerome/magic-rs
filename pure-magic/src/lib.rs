@@ -4601,6 +4601,14 @@ HelloWorld
                 "{rule}"
             );
         }
+
+        let long16 = [b"A\0".repeat(200), vec![0, 0]].concat();
+        assert_eq!(
+            best_magic("0	lestring16 x %s", &long16, StreamKind::Binary)
+                .unwrap()
+                .message(),
+            "A".repeat(127)
+        );
     }
 
     #[test]
