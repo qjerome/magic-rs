@@ -4560,6 +4560,7 @@ HelloWorld
         assert_magic_match_text!("0	string <Test Any String", b"Tess\0");
         assert_magic_match_text!("0	string >Tess Any String", b"Test\0");
         assert_magic_not_match_bin!(r"0	string >\0 Any String", b"\0\0\0\0");
+        assert_magic_match_bin!(r"0	string >\0 Any String", b"\nfoo\0");
     }
 
     #[test]
