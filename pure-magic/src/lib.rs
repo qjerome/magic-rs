@@ -4588,6 +4588,7 @@ HelloWorld
         assert_magic_match_bin!(r"0	string >\0 [%s]", b"A\rfoo\0", "[A]");
         assert_magic_match_bin!(r"0	string >A [%s]", b"B\nfoo\0", r"[B\nfoo]");
         assert_magic_not_match_bin!("0	string/c <test Any String", b"TEST\0");
+        assert_magic_match_bin!(r"0	string >Test\0 [%s]", b"Test 1\0", "[Test 1]");
     }
 
     #[test]
