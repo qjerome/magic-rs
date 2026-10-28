@@ -1485,10 +1485,9 @@ impl Test {
                                     }
                                 }
                                 CmpOp::Lt | CmpOp::Gt => {
-                                    let read =
-                                        haystack.read_until_any_delim_or_limit(b"\n\0", 8092)?;
+                                    let read = haystack.read_until_or_limit(b'\0', 8192)?;
 
-                                    if read.ends_with(b"\0") || read.ends_with(b"\n") {
+                                    if read.ends_with(b"\0") {
                                         &read[..read.len() - 1]
                                     } else {
                                         read
@@ -1697,7 +1696,15 @@ impl Test {
                                     (st.cmp_op, ord),
                                     (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
                                 ) {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
+                                    // libmagic cuts the message at CR/LF when the pattern starts with NUL
+                                    let msg = if pat[0] == 0 {
+                                        buf.split(|b| matches!(b, b'\r' | b'\n'))
+                                            .next()
+                                            .unwrap_or(buf)
+                                    } else {
+                                        buf
+                                    };
+                                    Some(MatchRes::Bytes(*o, None, trim_buf!(msg), Encoding::Utf8))
                                 } else {
                                     None
                                 }
@@ -4563,7 +4570,7 @@ HelloWorld
         assert_magic_match_bin!(r"0	string >\0 Any String", b"\nfoo\0");
         assert_magic_match_bin!(r"0	string >\0 [%s]", b"A\nfoo\0", "[A]");
         assert_magic_match_bin!(r"0	string >\0 [%s]", b"A\rfoo\0", "[A]");
-        assert_magic_match_bin!(r"0	string >A [%s]", b"B\nfoo\0", "[B\nfoo]");
+        assert_magic_match_bin!(r"0	string >A [%s]", b"B\nfoo\0", r"[B\nfoo]");
     }
 
     #[test]
