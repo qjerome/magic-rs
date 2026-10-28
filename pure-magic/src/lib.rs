@@ -4590,6 +4590,17 @@ HelloWorld
         assert_magic_not_match_bin!(r"0	string Test\0 Any String", b"Test 1\0");
         assert_magic_match_bin!(r"0	string !Test\0 Any String", b"Test 1\0");
         assert_magic_match_bin!(r"0	string Test\0 Any String", b"Test\0zz");
+
+        let long = [&[b'A'; 200][..], b"\0"].concat();
+        for rule in [r"0	string >\0 %s", "0	string x %s"] {
+            assert_eq!(
+                best_magic(rule, &long, StreamKind::Binary)
+                    .unwrap()
+                    .message(),
+                "A".repeat(127),
+                "{rule}"
+            );
+        }
     }
 
     #[test]
