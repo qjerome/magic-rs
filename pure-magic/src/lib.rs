@@ -4642,6 +4642,14 @@ HelloWorld
         assert_magic_match_bin!(r#"0 pstring/l Toast it works"#, b"\x05\x00\x00\x00Toast");
 
         assert_magic_match_bin!(r#"0 pstring/lJ Toast it works"#, b"\x09\x00\x00\x00Toast");
+
+        assert_magic_match_bin!(r#"0 pstring >\0 [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_match_bin!(r#"0 pstring >ab [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_match_bin!(r#"0 pstring <b [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring <abc [%s]"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring >abd [%s]"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring <abb [%s]"#, b"\x03abc");
     }
 
     #[test]
