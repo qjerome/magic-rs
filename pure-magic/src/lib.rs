@@ -4467,6 +4467,17 @@ mod tests {
 HelloWorld
             "#
         );
+
+        // libmagic caps regex %s output at 511 bytes, not 127 like string
+        for (n, expected) in [(200, 200), (600, 511)] {
+            let data = [vec![b'A'; n], vec![b'\n']].concat();
+            assert_eq!(
+                best_magic("0	regex A+ %s", &data, StreamKind::Text(TextEncoding::Utf8))
+                    .unwrap()
+                    .message(),
+                "A".repeat(expected)
+            );
+        }
     }
 
     #[test]
