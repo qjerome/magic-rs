@@ -735,7 +735,11 @@ impl StringTest {
 }
 
 impl PStringTest {
-    fn from_pair_with_value(pair: Pair<'_, Rule>, value: TestValue<Vec<u8>>) -> Self {
+    fn from_pair_with_value(
+        pair: Pair<'_, Rule>,
+        value: TestValue<Vec<u8>>,
+        cmp_op: CmpOp,
+    ) -> Self {
         debug_assert_eq!(pair.as_rule(), Rule::pstring);
 
         let mut len = PStringLen::Byte;
@@ -760,6 +764,7 @@ impl PStringTest {
 
         PStringTest {
             test_val: value,
+            cmp_op,
             len,
             include_len,
         }
@@ -1036,10 +1041,12 @@ impl Test {
                             Rule::string_value => Self::PString(PStringTest::from_pair_with_value(
                                 test_type,
                                 TestValue::Value(val),
+                                cmp_op.unwrap_or(CmpOp::Eq),
                             )),
                             Rule::any_value => Self::PString(PStringTest::from_pair_with_value(
                                 test_type,
                                 TestValue::Any,
+                                CmpOp::Eq,
                             )),
 
                             // parser should guarantee this branch is never reached

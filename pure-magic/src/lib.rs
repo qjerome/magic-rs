@@ -1423,6 +1423,7 @@ impl PStringLen {
 struct PStringTest {
     len: PStringLen,
     test_val: TestValue<Vec<u8>>,
+    cmp_op: CmpOp,
     include_len: bool,
 }
 
@@ -1445,6 +1446,7 @@ impl PStringTest {
         }
 
         if let TestValue::Value(s) = self.test_val.as_ref()
+            && !matches!(self.cmp_op, CmpOp::Gt | CmpOp::Lt)
             && len != s.len()
         {
             return Ok(None);
@@ -1804,7 +1806,14 @@ impl Test {
 
             (Self::PString(m), ReadValue::Bytes(o, buf)) => match m.test_val.as_ref() {
                 TestValue::Value(psv) => {
-                    if buf == psv {
+                    let ok = match m.cmp_op {
+                        CmpOp::Gt | CmpOp::Lt => matches!(
+                            (m.cmp_op, string_cmp(psv, StringModFlags::empty(), buf)),
+                            (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
+                        ),
+                        _ => buf == psv,
+                    };
+                    if ok {
                         Some(MatchRes::Bytes(
                             *o,
                             None,
@@ -4644,12 +4653,14 @@ HelloWorld
         assert_magic_match_bin!(r#"0 pstring/lJ Toast it works"#, b"\x09\x00\x00\x00Toast");
 
         assert_magic_match_bin!(r#"0 pstring >\0 [%s]"#, b"\x03abc", "[abc]");
-        assert_magic_match_bin!(r#"0 pstring >ab [%s]"#, b"\x03abc", "[abc]");
         assert_magic_match_bin!(r#"0 pstring <b [%s]"#, b"\x03abc", "[abc]");
         assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x03abc");
         assert_magic_not_match_bin!(r#"0 pstring <abc [%s]"#, b"\x03abc");
         assert_magic_not_match_bin!(r#"0 pstring >abd [%s]"#, b"\x03abc");
         assert_magic_not_match_bin!(r#"0 pstring <abb [%s]"#, b"\x03abc");
+        // unlike libmagic, which also compares as many bytes past the pattern as the length prefix has
+        assert_magic_not_match_bin!(r#"0 pstring >ab X"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring/H >ab X"#, b"\x00\x04ab\x00c");
     }
 
     #[test]
