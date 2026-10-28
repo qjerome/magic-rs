@@ -1690,8 +1690,24 @@ impl Test {
                                 // the parser drops the trailing NUL of `>\0`, libmagic keeps it
                                 let pat: &[u8] = if str.is_empty() { b"\0" } else { str };
                                 // libmagic compares over the pattern length, data being NUL padded
-                                let ord =
-                                    buf.iter().chain(iter::repeat(&0)).take(pat.len()).cmp(pat);
+                                let ord = buf
+                                    .iter()
+                                    .chain(iter::repeat(&0))
+                                    .zip(pat)
+                                    .map(|(&b, &p)| {
+                                        if st.mods.contains(StringMod::LowerInsensitive)
+                                            && p.is_ascii_lowercase()
+                                        {
+                                            b.to_ascii_lowercase()
+                                        } else if st.mods.contains(StringMod::UpperInsensitive)
+                                            && p.is_ascii_uppercase()
+                                        {
+                                            b.to_ascii_uppercase()
+                                        } else {
+                                            b
+                                        }
+                                    })
+                                    .cmp(pat.iter().copied());
                                 if matches!(
                                     (st.cmp_op, ord),
                                     (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
