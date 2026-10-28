@@ -4691,6 +4691,10 @@ HelloWorld
         assert_magic_not_match_bin!(r"0	string/w >a\ b Any String", b"ab\0");
         assert_magic_match_bin!("0	string/f >ab [%s]", b"abc\0", "[abc]");
         assert_magic_not_match_bin!("0	string/f >ab Any String", b"ab c\0");
+        assert_magic_match_bin!(r"0	string >ab\0c [%s]", b"ab\0d", "[ab]");
+        assert_magic_not_match_bin!(r"0	string >ab\0e Any String", b"ab\0d");
+        assert_magic_match_bin!(r"0	string <ab\0e [%s]", b"ab\0d", "[ab]");
+        assert_magic_not_match_bin!(r"0	string <ab\0c Any String", b"ab\0d");
 
         let long = [&[b'A'; 200][..], b"\0"].concat();
         for rule in [r"0	string >\0 %s", "0	string x %s"] {
