@@ -143,7 +143,7 @@
 use dyf::{DynDisplay, FormatString, dformat};
 use flaglet::flags;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use memchr::memchr;
+use memchr::{memchr, memchr2};
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
 use serde::{Deserialize, Serialize};
@@ -1548,14 +1548,9 @@ impl Test {
                                         haystack.read_count(len)?
                                     }
                                 }
+                                // libmagic compares against its raw NUL terminated 128-byte copy
                                 CmpOp::Lt | CmpOp::Gt => {
-                                    let read = haystack.read_until_or_limit(b'\0', 8192)?;
-
-                                    if read.ends_with(b"\0") {
-                                        &read[..read.len() - 1]
-                                    } else {
-                                        read
-                                    }
+                                    haystack.read_count(STRING_PRINT_MAX as u64)?
                                 }
                                 _ => {
                                     return Err(Error::Msg(format!(
@@ -1768,13 +1763,12 @@ impl Test {
                                     (st.cmp_op, ord),
                                     (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
                                 ) {
+                                    let msg = &buf[..memchr(b'\0', buf).unwrap_or(buf.len())];
                                     // libmagic cuts the message at CR/LF when the pattern starts with NUL
                                     let msg = if str.starts_with(b"\0") {
-                                        buf.split(|b| matches!(b, b'\r' | b'\n'))
-                                            .next()
-                                            .unwrap_or(buf)
+                                        &msg[..memchr2(b'\r', b'\n', msg).unwrap_or(msg.len())]
                                     } else {
-                                        buf
+                                        msg
                                     };
                                     Some(MatchRes::Bytes(
                                         *o,
