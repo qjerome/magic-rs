@@ -4609,6 +4609,20 @@ HelloWorld
             r#"0	string/W	#!/usr/bin/env\ \ python  PYTHON"#,
             b"#!/usr/bin/env python"
         );
+
+        // libmagic compares /W and /w strings within a 127-byte window
+        for rule in [r"0	string/W	a\ b	X", r"0	string/w	a\ b	X"] {
+            for (spaces, matches) in [(125, true), (126, false)] {
+                let data = [b"a", &b" ".repeat(spaces)[..], b"b\n"].concat();
+                assert_eq!(
+                    !best_magic(rule, &data, StreamKind::Text(TextEncoding::Utf8))
+                        .unwrap()
+                        .is_default(),
+                    matches,
+                    "{rule} with {spaces} spaces"
+                );
+            }
+        }
     }
 
     #[test]
