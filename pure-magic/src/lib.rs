@@ -4726,6 +4726,18 @@ HelloWorld
             b"\x03a\x00cdef",
             r"[a\000c] (64)"
         );
+        // unlike libmagic, which prints the pattern and ends the match after the pattern length, a
+        // ! match prints the content and ends after it, as numeric types print the value read
+        assert_magic_match_bin!(r#"0 pstring !abd [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_not_match_bin!(r#"0 pstring !abc [%s]"#, b"\x03abc");
+        assert_magic_match_bin!(
+            r#"
+            0 pstring !abcdef [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x03abcXYZW",
+            "[abc] (58)"
+        );
     }
 
     #[test]
