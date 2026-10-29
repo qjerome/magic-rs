@@ -1445,16 +1445,20 @@ impl PStringTest {
             len = len.saturating_sub(self.len.size_of_len())
         }
 
-        if let TestValue::Value(s) = self.test_val.as_ref()
-            && !matches!(self.cmp_op, CmpOp::Gt | CmpOp::Lt)
-            && len != s.len()
-        {
-            return Ok(None);
+        let mut count = len;
+        if let TestValue::Value(s) = self.test_val.as_ref() {
+            if matches!(self.cmp_op, CmpOp::Gt | CmpOp::Lt) {
+                // libmagic fails >/< when fewer bytes than the pattern follow the length prefix,
+                // so read at least that many but only compare the pstring content
+                count = len.max(s.len());
+            } else if len != s.len() {
+                return Ok(None);
+            }
         }
 
-        let read = haystack.read_exact_count(len as u64)?;
+        let read = haystack.read_exact_count(count as u64)?;
 
-        Ok(Some(read))
+        Ok(Some(&read[..len]))
     }
 
     #[inline(always)]
