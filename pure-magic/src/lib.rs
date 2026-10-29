@@ -1850,7 +1850,7 @@ impl Test {
                         Some(MatchRes::Bytes(
                             *o,
                             None,
-                            t.orig.as_bytes(),
+                            buf,
                             Encoding::Utf16(t.encoding),
                             STRING_PRINT_MAX,
                         ))
