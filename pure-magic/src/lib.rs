@@ -1446,7 +1446,7 @@ impl PStringTest {
                 // libmagic fails >/< when fewer bytes than the pattern follow the length prefix,
                 // so read at least that many but only compare the pstring content
                 count = len.max(s.len());
-            } else if len != s.len() {
+            } else if !self.cmp_op.is_neq() && len != s.len() {
                 return Ok(None);
             }
         }
@@ -1818,6 +1818,7 @@ impl Test {
                             (m.cmp_op, string_cmp(psv, StringModFlags::empty(), buf)),
                             (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
                         ),
+                        CmpOp::Neq => buf != psv,
                         _ => buf == psv,
                     };
                     if ok {
