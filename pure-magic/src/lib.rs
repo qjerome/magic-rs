@@ -4719,6 +4719,19 @@ HelloWorld
                 "{rule}"
             );
         }
+        assert_eq!(
+            best_magic(
+                r#"
+                0 string >\0 X
+                >&0 ubyte x %d
+                "#,
+                &long,
+                StreamKind::Binary
+            )
+            .unwrap()
+            .message(),
+            "X 65"
+        );
 
         let long16 = [b"A\0".repeat(200), vec![0, 0]].concat();
         assert_eq!(
