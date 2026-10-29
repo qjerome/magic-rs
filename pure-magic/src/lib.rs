@@ -4611,6 +4611,9 @@ HelloWorld
             b"#!/usr/bin/env python"
         );
 
+        // libmagic's /w skips data blanks only after a blank in the pattern
+        assert_magic_not_match_text!(r"0	string/w	ab	X", b"a b\n");
+
         // libmagic compares /W and /w strings within a 127-byte window
         for rule in [r"0	string/W	a\ b	X", r"0	string/w	a\ b	X"] {
             for (spaces, matches) in [(125, true), (126, false)] {
