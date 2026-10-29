@@ -4692,6 +4692,16 @@ HelloWorld
         assert_magic_match_bin!(r#"0 pstring >abc X"#, b"\x02acZ", "X");
         assert_magic_match_bin!(r#"0 pstring <abc [%s]"#, b"\x02abZ", "[ab]");
         assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x02abd");
+        // the relative offset follows the length-prefixed content, not the bytes read to compare
+        // against a longer pattern
+        assert_magic_match_bin!(
+            r#"
+            0 pstring <abc [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x02abZW",
+            "[ab] (5a)"
+        );
         // unlike libmagic, which handles the >/< and x value as a C string, the content does not
         // stop at the first NUL: the length prefix alone delimits a pstring
         assert_magic_match_bin!(r#"0 pstring >\0 [%s]"#, b"\x03a\x00c", r"[a\000c]");
