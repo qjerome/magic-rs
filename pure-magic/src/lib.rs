@@ -2935,7 +2935,10 @@ impl EntryNode {
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
                 match &self.entry.test {
-                    Test::String(t) if t.has_length_mod() => {
+                    // >/< read a 127-byte window but end after the printed string
+                    Test::String(t)
+                        if t.has_length_mod() || matches!(t.cmp_op, CmpOp::Lt | CmpOp::Gt) =>
+                    {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
                     }
