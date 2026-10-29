@@ -4790,6 +4790,31 @@ HelloWorld
         assert_magic_not_match_bin!(r"0	string >ab\0e Any String", b"ab\0d");
         assert_magic_match_bin!(r"0	string <ab\0e [%s]", b"ab\0d", "[ab]");
         assert_magic_not_match_bin!(r"0	string <ab\0c Any String", b"ab\0d");
+        // >/< read a 127-byte window but the match ends after the printed string
+        assert_magic_match_bin!(
+            r#"
+            0 string >abc [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abdXYZW\0Q",
+            "[abdXYZW] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string <abc [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abbXYZW\0Q",
+            "[abbXYZW] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string >\0 [%s]
+            >&0 byte x (%x)
+            "#,
+            b"A\nfoo\0Q",
+            "[A] (a)"
+        );
 
         let long = [&[b'A'; 200][..], b"\0"].concat();
         for rule in [r"0	string >\0 %s", "0	string x %s"] {
