@@ -4668,6 +4668,11 @@ HelloWorld
         // unlike libmagic, which also compares as many bytes past the pattern as the length prefix has
         assert_magic_not_match_bin!(r#"0 pstring >ab X"#, b"\x03abc");
         assert_magic_not_match_bin!(r#"0 pstring/H >ab X"#, b"\x00\x04ab\x00c");
+        // like numeric types, the test fails unless length prefix + pattern fit in the data
+        assert_magic_not_match_bin!(r#"0 pstring <abc X"#, b"\x02ab");
+        assert_magic_not_match_bin!(r#"0 pstring >abc X"#, b"\x02ac");
+        assert_magic_match_bin!(r#"0 pstring <abc X"#, b"\x02abZ", "X");
+        assert_magic_match_bin!(r#"0 pstring >abc X"#, b"\x02acZ", "X");
     }
 
     #[test]
