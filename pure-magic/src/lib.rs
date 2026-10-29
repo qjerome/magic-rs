@@ -4911,6 +4911,24 @@ HelloWorld
             b"abc  \0Q",
             "[abc] (20)"
         );
+        // libmagic trims in place: leading spaces are skipped for printing but
+        // stay in the match, so &0 is the end of the trimmed text
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"  abc  \0Q",
+            "[abc] (20)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"  abc\0Q",
+            "[abc] (0)"
+        );
 
         let long = [&[b'A'; 200][..], b"\0"].concat();
         for rule in [r"0	string >\0 %s", "0	string x %s"] {
