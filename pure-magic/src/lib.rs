@@ -4907,6 +4907,88 @@ HelloWorld
     }
 
     #[test]
+    fn test_string16_ops() {
+        // `!` prints the data like `string !`, where libmagic prints the pattern ([abd])
+        assert_magic_match_bin!(
+            r"0 lestring16 =abcde [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 =abd X", b"a\0b\0c\0d\0e\0\0\0Q");
+        assert_magic_match_bin!(
+            r"0 lestring16 !abd [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 !abcde X", b"a\0b\0c\0d\0e\0\0\0Q");
+        assert_magic_match_bin!(
+            r"0 lestring16 >abb [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 >abcde X", b"a\0b\0c\0d\0e\0\0\0Q");
+        assert_magic_match_bin!(
+            r"0 lestring16 <abd [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 <abcde X", b"a\0b\0c\0d\0e\0\0\0Q");
+
+        assert_magic_match_bin!(
+            r"0 bestring16 =abcde [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 =abd X", b"\0a\0b\0c\0d\0e\0\0Q");
+        assert_magic_match_bin!(
+            r"0 bestring16 !abd [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 !abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+        assert_magic_match_bin!(
+            r"0 bestring16 >abb [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 >abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+        assert_magic_match_bin!(
+            r"0 bestring16 <abd [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 <abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+    }
+
+    #[test]
+    fn test_string16_ops_strength() {
+        // libmagic adjusts the strength by operator for every type (apprentice.c:1039)
+        let strength = |rule: &str, data: &[u8]| {
+            best_magic(rule, data, StreamKind::Binary)
+                .unwrap()
+                .strength()
+        };
+        let le = b"a\0b\0c\0d\0e\0\0\0Q";
+        let s = b"abcde\0";
+        assert_eq!(
+            strength(r"0 lestring16 =abc X", le),
+            strength(r"0 string =abc X", s)
+        );
+        assert_eq!(
+            strength(r"0 lestring16 !abd X", le),
+            strength(r"0 string !abd X", s)
+        );
+        assert_eq!(
+            strength(r"0 lestring16 >abb X", le),
+            strength(r"0 string >abb X", s)
+        );
+        assert_eq!(
+            strength(r"0 lestring16 <abd X", le),
+            strength(r"0 string <abd X", s)
+        );
+    }
+
+    #[test]
     fn test_offset_from_end() {
         assert_magic_match_bin!("-1 ubyte 0x42 last byte ok", b"\x00\x00\x42");
         assert_magic_match_bin!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
