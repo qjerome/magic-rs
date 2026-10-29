@@ -4865,6 +4865,11 @@ HelloWorld
             b"\x61\x00\x62\x00\x63\x00\x64\x00\x00",
             "abcd"
         );
+        assert_magic_match_bin!(
+            "0 lestring16 abcd [%s]",
+            b"\x61\x00\x62\x00\x63\x00\x64\x00",
+            "[abcd]"
+        );
         assert_magic_not_match_bin!(
             "0 lestring16 abcd Little-endian UTF-16 string",
             b"\x00\x61\x00\x62\x00\x63\x00\x64"
