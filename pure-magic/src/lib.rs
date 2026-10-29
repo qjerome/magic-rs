@@ -4872,6 +4872,32 @@ HelloWorld
             b"abcXYZW\0Q",
             "[abcXYZW] (0)"
         );
+        // x stops at the NUL without consuming it, /T ends the match before the
+        // trimmed trailing spaces
+        assert_magic_match_bin!(
+            r#"
+            0 string x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abc\0Q",
+            "[abc] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abc\0Q",
+            "[abc] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abc  \0Q",
+            "[abc] (20)"
+        );
 
         let long = [&[b'A'; 200][..], b"\0"].concat();
         for rule in [r"0	string >\0 %s", "0	string x %s"] {
