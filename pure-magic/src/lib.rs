@@ -1361,6 +1361,13 @@ fn slice_to_utf16_iter(read: &[u8], encoding: String16Encoding) -> impl Iterator
     })
 }
 
+fn utf16_until_nul(buf: &[u8], encoding: String16Encoding) -> &[u8] {
+    let end = slice_to_utf16_iter(buf, encoding)
+        .position(|c| c == 0)
+        .map_or(buf.len() & !1, |i| i * 2);
+    &buf[..end]
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum String16Encoding {
     Le,
@@ -1859,10 +1866,7 @@ impl Test {
                     TestValue::Value(str16)
                         if matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
                     {
-                        let end = slice_to_utf16_iter(buf, t.encoding)
-                            .position(|c| c == 0)
-                            .map_or(buf.len() & !1, |i| i * 2);
-                        let data = &buf[..end];
+                        let data = utf16_until_nul(buf, t.encoding);
                         // like libmagic, compare the pattern length with the data NUL padded
                         let ord = slice_to_utf16_iter(data, t.encoding)
                             .chain(iter::repeat(0))
@@ -1907,7 +1911,7 @@ impl Test {
                     TestValue::Any => Some(MatchRes::Bytes(
                         *o,
                         None,
-                        buf,
+                        utf16_until_nul(buf, t.encoding),
                         Encoding::Utf16(t.encoding),
                         STRING_PRINT_MAX,
                     )),
@@ -2983,7 +2987,10 @@ impl EntryNode {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
                     }
-                    Test::String16(t) if matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) => {
+                    Test::String16(t)
+                        if matches!(t.test_val.as_ref(), TestValue::Any)
+                            || matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
+                    {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
                     }
