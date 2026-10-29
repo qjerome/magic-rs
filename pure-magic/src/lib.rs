@@ -1540,15 +1540,14 @@ impl Test {
                             // no length specified we read until end of string
 
                             match t.cmp_op {
+                                CmpOp::Eq if !t.mods.has_unbounded_length() => {
+                                    let len = str.len() as u64 + t.mods.word_boundary_lookahead();
+                                    haystack.read_count(len)?
+                                }
+                                // libmagic compares against its 128-byte copy minus the NUL,
+                                // ! also prints the data from that window
                                 CmpOp::Eq | CmpOp::Neq => {
-                                    // libmagic compares against its 128-byte copy minus the NUL
-                                    if t.mods.has_unbounded_length() {
-                                        haystack.read_count(STRING_PRINT_MAX as u64)?
-                                    } else {
-                                        let len =
-                                            str.len() as u64 + t.mods.word_boundary_lookahead();
-                                        haystack.read_count(len)?
-                                    }
+                                    haystack.read_count(STRING_PRINT_MAX as u64)?
                                 }
                                 // libmagic compares against its raw NUL terminated 128-byte copy
                                 CmpOp::Lt | CmpOp::Gt => {
@@ -1753,25 +1752,16 @@ impl Test {
                                     None
                                 }
                             }
-                            CmpOp::Neq => {
-                                if let (false, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(
-                                        *o,
-                                        None,
-                                        trim_buf!(str),
-                                        Encoding::Utf8,
-                                        STRING_PRINT_MAX,
-                                    ))
-                                } else {
-                                    None
-                                }
-                            }
-                            CmpOp::Gt | CmpOp::Lt => {
-                                let ord = string_cmp(str, st.mods, buf);
-                                if matches!(
-                                    (st.cmp_op, ord),
-                                    (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
-                                ) {
+                            CmpOp::Neq | CmpOp::Gt | CmpOp::Lt => {
+                                let ok = match st.cmp_op {
+                                    CmpOp::Neq => !string_match(str, st.mods, buf).0,
+                                    op => matches!(
+                                        (op, string_cmp(str, st.mods, buf)),
+                                        (CmpOp::Gt, Ordering::Greater)
+                                            | (CmpOp::Lt, Ordering::Less)
+                                    ),
+                                };
+                                if ok {
                                     let msg = &buf[..memchr(b'\0', buf).unwrap_or(buf.len())];
                                     // libmagic cuts the message at CR/LF when the pattern starts with NUL
                                     let msg = if str.starts_with(b"\0") {
@@ -2935,9 +2925,10 @@ impl EntryNode {
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
                 match &self.entry.test {
-                    // >/< read a 127-byte window but end after the printed string
+                    // !/>/< read a 127-byte window but end after the printed string
                     Test::String(t)
-                        if t.has_length_mod() || matches!(t.cmp_op, CmpOp::Lt | CmpOp::Gt) =>
+                        if t.has_length_mod()
+                            || matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
                     {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
