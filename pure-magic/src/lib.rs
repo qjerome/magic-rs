@@ -4692,6 +4692,25 @@ HelloWorld
         assert_magic_match_bin!(r#"0 pstring >abc X"#, b"\x02acZ", "X");
         assert_magic_match_bin!(r#"0 pstring <abc [%s]"#, b"\x02abZ", "[ab]");
         assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x02abd");
+        // unlike libmagic, which handles the >/< and x value as a C string, the content does not
+        // stop at the first NUL: the length prefix alone delimits a pstring
+        assert_magic_match_bin!(r#"0 pstring >\0 [%s]"#, b"\x03a\x00c", r"[a\000c]");
+        assert_magic_match_bin!(
+            r#"
+            0 pstring >\0 [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x03a\x00cdef",
+            r"[a\000c] (64)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 pstring x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x03a\x00cdef",
+            r"[a\000c] (64)"
+        );
     }
 
     #[test]
