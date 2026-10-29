@@ -4673,6 +4673,8 @@ HelloWorld
         assert_magic_not_match_bin!(r#"0 pstring >abc X"#, b"\x02ac");
         assert_magic_match_bin!(r#"0 pstring <abc X"#, b"\x02abZ", "X");
         assert_magic_match_bin!(r#"0 pstring >abc X"#, b"\x02acZ", "X");
+        assert_magic_match_bin!(r#"0 pstring <abc [%s]"#, b"\x02abZ", "[ab]");
+        assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x02abd");
     }
 
     #[test]
