@@ -1552,7 +1552,14 @@ impl Test {
                                 }
                                 // libmagic compares against its raw NUL terminated 128-byte copy
                                 CmpOp::Lt | CmpOp::Gt => {
-                                    haystack.read_count(STRING_PRINT_MAX as u64)?
+                                    let buf = haystack.read_count(STRING_PRINT_MAX as u64)?;
+                                    // like numeric reads, the pattern-sized field must be in the data
+                                    if buf.len() < str.len() {
+                                        return Err(
+                                            io::Error::from(io::ErrorKind::UnexpectedEof).into()
+                                        );
+                                    }
+                                    buf
                                 }
                                 _ => {
                                     return Err(Error::Msg(format!(
