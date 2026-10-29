@@ -4818,6 +4818,17 @@ HelloWorld
             b"A\nfoo\0Q",
             "[A] (a)"
         );
+        // ! prints the data read, not the pattern (libmagic prints the pattern),
+        // and the match ends after the printed string
+        assert_magic_match_text!("0	string !abd [%s]", b"abc", "[abc]");
+        assert_magic_match_bin!(
+            r#"
+            0 string !abcdef [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abcXYZW\0Q",
+            "[abcXYZW] (0)"
+        );
 
         let long = [&[b'A'; 200][..], b"\0"].concat();
         for rule in [r"0	string >\0 %s", "0	string x %s"] {
