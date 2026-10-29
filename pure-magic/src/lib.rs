@@ -4918,19 +4918,20 @@ HelloWorld
                 "{rule}"
             );
         }
-        assert_eq!(
-            best_magic(
-                r#"
-                0 string >\0 X
-                >&0 ubyte x %d
-                "#,
-                &long,
-                StreamKind::Binary
-            )
-            .unwrap()
-            .message(),
-            "X 65"
-        );
+        // the match ends after the 127 printed bytes, not at the NUL (byte 200)
+        for op in [r">\0", "x"] {
+            assert_eq!(
+                best_magic(
+                    &format!("0 string {op} X\n>&0 ubyte x %d"),
+                    &long,
+                    StreamKind::Binary
+                )
+                .unwrap()
+                .message(),
+                "X 65",
+                "{op}"
+            );
+        }
 
         let long16 = [b"A\0".repeat(200), vec![0, 0]].concat();
         assert_eq!(
@@ -5063,6 +5064,23 @@ HelloWorld
             "#,
             b"\0a\0b\0c\0\0Q",
             "[abc] (0)"
+        );
+
+        // x ends after the 127 printed chars (byte 254, 'B'), not after the whole
+        // string; libmagic gives 65 (byte 127) as it counts the chars as bytes
+        let long16 = [b"AA".repeat(127), b"BB".repeat(73), b"\0\0Q".to_vec()].concat();
+        assert_eq!(
+            best_magic(
+                r#"
+                0 lestring16 x X
+                >&0 ubyte x %d
+                "#,
+                &long16,
+                StreamKind::Binary
+            )
+            .unwrap()
+            .message(),
+            "X 66"
         );
     }
 
