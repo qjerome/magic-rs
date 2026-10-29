@@ -2938,6 +2938,11 @@ impl EntryNode {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
                     }
+                    // >/< may read past the content to compare a longer pattern
+                    Test::PString(t) => {
+                        let o = mr.end_offset().saturating_add(t.len.size_of_len() as u64);
+                        haystack.seek(SeekFrom::Start(o))?;
+                    }
                     Test::Search(t) => {
                         if t.re_mods.contains(ReMod::StartOffsetUpdate) {
                             let o = mr.start_offset();
