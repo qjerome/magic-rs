@@ -1580,7 +1580,8 @@ impl Test {
                         Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
                     }
                     TestValue::Any => {
-                        let read = haystack.read_until_any_delim_or_limit(b"\0\n", 8192)?;
+                        let read = haystack
+                            .read_until_any_delim_or_limit(b"\0\n", STRING_PRINT_MAX as u64)?;
                         // we don't take last byte if it matches end of string
                         let bytes = if read.ends_with(b"\0") || read.ends_with(b"\n") {
                             &read[..read.len() - 1]
@@ -1622,7 +1623,8 @@ impl Test {
                         Ok(Some(ReadValue::Bytes(test_value_offset, read)))
                     }
                     TestValue::Any => {
-                        let read = haystack.read_until_utf16_or_limit(b"\x00\x00", 8192)?;
+                        let read = haystack
+                            .read_until_utf16_or_limit(b"\x00\x00", STRING_PRINT_MAX as u64 * 2)?;
 
                         // we make sure we have an even number of elements
                         let end = if read.len() % 2 == 0 {
