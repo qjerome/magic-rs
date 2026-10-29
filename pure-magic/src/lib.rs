@@ -956,17 +956,12 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
                 break;
             };
 
-            if mods.contains(StringMod::OptBlank) && (b == b' ' || ref_byte == b' ') {
-                if b == b' ' {
-                    // we ignore whitespace in target
+            // like libmagic, data blanks are optional only after a blank in the pattern
+            if mods.contains(StringMod::OptBlank) && ref_byte == b' ' {
+                i_src += 1;
+                while let Some(b' ') = iter.peek() {
                     consume_target!();
                 }
-
-                if ref_byte == b' ' {
-                    // we ignore whitespace in test
-                    i_src += 1;
-                }
-
                 continue;
             }
 
