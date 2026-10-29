@@ -154,6 +154,7 @@ use std::{
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
+    iter,
     mem::swap,
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
@@ -1368,8 +1369,8 @@ enum String16Encoding {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct String16Test {
-    orig: String,
     test_val: TestValue<Vec<u16>>,
+    cmp_op: CmpOp,
     encoding: String16Encoding,
 }
 
@@ -1588,7 +1589,28 @@ impl Test {
             Self::String16(t) => {
                 match t.test_val.as_ref() {
                     TestValue::Value(str16) => {
-                        let read = haystack.read_exact_count((str16.len() * 2) as u64)?;
+                        let len = (str16.len() * 2) as u64;
+                        let read = match t.cmp_op {
+                            CmpOp::Eq => haystack.read_exact_count(len)?,
+                            // libmagic converts up to 127 characters, ! also prints them
+                            CmpOp::Neq => haystack.read_count(STRING_PRINT_MAX as u64 * 2)?,
+                            CmpOp::Lt | CmpOp::Gt => {
+                                let buf = haystack.read_count(STRING_PRINT_MAX as u64 * 2)?;
+                                // like numeric reads, the pattern-sized field must be in the data
+                                if (buf.len() as u64) < len {
+                                    return Err(
+                                        io::Error::from(io::ErrorKind::UnexpectedEof).into()
+                                    );
+                                }
+                                buf
+                            }
+                            _ => {
+                                return Err(Error::Msg(format!(
+                                    "string16 test does not support {:?} operator",
+                                    t.cmp_op
+                                )));
+                            }
+                        };
 
                         Ok(Some(ReadValue::Bytes(test_value_offset, read)))
                     }
@@ -1834,6 +1856,32 @@ impl Test {
 
             (Self::String16(t), ReadValue::Bytes(o, buf)) => {
                 match t.test_val.as_ref() {
+                    TestValue::Value(str16)
+                        if matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
+                    {
+                        let end = slice_to_utf16_iter(buf, t.encoding)
+                            .position(|c| c == 0)
+                            .map_or(buf.len() & !1, |i| i * 2);
+                        let data = &buf[..end];
+                        // like libmagic, compare the pattern length with the data NUL padded
+                        let ord = slice_to_utf16_iter(data, t.encoding)
+                            .chain(iter::repeat(0))
+                            .take(str16.len())
+                            .cmp(str16.iter().copied());
+                        let ok = matches!(
+                            (t.cmp_op, ord),
+                            (CmpOp::Neq, Ordering::Less | Ordering::Greater)
+                                | (CmpOp::Gt, Ordering::Greater)
+                                | (CmpOp::Lt, Ordering::Less)
+                        );
+                        ok.then_some(MatchRes::Bytes(
+                            *o,
+                            None,
+                            data,
+                            Encoding::Utf16(t.encoding),
+                            STRING_PRINT_MAX,
+                        ))
+                    }
                     TestValue::Value(str16) => {
                         // strings cannot be equal
                         if str16.len() * 2 != buf.len() {
@@ -1984,13 +2032,13 @@ impl Test {
             Self::Float(t) => Some(t.cmp_op),
             Self::Search(t) => Some(t.cmp_op),
             Self::Regex(t) => Some(t.cmp_op),
+            Self::String16(t) => Some(t.cmp_op),
             Self::Name(_)
             | Self::Use(_, _)
             | Self::PString(_)
             | Self::Clear
             | Self::Default
             | Self::Indirect(_)
-            | Self::String16(_)
             | Self::Der => None,
         }
     }
@@ -2930,6 +2978,10 @@ impl EntryNode {
                         if t.has_length_mod()
                             || matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
                     {
+                        let o = mr.end_offset();
+                        haystack.seek(SeekFrom::Start(o))?;
+                    }
+                    Test::String16(t) if matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) => {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
                     }

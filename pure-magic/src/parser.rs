@@ -34,94 +34,6 @@ pub(crate) fn prepare_bytes_re(s: &[u8]) -> String {
     out
 }
 
-pub(crate) fn unescape_string_to_string(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        // string termination
-        if c == '\0' {
-            return result;
-        }
-
-        if c == '\\' {
-            if let Some(next_char) = chars.peek() {
-                match next_char {
-                    // string termination
-                    'n' => {
-                        result.push('\n');
-                        chars.next(); // Skip the 'n'
-                    }
-                    't' => {
-                        result.push('\t');
-                        chars.next(); // Skip the 't'
-                    }
-                    'r' => {
-                        result.push('\r');
-                        chars.next(); // Skip the 'r'
-                    }
-                    '\\' => {
-                        result.push('\\');
-                        chars.next(); // Skip the '\\'
-                    }
-                    'x' => {
-                        // Handle hex escape sequences (e.g., \x7F)
-                        chars.next(); // Skip the 'x'
-
-                        let mut hex_str = String::new();
-                        for _ in 0..2 {
-                            if chars
-                                .peek()
-                                .map(|c| c.is_ascii_hexdigit())
-                                .unwrap_or_default()
-                            {
-                                hex_str.push(chars.next().unwrap());
-                                continue;
-                            }
-                            break;
-                        }
-
-                        if let Ok(hex) = u8::from_str_radix(&hex_str, 16) {
-                            result.push(hex as char);
-                        } else {
-                            result.push(c); // Push the backslash if the hex sequence is invalid
-                        }
-                    }
-                    // Handle octal escape sequences (e.g., \1 \23 \177)
-                    '0'..='7' => {
-                        let mut octal_str = String::new();
-                        for _ in 0..3 {
-                            if chars
-                                .peek()
-                                .map(|c| matches!(c, '0'..='7'))
-                                .unwrap_or_default()
-                            {
-                                octal_str.push(chars.next().unwrap());
-                                continue;
-                            }
-                            break;
-                        }
-                        //let octal_str: String = chars.by_ref().take(1).collect();
-                        if let Ok(octal) = u8::from_str_radix(&octal_str, 8) {
-                            result.push(octal as char);
-                        } else {
-                            result.push(c); // Push the backslash if the octal sequence is invalid
-                        }
-                    }
-                    _ => {
-                        // we skip the backslash
-                    }
-                }
-            } else {
-                result.push(c); // Push the backslash if no character follows
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
 /// Unescapes `s` and returns whether the result is binary (not UTF-8),
 /// dropping a trailing NUL from non-binary values.
 pub(crate) fn unescape_classify(s: &str) -> (bool, Vec<u8>) {
@@ -1059,14 +971,16 @@ impl Test {
             }
             Rule::string16_test => {
                 let mut encoding = None;
-                let mut orig = None;
                 let mut str16 = None;
+                let mut cmp_op = CmpOp::Eq;
                 for p in pair.into_inner() {
                     match p.as_rule() {
                         Rule::lestring16 => encoding = Some(String16Encoding::Le),
                         Rule::bestring16 => encoding = Some(String16Encoding::Be),
+                        Rule::op_eq | Rule::op_neq | Rule::op_lt | Rule::op_gt => {
+                            cmp_op = CmpOp::from_pair(p)?
+                        }
                         Rule::string_value => {
-                            orig = Some(unescape_string_to_string(p.as_str()));
                             str16 = Some(TestValue::Value(
                                 unescape_classify(p.as_str())
                                     .1
@@ -1080,9 +994,8 @@ impl Test {
                     }
                 }
                 Self::String16(String16Test {
-                    // orig will be empty string for any_value
-                    orig: orig.unwrap_or_default(),
                     test_val: str16.expect("test value must be known"),
+                    cmp_op,
                     encoding: encoding.expect("encoding must be known"),
                 })
             }
