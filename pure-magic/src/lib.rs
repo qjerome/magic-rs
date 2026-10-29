@@ -2973,9 +2973,11 @@ impl EntryNode {
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
                 match &self.entry.test {
-                    // !/>/< read a 127-byte window but end after the printed string
+                    // !/>/< read a 127-byte window and x reads its delimiter,
+                    // but they end after the printed string
                     Test::String(t)
                         if t.has_length_mod()
+                            || matches!(t.test_val, TestValue::Any)
                             || matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
                     {
                         let o = mr.end_offset();
