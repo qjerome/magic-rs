@@ -4891,6 +4891,11 @@ HelloWorld
             b"\x00\x61\x00\x62\x00\x63\x00\x64",
             "abcd"
         );
+        assert_magic_match_bin!(
+            "0 bestring16 abcd [%s]",
+            b"\x00\x61\x00\x62\x00\x63\x00\x64",
+            "[abcd]"
+        );
         assert_magic_not_match_bin!(
             "0 bestring16 abcd Big-endian UTF-16 string",
             b"\x61\x00\x62\x00\x63\x00\x64\x00"
