@@ -1895,10 +1895,12 @@ impl Test {
                         }
 
                         // we check string equality
-                        for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
-                            if str16[i] != utf16_char {
-                                return None;
-                            }
+                        if str16
+                            .iter()
+                            .zip(slice_to_utf16_iter(buf, t.encoding))
+                            .any(|(a, b)| a != &b)
+                        {
+                            return None;
                         }
 
                         Some(MatchRes::Bytes(
