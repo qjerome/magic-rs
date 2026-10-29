@@ -1546,8 +1546,9 @@ impl Test {
 
                             match t.cmp_op {
                                 CmpOp::Eq | CmpOp::Neq => {
+                                    // libmagic compares against its 128-byte copy minus the NUL
                                     if t.mods.has_unbounded_length() {
-                                        haystack.read_count(FILE_BYTES_MAX as u64)?
+                                        haystack.read_count(STRING_PRINT_MAX as u64)?
                                     } else {
                                         let len =
                                             str.len() as u64 + t.mods.word_boundary_lookahead();
