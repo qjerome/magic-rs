@@ -1757,12 +1757,27 @@ impl Test {
             }
 
             (Self::String(st), ReadValue::Bytes(o, buf)) => {
-                macro_rules! trim_buf {
+                macro_rules! bytes_res {
                     ($buf: expr) => {{
+                        let buf = $buf;
                         if st.mods.contains(StringMod::Trim) {
-                            $buf.trim_ascii()
+                            // leading spaces are not printed but stay in the match
+                            let buf = buf.trim_ascii_end();
+                            Some(MatchRes::Bytes(
+                                *o,
+                                Some(o.saturating_add(buf.len() as u64)),
+                                buf.trim_ascii_start(),
+                                Encoding::Utf8,
+                                STRING_PRINT_MAX,
+                            ))
                         } else {
-                            $buf
+                            Some(MatchRes::Bytes(
+                                *o,
+                                None,
+                                buf,
+                                Encoding::Utf8,
+                                STRING_PRINT_MAX,
+                            ))
                         }
                     }};
                 }
@@ -1772,13 +1787,7 @@ impl Test {
                         match st.cmp_op {
                             CmpOp::Eq => {
                                 if let (true, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(
-                                        *o,
-                                        None,
-                                        trim_buf!(str),
-                                        Encoding::Utf8,
-                                        STRING_PRINT_MAX,
-                                    ))
+                                    bytes_res!(str)
                                 } else {
                                     None
                                 }
@@ -1800,13 +1809,7 @@ impl Test {
                                     } else {
                                         msg
                                     };
-                                    Some(MatchRes::Bytes(
-                                        *o,
-                                        None,
-                                        trim_buf!(msg),
-                                        Encoding::Utf8,
-                                        STRING_PRINT_MAX,
-                                    ))
+                                    bytes_res!(msg)
                                 } else {
                                     None
                                 }
@@ -1822,13 +1825,7 @@ impl Test {
                             }
                         }
                     }
-                    TestValue::Any => Some(MatchRes::Bytes(
-                        *o,
-                        None,
-                        trim_buf!(buf),
-                        Encoding::Utf8,
-                        STRING_PRINT_MAX,
-                    )),
+                    TestValue::Any => bytes_res!(buf),
                 }
             }
 
