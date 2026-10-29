@@ -5038,6 +5038,25 @@ HelloWorld
             "[abcde]"
         );
         assert_magic_not_match_bin!(r"0 bestring16 <abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+
+        // x stops at the 16-bit NUL without consuming it; libmagic gives (62) for BE
+        // because it ends the match after 3 bytes (one per char) instead of 6
+        assert_magic_match_bin!(
+            r#"
+            0 lestring16 x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"a\0b\0c\0\0\0Q",
+            "[abc] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 bestring16 x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\0a\0b\0c\0\0Q",
+            "[abc] (0)"
+        );
     }
 
     #[test]
