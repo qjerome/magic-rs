@@ -2038,9 +2038,9 @@ impl Test {
             Self::Search(t) => Some(t.cmp_op),
             Self::Regex(t) => Some(t.cmp_op),
             Self::String16(t) => Some(t.cmp_op),
+            Self::PString(t) => Some(t.cmp_op),
             Self::Name(_)
             | Self::Use(_, _)
-            | Self::PString(_)
             | Self::Clear
             | Self::Default
             | Self::Indirect(_)
