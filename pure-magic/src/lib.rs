@@ -4809,6 +4809,40 @@ HelloWorld
         // content bytes than the length prefix says
         assert_magic_match_bin!(r#"20 pstring !abc X"#, b"0123456789", "X");
         assert_magic_match_bin!(r#"0 pstring !abc X"#, b"\x09abcd", "X");
+
+        // like libmagic, the content is capped at 128 bytes minus the length prefix size, whatever
+        // the length prefix says
+        let long = [b"A".repeat(200), b"XYZ".to_vec()].concat();
+        for (len_mod, prefix, cap) in [
+            ("", &b"\xc8"[..], 127),
+            ("/H", b"\x00\xc8", 126),
+            ("/L", b"\xff\xff\xff\xff", 124),
+        ] {
+            let data = [prefix, &long].concat();
+            assert_eq!(
+                best_magic(
+                    &format!("0 pstring{len_mod} x %s"),
+                    &data,
+                    StreamKind::Binary
+                )
+                .unwrap()
+                .message(),
+                "A".repeat(cap),
+                "{len_mod}"
+            );
+            // the match ends after the capped content (byte 128), not after the declared length
+            assert_eq!(
+                best_magic(
+                    &format!("0 pstring{len_mod} x X\n>&0 ubyte x %d"),
+                    &data,
+                    StreamKind::Binary
+                )
+                .unwrap()
+                .message(),
+                "X 65",
+                "{len_mod}"
+            );
+        }
     }
 
     #[test]
