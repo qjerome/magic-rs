@@ -3011,17 +3011,13 @@ impl EntryNode {
                 match &self.entry.test {
                     // !/>/< read a 127-byte window and x reads its delimiter,
                     // but they end after the printed string
-                    Test::String(t)
-                        if t.has_length_mod()
-                            || matches!(t.test_val, TestValue::Any)
-                            || matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
-                    {
-                        let o = mr.end_offset();
-                        haystack.seek(SeekFrom::Start(o))?;
-                    }
-                    Test::String16(t)
-                        if matches!(t.test_val.as_ref(), TestValue::Any)
-                            || matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
+                    test @ (Test::String(_) | Test::String16(_))
+                        if test.is_match_any()
+                            || matches!(
+                                test.cmp_op(),
+                                Some(CmpOp::Neq | CmpOp::Lt | CmpOp::Gt)
+                            )
+                            || matches!(test, Test::String(t) if t.has_length_mod()) =>
                     {
                         let o = mr.end_offset();
                         haystack.seek(SeekFrom::Start(o))?;
