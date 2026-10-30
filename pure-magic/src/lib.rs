@@ -4714,6 +4714,15 @@ HelloWorld
                 );
             }
         }
+
+        // libmagic's /W, /w and /f take C isspace bytes as blanks, in the pattern and the data
+        assert_magic_match_text!(r"0	string/W	a\ b	X", b"a\tb\n");
+        assert_magic_match_text!(r"0	string/w	a\ b	X", b"a\x0b\x0cb\n");
+        assert_magic_match_text!(r"0	string/W	a\tb	X", b"a  b\n");
+        assert_magic_match_text!(r"0	string/f	ab	X", b"ab\x0bc\n");
+
+        // libmagic's /f also ends the word at a NUL
+        assert_magic_match_bin!(r"0	string/f	ab	X", b"ab\0cc\n");
     }
 
     #[test]
