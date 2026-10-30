@@ -924,6 +924,12 @@ impl From<StringTest> for Test {
     }
 }
 
+/// C isspace, which unlike u8::is_ascii_whitespace includes \v
+#[inline(always)]
+fn is_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t'..=b'\r')
+}
+
 #[inline(always)]
 fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
     let mut consumed = 0;
@@ -967,9 +973,9 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
             };
 
             // like libmagic, data blanks are optional only after a blank in the pattern
-            if mods.contains(StringMod::OptBlank) && ref_byte == b' ' {
+            if mods.contains(StringMod::OptBlank) && is_space(ref_byte) {
                 i_src += 1;
-                while let Some(b' ') = iter.peek() {
+                while iter.peek().is_some_and(|&&b| is_space(b)) {
                     consume_target!();
                 }
                 continue;
@@ -991,15 +997,15 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
                 continue_next_iteration!()
             }
 
-            if mods.contains(StringMod::CompactWhitespace) && ref_byte == b' ' {
+            if mods.contains(StringMod::CompactWhitespace) && is_space(ref_byte) {
                 let mut src_blk = 0;
-                while let Some(b' ') = str.get(i_src) {
+                while str.get(i_src).is_some_and(|&p| is_space(p)) {
                     src_blk += 1;
                     i_src += 1;
                 }
 
                 let mut tgt_blk = 0;
-                while let Some(b' ') = iter.peek() {
+                while iter.peek().is_some_and(|&&b| is_space(b)) {
                     tgt_blk += 1;
                     consume_target!();
                 }
@@ -1019,8 +1025,9 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
         }
 
         if mods.contains(StringMod::FullWordMatch)
-            && let Some(b) = iter.peek()
-            && !b.is_ascii_whitespace()
+            && let Some(&&b) = iter.peek()
+            && b != 0
+            && !is_space(b)
         {
             return (false, consumed);
         }
@@ -1034,8 +1041,6 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
 
 /// Orders NUL padded `buf` against `str` like libmagic `file_strncmp`.
 fn string_cmp(str: &[u8], mods: StringModFlags, buf: &[u8]) -> Ordering {
-    // C isspace, which unlike u8::is_ascii_whitespace includes \v
-    let is_space = |b: u8| matches!(b, b' ' | b'\t'..=b'\r');
     // byte at index in buf
     let at = |i: usize| buf.get(i).copied().unwrap_or(0);
     // index in buf
