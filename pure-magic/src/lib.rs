@@ -378,10 +378,19 @@ impl Message {
                         }
                     }
                 } else {
-                    Ok(fs.to_string_lossy())
+                    Ok(Cow::Owned(dformat!(fs, NoValue)?))
                 }
             }
         }
+    }
+}
+
+/// Formats as nothing, whatever the spec, for a match without a value read.
+struct NoValue;
+
+impl DynDisplay for NoValue {
+    fn dyn_fmt(&self, _: &mut dyf::Formatter<'_>) -> dyf::Result {
+        Ok(())
     }
 }
 
