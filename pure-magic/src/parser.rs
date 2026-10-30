@@ -34,15 +34,11 @@ pub(crate) fn prepare_bytes_re(s: &[u8]) -> String {
     out
 }
 
-/// Unescapes `s` and returns whether the result is binary (not UTF-8),
-/// dropping a trailing NUL from non-binary values.
+/// Unescapes `s` and returns whether the result is binary (not text, so
+/// any NUL makes it binary).
 pub(crate) fn unescape_classify(s: &str) -> (bool, Vec<u8>) {
-    let mut result = unescape_bytes(s);
-    let binary = run_utf8_validation(&result).is_err();
-    if !binary && result.last() == Some(&0) {
-        result.pop();
-    }
-    (binary, result)
+    let result = unescape_bytes(s);
+    (run_utf8_validation(&result).is_err(), result)
 }
 
 /// Unescapes `s` as magic(5) does, keeping every byte, including a
