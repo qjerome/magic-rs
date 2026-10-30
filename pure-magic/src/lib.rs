@@ -2006,10 +2006,8 @@ impl Test {
             }
 
             Test::String16(t) => {
-                // NOTE: in libmagic the result is div by 2
-                // but I GUESS it is because the len is expressed
-                // in number bytes. In our case length is expressed
-                // in number of u16 so we shouldn't divide.
+                // NOTE: libmagic halves this; wiza doesn't, so a string16 
+                // pattern weighs the same as a string one of the same length.
                 out += t.test_value_len().saturating_mul(MULT);
             }
 
