@@ -5143,6 +5143,21 @@ HelloWorld
     }
 
     #[test]
+    fn test_pstring_strength() {
+        // libmagic counts the length prefix in the pattern length (apprentice.c:3191),
+        // expected values are from `file -l`
+        let strength = |rule: &str, data: &[u8]| {
+            best_magic(rule, data, StreamKind::Binary)
+                .unwrap()
+                .strength()
+        };
+        assert_eq!(strength(r"0 pstring abc X", b"\x03abc"), 70);
+        assert_eq!(strength(r"0 pstring >ab X", b"\x02ac"), 30);
+        assert_eq!(strength(r"0 pstring/H abc X", b"\x00\x03abc"), 80);
+        assert_eq!(strength(r"0 pstring/l abc X", b"\x03\x00\x00\x00abc"), 100);
+    }
+
+    #[test]
     fn test_offset_from_end() {
         assert_magic_match_bin!("-1 ubyte 0x42 last byte ok", b"\x00\x00\x42");
         assert_magic_match_bin!("-2 ubyte 0x41 last byte ok", b"\x00\x41\x00");
