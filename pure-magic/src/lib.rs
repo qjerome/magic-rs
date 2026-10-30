@@ -6315,4 +6315,14 @@ HelloWorld
         .unwrap();
         assert_eq!(m.message(), "data");
     }
+
+    // unlike libmagic, which prints the zero-filled value (`[0]`) or the pattern (`[abc]`), a !
+    // match on unreadable data prints nothing for the format spec: a 0 read must differ from no
+    // data
+    #[test]
+    fn test_neq_test_on_unreadable_offset_prints_no_value() {
+        assert_magic_match_bin!(r#"20 byte !1 [%d]"#, b"0123456789", "[]");
+        assert_magic_match_bin!(r#"20 long !1 [%x]"#, b"0123456789", "[]");
+        assert_magic_match_bin!(r#"20 pstring !abc [%s]"#, b"0123456789", "[]");
+    }
 }
