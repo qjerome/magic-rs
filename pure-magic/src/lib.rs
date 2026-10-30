@@ -1954,7 +1954,10 @@ impl Test {
 
             Test::String(t) => out += t.test_value_len().saturating_mul(MULT),
 
-            Test::PString(t) => out += t.test_value_len().saturating_mul(MULT),
+            // the length prefix is matched too, so it counts like libmagic
+            Test::PString(t) => {
+                out += (t.len.size_of_len() + t.test_value_len()).saturating_mul(MULT)
+            }
 
             Test::Search(s) => {
                 // NOTE: this implementation deviates from what is in
@@ -2006,7 +2009,7 @@ impl Test {
             }
 
             Test::String16(t) => {
-                // NOTE: libmagic halves this; wiza doesn't, so a string16 
+                // NOTE: libmagic halves this; wiza doesn't, so a string16
                 // pattern weighs the same as a string one of the same length.
                 out += t.test_value_len().saturating_mul(MULT);
             }
