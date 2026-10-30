@@ -355,7 +355,7 @@ impl Message {
             } => {
                 if let Some(mr) = mr {
                     match mr {
-                        MatchRes::Float(_, _) | MatchRes::Bytes(..) => {
+                        MatchRes::Float(_, _) | MatchRes::Bytes { .. } => {
                             Ok(Cow::Owned(dformat!(fs, mr)?))
                         }
                         MatchRes::Scalar(_, scalar) => {
@@ -818,13 +818,13 @@ impl RegexTest {
                             None
                         };
 
-                        return Some(MatchRes::Bytes(
-                            start_offset,
-                            stop_offset,
-                            re_match.as_bytes(),
-                            Encoding::Utf8,
-                            SEARCH_PRINT_MAX,
-                        ));
+                        return Some(MatchRes::Bytes {
+                            offset: start_offset,
+                            end: stop_offset,
+                            bytes: re_match.as_bytes(),
+                            encoding: Encoding::Utf8,
+                            print_max: SEARCH_PRINT_MAX,
+                        });
                     }
 
                     off_txt += line.len() as u64;
@@ -847,27 +847,27 @@ impl RegexTest {
                     .ok()?
                     .find(buf)
                     .map(|re_match| {
-                        MatchRes::Bytes(
+                        MatchRes::Bytes {
                             // the offset of the string is computed from the start of the buffer
-                            off_buf + re_match.start() as u64,
-                            None,
-                            re_match.as_bytes(),
-                            Encoding::Utf8,
-                            SEARCH_PRINT_MAX,
-                        )
+                            offset: off_buf + re_match.start() as u64,
+                            end: None,
+                            bytes: re_match.as_bytes(),
+                            encoding: Encoding::Utf8,
+                            print_max: SEARCH_PRINT_MAX,
+                        }
                     })
             }
         };
 
         // handle the case where we want the regex not to match
         if self.cmp_op.is_neq() && mr.is_none() {
-            return Some(MatchRes::Bytes(
-                off_buf,
-                None,
-                buf,
-                Encoding::Utf8,
-                SEARCH_PRINT_MAX,
-            ));
+            return Some(MatchRes::Bytes {
+                offset: off_buf,
+                end: None,
+                bytes: buf,
+                encoding: Encoding::Utf8,
+                print_max: SEARCH_PRINT_MAX,
+            });
         }
 
         mr
@@ -1186,13 +1186,13 @@ impl SearchTest {
             let (ok, consumed) = string_match(&self.str, self.str_mods, &buf[i..]);
 
             if ok {
-                return Some(MatchRes::Bytes(
-                    off_buf.saturating_add(pos as u64),
-                    None,
-                    &buf[i..i + consumed],
-                    Encoding::Utf8,
-                    SEARCH_PRINT_MAX,
-                ));
+                return Some(MatchRes::Bytes {
+                    offset: off_buf.saturating_add(pos as u64),
+                    end: None,
+                    bytes: &buf[i..i + consumed],
+                    encoding: Encoding::Utf8,
+                    print_max: SEARCH_PRINT_MAX,
+                });
             } else {
                 i += max(consumed, 1)
             }
@@ -1200,13 +1200,13 @@ impl SearchTest {
 
         // handles the case where we want the string not to be found
         if self.cmp_op.is_neq() {
-            return Some(MatchRes::Bytes(
-                off_buf,
-                None,
-                buf,
-                Encoding::Utf8,
-                SEARCH_PRINT_MAX,
-            ));
+            return Some(MatchRes::Bytes {
+                offset: off_buf,
+                end: None,
+                bytes: buf,
+                encoding: Encoding::Utf8,
+                print_max: SEARCH_PRINT_MAX,
+            });
         }
 
         None
@@ -1299,12 +1299,17 @@ const SEARCH_PRINT_MAX: usize = 511;
 // Carry the offset of the start of the data in the stream
 // and the data itself
 enum MatchRes<'buf> {
-    // Bytes.0: offset of the match
-    // Bytes.1: optional end of match (to address the need of EOL adjustment in string regex)
-    // Bytes.2: the bytes matching
-    // Bytes.3: encoding of the buffer
-    // Bytes.4: maximum number of characters printed by %s
-    Bytes(u64, Option<u64>, &'buf [u8], Encoding, usize),
+    Bytes {
+        // match start offset
+        offset: u64,
+        // match end when not offset + bytes.len(): regex line end, /T trim, ! pattern length
+        end: Option<u64>,
+        // data printed by %s
+        bytes: &'buf [u8],
+        encoding: Encoding,
+        // maximum number of characters printed by %s
+        print_max: usize,
+    },
     Scalar(u64, Scalar),
     Float(u64, Float),
 }
@@ -1320,11 +1325,18 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
-            Self::Bytes(_, _, v, enc, max) => match enc {
-                Encoding::Utf8 => String::from_utf8_lossy(&v[..v.len().min(*max)]).dyn_fmt(f),
+            Self::Bytes {
+                bytes,
+                encoding,
+                print_max,
+                ..
+            } => match encoding {
+                Encoding::Utf8 => {
+                    String::from_utf8_lossy(&bytes[..bytes.len().min(*print_max)]).dyn_fmt(f)
+                }
                 Encoding::Utf16(enc) => {
-                    let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
-                    String::from_utf16_lossy(&utf16[..utf16.len().min(*max)]).dyn_fmt(f)
+                    let utf16: Vec<u16> = slice_to_utf16_iter(bytes, *enc).collect();
+                    String::from_utf16_lossy(&utf16[..utf16.len().min(*print_max)]).dyn_fmt(f)
                 }
             },
         }
@@ -1336,7 +1348,7 @@ impl MatchRes<'_> {
     #[inline]
     fn start_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(o, _, _, _, _) => *o,
+            MatchRes::Bytes { offset, .. } => *offset,
             MatchRes::Scalar(o, _) => *o,
             MatchRes::Float(o, _) => *o,
         }
@@ -1346,10 +1358,9 @@ impl MatchRes<'_> {
     #[inline]
     fn end_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(start, end, buf, _, _) => match end {
-                Some(end) => *end,
-                None => start.saturating_add(buf.len() as u64),
-            },
+            MatchRes::Bytes {
+                offset, end, bytes, ..
+            } => end.unwrap_or_else(|| offset.saturating_add(bytes.len() as u64)),
             MatchRes::Scalar(o, sc) => o.add(sc.size_of() as u64),
             MatchRes::Float(o, f) => o.add(f.size_of() as u64),
         }
@@ -1780,21 +1791,21 @@ impl Test {
                         if st.mods.contains(StringMod::Trim) {
                             // leading spaces are not printed but stay in the match
                             let buf = buf.trim_ascii_end();
-                            Some(MatchRes::Bytes(
-                                *o,
-                                Some(o.saturating_add(buf.len() as u64)),
-                                buf.trim_ascii_start(),
-                                Encoding::Utf8,
-                                STRING_PRINT_MAX,
-                            ))
+                            Some(MatchRes::Bytes {
+                                offset: *o,
+                                end: Some(o.saturating_add(buf.len() as u64)),
+                                bytes: buf.trim_ascii_start(),
+                                encoding: Encoding::Utf8,
+                                print_max: STRING_PRINT_MAX,
+                            })
                         } else {
-                            Some(MatchRes::Bytes(
-                                *o,
-                                None,
-                                buf,
-                                Encoding::Utf8,
-                                STRING_PRINT_MAX,
-                            ))
+                            Some(MatchRes::Bytes {
+                                offset: *o,
+                                end: None,
+                                bytes: buf,
+                                encoding: Encoding::Utf8,
+                                print_max: STRING_PRINT_MAX,
+                            })
                         }
                     }};
                 }
@@ -1828,10 +1839,10 @@ impl Test {
                                     };
                                     let mut res = bytes_res!(msg);
                                     // libmagic advances &0 by the pattern length on !, not the data's
-                                    if let (CmpOp::Neq, Some(MatchRes::Bytes(o, end, ..))) =
+                                    if let (CmpOp::Neq, Some(MatchRes::Bytes { offset, end, .. })) =
                                         (st.cmp_op, res.as_mut())
                                     {
-                                        *end = Some(o.saturating_add(str.len() as u64));
+                                        *end = Some(offset.saturating_add(str.len() as u64));
                                     }
                                     res
                                 } else {
@@ -1864,26 +1875,26 @@ impl Test {
                         _ => buf == psv,
                     };
                     if ok {
-                        Some(MatchRes::Bytes(
-                            *o,
+                        Some(MatchRes::Bytes {
+                            offset: *o,
                             // libmagic advances &0 by the pattern length on !, not the data's
-                            matches!(m.cmp_op, CmpOp::Neq)
+                            end: matches!(m.cmp_op, CmpOp::Neq)
                                 .then(|| o.saturating_add(psv.len() as u64)),
-                            buf,
-                            Encoding::Utf8,
-                            STRING_PRINT_MAX,
-                        ))
+                            bytes: buf,
+                            encoding: Encoding::Utf8,
+                            print_max: STRING_PRINT_MAX,
+                        })
                     } else {
                         None
                     }
                 }
-                TestValue::Any => Some(MatchRes::Bytes(
-                    *o,
-                    None,
-                    buf,
-                    Encoding::Utf8,
-                    STRING_PRINT_MAX,
-                )),
+                TestValue::Any => Some(MatchRes::Bytes {
+                    offset: *o,
+                    end: None,
+                    bytes: buf,
+                    encoding: Encoding::Utf8,
+                    print_max: STRING_PRINT_MAX,
+                }),
             },
 
             (Self::String16(t), ReadValue::Bytes(o, buf)) => {
@@ -1903,16 +1914,16 @@ impl Test {
                                 | (CmpOp::Gt, Ordering::Greater)
                                 | (CmpOp::Lt, Ordering::Less)
                         );
-                        ok.then_some(MatchRes::Bytes(
-                            *o,
+                        ok.then_some(MatchRes::Bytes {
+                            offset: *o,
                             // libmagic advances &0 by the pattern length on !, but counts chars
                             // as bytes
-                            matches!(t.cmp_op, CmpOp::Neq)
+                            end: matches!(t.cmp_op, CmpOp::Neq)
                                 .then(|| o.saturating_add(str16.len() as u64 * 2)),
-                            data,
-                            Encoding::Utf16(t.encoding),
-                            STRING_PRINT_MAX,
-                        ))
+                            bytes: data,
+                            encoding: Encoding::Utf16(t.encoding),
+                            print_max: STRING_PRINT_MAX,
+                        })
                     }
                     TestValue::Value(str16) => {
                         // strings cannot be equal
@@ -1929,22 +1940,22 @@ impl Test {
                             return None;
                         }
 
-                        Some(MatchRes::Bytes(
-                            *o,
-                            None,
-                            buf,
-                            Encoding::Utf16(t.encoding),
-                            STRING_PRINT_MAX,
-                        ))
+                        Some(MatchRes::Bytes {
+                            offset: *o,
+                            end: None,
+                            bytes: buf,
+                            encoding: Encoding::Utf16(t.encoding),
+                            print_max: STRING_PRINT_MAX,
+                        })
                     }
 
-                    TestValue::Any => Some(MatchRes::Bytes(
-                        *o,
-                        None,
-                        utf16_until_nul(buf, t.encoding),
-                        Encoding::Utf16(t.encoding),
-                        STRING_PRINT_MAX,
-                    )),
+                    TestValue::Any => Some(MatchRes::Bytes {
+                        offset: *o,
+                        end: None,
+                        bytes: utf16_until_nul(buf, t.encoding),
+                        encoding: Encoding::Utf16(t.encoding),
+                        print_max: STRING_PRINT_MAX,
+                    }),
                 }
             }
 
