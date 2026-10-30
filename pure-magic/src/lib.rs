@@ -1667,7 +1667,9 @@ impl Test {
                         .unwrap_or(FILE_BYTES_MAX as u64)
                         .saturating_add(s.str.len() as u64)
                         .saturating_add(s.str_mods.word_boundary_lookahead())
+                        .min(FILE_BYTES_MAX as u64)
                 };
+
                 let buf = haystack.read_count(length)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
             }
@@ -1687,7 +1689,7 @@ impl Test {
                     }
                 };
 
-                let read = haystack.read_count(length as u64)?;
+                let read = haystack.read_count(length.min(FILE_REGEX_MAX) as u64)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, read)))
             }
 
