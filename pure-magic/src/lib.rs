@@ -4622,6 +4622,10 @@ HelloWorld
                 "A".repeat(expected)
             );
         }
+
+        // the match may end on the last window byte, which libmagic overwrites with a NUL
+        assert_magic_match_text!(r"0 regex abc [%s]", b"abc", "[abc]");
+        assert_magic_match_text!(r"0 regex/3 abc [%s]", b"abcd\n", "[abc]");
     }
 
     #[test]
