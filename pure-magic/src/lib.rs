@@ -4928,15 +4928,16 @@ HelloWorld
             "[A] (a)"
         );
         // ! prints the data read, not the pattern (libmagic prints the pattern),
-        // and the match ends after the printed string
+        // but like libmagic &0 advances by the pattern length, not the data's
         assert_magic_match_text!("0	string !abd [%s]", b"abc", "[abc]");
+        // we must consume only 6 chars in %s
         assert_magic_match_bin!(
             r#"
             0 string !abcdef [%s]
             >&0 byte x (%x)
             "#,
             b"abcXYZW\0Q",
-            "[abcXYZW] (0)"
+            "[abcXYZW] (57)"
         );
         // x stops at the NUL without consuming it, /T ends the match before the
         // trimmed trailing spaces
