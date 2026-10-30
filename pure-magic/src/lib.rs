@@ -1862,7 +1862,9 @@ impl Test {
                     if ok {
                         Some(MatchRes::Bytes(
                             *o,
-                            None,
+                            // libmagic advances &0 by the pattern length on !, not the data's
+                            matches!(m.cmp_op, CmpOp::Neq)
+                                .then(|| o.saturating_add(psv.len() as u64)),
                             buf,
                             Encoding::Utf8,
                             STRING_PRINT_MAX,
@@ -1899,7 +1901,10 @@ impl Test {
                         );
                         ok.then_some(MatchRes::Bytes(
                             *o,
-                            None,
+                            // libmagic advances &0 by the pattern length on !, but counts chars
+                            // as bytes
+                            matches!(t.cmp_op, CmpOp::Neq)
+                                .then(|| o.saturating_add(str16.len() as u64 * 2)),
                             data,
                             Encoding::Utf16(t.encoding),
                             STRING_PRINT_MAX,
