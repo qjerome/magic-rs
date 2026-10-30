@@ -1456,6 +1456,8 @@ impl PStringTest {
         if self.include_len {
             len = len.saturating_sub(self.len.size_of_len())
         }
+        // libmagic copies the content into a 128-byte buffer that also holds the length prefix
+        len = len.min(STRING_PRINT_MAX + 1 - self.len.size_of_len());
 
         let mut count = len;
         if let TestValue::Value(s) = self.test_val.as_ref() {
