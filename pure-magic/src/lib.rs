@@ -4795,6 +4795,10 @@ HelloWorld
             b"\x03abcXYZW",
             "[abc] (58)"
         );
+        // like libmagic, a ! test matches when the data can't be read: offset past EOF, or fewer
+        // content bytes than the length prefix says
+        assert_magic_match_bin!(r#"20 pstring !abc X"#, b"0123456789", "X");
+        assert_magic_match_bin!(r#"0 pstring !abc X"#, b"\x09abcd", "X");
     }
 
     #[test]
