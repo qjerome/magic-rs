@@ -1534,6 +1534,17 @@ impl Display for Test {
     }
 }
 
+/// Reads the `>`/`<` window of up to `limit` bytes. Like numeric reads, it
+/// fails when fewer than `min` bytes (the pattern) are available.
+#[inline(always)]
+fn read_cmp_window<D: DataRead>(haystack: &mut D, limit: u64, min: u64) -> Result<&[u8], Error> {
+    let buf = haystack.read_count(limit)?;
+    if (buf.len() as u64) < min {
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+    }
+    Ok(buf)
+}
+
 impl Test {
     // read the value to test from the haystack
     #[inline]
@@ -1574,16 +1585,11 @@ impl Test {
                                     haystack.read_count(STRING_PRINT_MAX as u64)?
                                 }
                                 // libmagic compares against its raw NUL terminated 128-byte copy
-                                CmpOp::Lt | CmpOp::Gt => {
-                                    let buf = haystack.read_count(STRING_PRINT_MAX as u64)?;
-                                    // like numeric reads, the pattern-sized field must be in the data
-                                    if buf.len() < str.len() {
-                                        return Err(
-                                            io::Error::from(io::ErrorKind::UnexpectedEof).into()
-                                        );
-                                    }
-                                    buf
-                                }
+                                CmpOp::Lt | CmpOp::Gt => read_cmp_window(
+                                    haystack,
+                                    STRING_PRINT_MAX as u64,
+                                    str.len() as u64,
+                                )?,
                                 _ => {
                                     return Err(Error::Msg(format!(
                                         "string test does not support {:?} operator",
@@ -1619,14 +1625,7 @@ impl Test {
                             // libmagic converts up to 127 characters, ! also prints them
                             CmpOp::Neq => haystack.read_count(STRING_PRINT_MAX as u64 * 2)?,
                             CmpOp::Lt | CmpOp::Gt => {
-                                let buf = haystack.read_count(STRING_PRINT_MAX as u64 * 2)?;
-                                // like numeric reads, the pattern-sized field must be in the data
-                                if (buf.len() as u64) < len {
-                                    return Err(
-                                        io::Error::from(io::ErrorKind::UnexpectedEof).into()
-                                    );
-                                }
-                                buf
+                                read_cmp_window(haystack, STRING_PRINT_MAX as u64 * 2, len)?
                             }
                             _ => {
                                 return Err(Error::Msg(format!(
