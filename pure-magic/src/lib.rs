@@ -4808,8 +4808,8 @@ HelloWorld
             b"\x03a\x00cdef",
             r"[a\000c] (64)"
         );
-        // unlike libmagic, which prints the pattern and ends the match after the pattern length, a
-        // ! match prints the content and ends after it, as numeric types print the value read
+        // unlike libmagic, which prints the pattern, a ! match prints the content, as numeric types
+        // print the value read; like libmagic, &0 advances by the prefix and the pattern length
         assert_magic_match_bin!(r#"0 pstring !abd [%s]"#, b"\x03abc", "[abc]");
         assert_magic_not_match_bin!(r#"0 pstring !abc [%s]"#, b"\x03abc");
         assert_magic_match_bin!(
@@ -4818,7 +4818,7 @@ HelloWorld
             >&0 byte x (%x)
             "#,
             b"\x03abcXYZW",
-            "[abc] (58)"
+            "[abc] (57)"
         );
         // like libmagic, a ! test matches when the data can't be read: offset past EOF, or fewer
         // content bytes than the length prefix says
@@ -5129,6 +5129,25 @@ HelloWorld
             "[abcde]"
         );
         assert_magic_not_match_bin!(r"0 bestring16 <abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+
+        // &0 advances by the pattern length on !, 2 bytes per char; libmagic gives (6300) and
+        // (6200) because it counts the chars as bytes
+        assert_magic_match_bin!(
+            r#"
+            0 lestring16 !abd [%s]
+            >&0 leshort x (%x)
+            "#,
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde] (64)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 bestring16 !abd [%s]
+            >&0 beshort x (%x)
+            "#,
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde] (64)"
+        );
 
         // x stops at the 16-bit NUL without consuming it; libmagic gives (62) for BE
         // because it ends the match after 3 bytes (one per char) instead of 6
