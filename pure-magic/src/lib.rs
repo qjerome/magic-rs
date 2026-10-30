@@ -1822,7 +1822,14 @@ impl Test {
                                     } else {
                                         msg
                                     };
-                                    bytes_res!(msg)
+                                    let mut res = bytes_res!(msg);
+                                    // libmagic advances &0 by the pattern length on !, not the data's
+                                    if let (CmpOp::Neq, Some(MatchRes::Bytes(o, end, ..))) =
+                                        (st.cmp_op, res.as_mut())
+                                    {
+                                        *end = Some(o.saturating_add(str.len() as u64));
+                                    }
+                                    res
                                 } else {
                                     None
                                 }
