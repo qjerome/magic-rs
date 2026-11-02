@@ -34,6 +34,55 @@ pub(crate) fn prepare_bytes_re(s: &[u8]) -> String {
     out
 }
 
+/// Adds `\n` to every `[^...]` class, as POSIX `REG_NEWLINE` excludes it from
+/// non-matching lists while Rust's `regex` doesn't.
+fn negated_classes_exclude_newline(re: &str) -> String {
+    let mut out = String::with_capacity(re.len());
+    let mut chars = re.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        match c {
+            '\\' => out.extend(chars.next()),
+            '[' => {
+                let negated = chars.next_if_eq(&'^').is_some();
+                if negated {
+                    out.push('^');
+                }
+                // POSIX can't escape `]` in a class: it's a member, not the end, only right after `[` or `[^`
+                out.extend(chars.next_if_eq(&']'));
+                while let Some(c) = chars.next() {
+                    match c {
+                        ']' => {
+                            if negated {
+                                out.push_str("\\n");
+                            }
+                            out.push(c);
+                            break;
+                        }
+                        '\\' => {
+                            out.push(c);
+                            out.extend(chars.next());
+                        }
+                        // `[:class:]`, `[=c=]` and `[.c.]` end at the next `]`
+                        '[' => {
+                            out.push(c);
+                            for c in chars.by_ref() {
+                                out.push(c);
+                                if c == ']' {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => out.push(c),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Unescapes `s` and returns whether the result is binary (not text, so
 /// any NUL makes it binary).
 pub(crate) fn unescape_classify(s: &str) -> (bool, Vec<u8>) {
@@ -787,7 +836,8 @@ impl RegexTest {
         // guarantee not to panic by parser
         let prep_re = prep_re.unwrap();
         let non_magic_len = nonmagic(&prep_re);
-        let ascii_re = format!("(?-u){prep_re}");
+        // libmagic compiles every regex with REG_NEWLINE
+        let ascii_re = format!("(?m-u){}", negated_classes_exclude_newline(&prep_re));
 
         Ok(Self {
             re: Regex::new(ascii_re)?,
@@ -1458,6 +1508,22 @@ impl MagicRule {
 mod test {
 
     use super::*;
+
+    #[test]
+    fn test_negated_classes_exclude_newline() {
+        for (re, expected) in [
+            (r"a[bc]", r"a[bc]"),
+            (r"[^a]", r"[^a\n]"),
+            (r"[^]a]", r"[^]a\n]"),
+            (r"[^a\]b]", r"[^a\]b\n]"),
+            (r"[^[:space:]x]", r"[^[:space:]x\n]"),
+            (r"\[^a]", r"\[^a]"),
+            (r"[^a][^b]", r"[^a\n][^b\n]"),
+            (r"[a^]", r"[a^]"),
+        ] {
+            assert_eq!(negated_classes_exclude_newline(re), expected, "{re}");
+        }
+    }
 
     #[test]
     fn test_unescape() {
