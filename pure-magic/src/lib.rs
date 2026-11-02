@@ -4624,6 +4624,12 @@ HelloWorld
             b"ab\ncd\n",
             "A B"
         );
+
+        // `/c` ignores case both ways, unlike `string/c`
+        assert_magic_match_text!(r"0 regex/c hello OK", b"HELLO\n");
+        assert_magic_match_text!(r"0 regex/c HELLO OK", b"hello\n");
+        assert_magic_match_text!(r"0 regex/c HeLLo OK", b"hEllO\n");
+        assert_magic_not_match_text!(r"0 regex hello OK", b"HELLO\n");
     }
 
     #[test]
