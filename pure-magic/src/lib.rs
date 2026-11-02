@@ -4649,6 +4649,20 @@ HelloWorld
         // the match may end on the last window byte, which libmagic overwrites with a NUL
         assert_magic_match_text!(r"0 regex abc [%s]", b"abc", "[abc]");
         assert_magic_match_text!(r"0 regex/3 abc [%s]", b"abcd\n", "[abc]");
+
+        // libmagic runs the regex on the whole text window, with REG_NEWLINE semantics
+        assert_magic_match_text!(
+            r"
+0	regex	SNAP\n0	A
+>&0	string	.13	B",
+            b"SNAP\n0.13\n",
+            "A B"
+        );
+        assert_magic_match_text!(r"0 regex P[[:space:]]+0 OK", b"SNAP\n0.13\n");
+        assert_magic_not_match_text!(r"0 regex P.0 OK", b"SNAP\n0.13\n");
+        assert_magic_not_match_text!(r"0 regex P[^a]0 OK", b"SNAP\n0.13\n");
+        assert_magic_match_text!(r"0 regex 13$ [%s]", b"SNAP\n0.13\nx\n", "[13]");
+        assert_magic_match_text!(r"0 regex \^0 [%s]", b"SNAP\n0.13\n", "[0]");
     }
 
     #[test]
