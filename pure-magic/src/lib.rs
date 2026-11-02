@@ -4614,6 +4614,16 @@ HelloWorld
         assert_magic_not_match_text!(r"0 regex P[^a]0 OK", b"SNAP\n0.13\n");
         assert_magic_match_text!(r"0 regex 13$ [%s]", b"SNAP\n0.13\nx\n", "[13]");
         assert_magic_match_text!(r"0 regex \^0 [%s]", b"SNAP\n0.13\n", "[0]");
+
+        // a match ending at `$` leaves `&0` on the newline
+        assert_magic_match_text!(
+            r"
+0	regex	ab$	A
+>&0	string	\ncd	B
+>&0	string	cd	C",
+            b"ab\ncd\n",
+            "A B"
+        );
     }
 
     #[test]
