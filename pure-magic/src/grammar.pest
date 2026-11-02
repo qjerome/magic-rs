@@ -131,7 +131,7 @@ pstring     =  { "pstring" ~ ("/" ~ pstring_mod{,2})? }
 search_mod = @{ "b" | "C" | "c" | "f" | "T" | "t" | "W" | "w" | "s" }
 search     =  { "search" ~ ("/" ~ (pos_number | search_mod+){,2}){,2} }
 
-regex_mod = @{ "c" | "s" | "l" | "b" | "t" | "T" }
+regex_mod = @{ "c" | "C" | "s" | "l" | "b" | "t" | "T" }
 regex     =  { "regex" ~ ("/" ~ (pos_number | regex_mod+){,2}){,2} }
 
 bestring16 = { "bestring16" }

@@ -805,7 +805,7 @@ impl RegexTest {
                             Rule::regex_mod => {
                                 for m in p.as_str().chars() {
                                     match m {
-                                        'c' => {
+                                        'c' | 'C' => {
                                             mods |= ReMod::CaseInsensitive;
                                         }
                                         's' => mods |= ReMod::StartOffsetUpdate,
@@ -837,7 +837,12 @@ impl RegexTest {
         let prep_re = prep_re.unwrap();
         let non_magic_len = nonmagic(&prep_re);
         // libmagic compiles every regex with REG_NEWLINE
-        let ascii_re = format!("(?m-u){}", negated_classes_exclude_newline(&prep_re));
+        let icase = if mods.contains(ReMod::CaseInsensitive) {
+            "i"
+        } else {
+            ""
+        };
+        let ascii_re = format!("(?m{icase}-u){}", negated_classes_exclude_newline(&prep_re));
 
         Ok(Self {
             re: Regex::new(ascii_re)?,
