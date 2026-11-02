@@ -5,7 +5,9 @@
 #
 #	derived empirically, your offsets may vary!
 0	search/100	yyprevious	C program text (from lex)
->3	search/1	>\0		 for %s
+# LOCAL(qjerome): upstream's "search/1 >\0" back to the original "string":
+# ">" on search is undocumented and libmagic prints a stale %s length for it.
+>3	string	>\0		 for %s
 # C program text from GNU flex, from Daniel Quinlan <quinlan@yggdrasil.com>
 0	search/100	generated\ by\ flex	C program text (from flex)
 # lex description file, from Daniel Quinlan <quinlan@yggdrasil.com>

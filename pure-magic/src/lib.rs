@@ -143,17 +143,18 @@
 use dyf::{DynDisplay, FormatString, dformat};
 use flaglet::flags;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use memchr::memchr;
+use memchr::{memchr, memchr2};
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cmp::max,
+    cmp::{Ordering, max},
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
+    iter,
     mem::swap,
     ops::{Add, BitAnd, BitOr, BitXor, Deref, Div, Mul, Rem, Sub},
     path::Path,
@@ -354,7 +355,7 @@ impl Message {
             } => {
                 if let Some(mr) = mr {
                     match mr {
-                        MatchRes::Float(_, _) | MatchRes::Bytes(_, _, _, _) => {
+                        MatchRes::Float(_, _) | MatchRes::Bytes { .. } => {
                             Ok(Cow::Owned(dformat!(fs, mr)?))
                         }
                         MatchRes::Scalar(_, scalar) => {
@@ -377,10 +378,19 @@ impl Message {
                         }
                     }
                 } else {
-                    Ok(fs.to_string_lossy())
+                    Ok(Cow::Owned(dformat!(fs, NoValue)?))
                 }
             }
         }
+    }
+}
+
+/// Formats as nothing, whatever the spec, for a match without a value read.
+struct NoValue;
+
+impl DynDisplay for NoValue {
+    fn dyn_fmt(&self, _: &mut dyf::Formatter<'_>) -> dyf::Result {
+        Ok(())
     }
 }
 
@@ -808,12 +818,13 @@ impl RegexTest {
                             None
                         };
 
-                        return Some(MatchRes::Bytes(
-                            start_offset,
-                            stop_offset,
-                            re_match.as_bytes(),
-                            Encoding::Utf8,
-                        ));
+                        return Some(MatchRes::Bytes {
+                            offset: start_offset,
+                            end: stop_offset,
+                            bytes: re_match.as_bytes(),
+                            encoding: Encoding::Utf8,
+                            print_max: SEARCH_PRINT_MAX,
+                        });
                     }
 
                     off_txt += line.len() as u64;
@@ -836,20 +847,27 @@ impl RegexTest {
                     .ok()?
                     .find(buf)
                     .map(|re_match| {
-                        MatchRes::Bytes(
+                        MatchRes::Bytes {
                             // the offset of the string is computed from the start of the buffer
-                            off_buf + re_match.start() as u64,
-                            None,
-                            re_match.as_bytes(),
-                            Encoding::Utf8,
-                        )
+                            offset: off_buf + re_match.start() as u64,
+                            end: None,
+                            bytes: re_match.as_bytes(),
+                            encoding: Encoding::Utf8,
+                            print_max: SEARCH_PRINT_MAX,
+                        }
                     })
             }
         };
 
         // handle the case where we want the regex not to match
         if self.cmp_op.is_neq() && mr.is_none() {
-            return Some(MatchRes::Bytes(off_buf, None, buf, Encoding::Utf8));
+            return Some(MatchRes::Bytes {
+                offset: off_buf,
+                end: None,
+                bytes: buf,
+                encoding: Encoding::Utf8,
+                print_max: SEARCH_PRINT_MAX,
+            });
         }
 
         mr
@@ -906,6 +924,12 @@ impl From<StringTest> for Test {
     }
 }
 
+/// C isspace, which unlike u8::is_ascii_whitespace includes \v
+#[inline(always)]
+fn is_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t'..=b'\r')
+}
+
 #[inline(always)]
 fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
     let mut consumed = 0;
@@ -948,17 +972,12 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
                 break;
             };
 
-            if mods.contains(StringMod::OptBlank) && (b == b' ' || ref_byte == b' ') {
-                if b == b' ' {
-                    // we ignore whitespace in target
+            // like libmagic, data blanks are optional only after a blank in the pattern
+            if mods.contains(StringMod::OptBlank) && is_space(ref_byte) {
+                i_src += 1;
+                while iter.peek().is_some_and(|&&b| is_space(b)) {
                     consume_target!();
                 }
-
-                if ref_byte == b' ' {
-                    // we ignore whitespace in test
-                    i_src += 1;
-                }
-
                 continue;
             }
 
@@ -978,15 +997,15 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
                 continue_next_iteration!()
             }
 
-            if mods.contains(StringMod::CompactWhitespace) && ref_byte == b' ' {
+            if mods.contains(StringMod::CompactWhitespace) && is_space(ref_byte) {
                 let mut src_blk = 0;
-                while let Some(b' ') = str.get(i_src) {
+                while str.get(i_src).is_some_and(|&p| is_space(p)) {
                     src_blk += 1;
                     i_src += 1;
                 }
 
                 let mut tgt_blk = 0;
-                while let Some(b' ') = iter.peek() {
+                while iter.peek().is_some_and(|&&b| is_space(b)) {
                     tgt_blk += 1;
                     consume_target!();
                 }
@@ -1006,8 +1025,9 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
         }
 
         if mods.contains(StringMod::FullWordMatch)
-            && let Some(b) = iter.peek()
-            && !b.is_ascii_whitespace()
+            && let Some(&&b) = iter.peek()
+            && b != 0
+            && !is_space(b)
         {
             return (false, consumed);
         }
@@ -1017,6 +1037,49 @@ fn string_match(str: &[u8], mods: StringModFlags, buf: &[u8]) -> (bool, usize) {
             consumed,
         )
     }
+}
+
+/// Orders NUL padded `buf` against `str` like libmagic `file_strncmp`.
+fn string_cmp(str: &[u8], mods: StringModFlags, buf: &[u8]) -> Ordering {
+    // byte at index in buf
+    let at = |i: usize| buf.get(i).copied().unwrap_or(0);
+    // index in buf
+    let mut i = 0;
+
+    for (j, &p) in str.iter().enumerate() {
+        if mods.contains(StringMod::CompactWhitespace) && is_space(p) {
+            if !is_space(at(i)) {
+                return Ordering::Greater;
+            }
+            i += 1;
+            if !str.get(j + 1).is_some_and(|&p| is_space(p)) {
+                while is_space(at(i)) {
+                    i += 1;
+                }
+            }
+        } else if mods.contains(StringMod::OptBlank) && is_space(p) {
+            while is_space(at(i)) {
+                i += 1;
+            }
+        } else {
+            let b = if mods.contains(StringMod::LowerInsensitive) && p.is_ascii_lowercase() {
+                at(i).to_ascii_lowercase()
+            } else if mods.contains(StringMod::UpperInsensitive) && p.is_ascii_uppercase() {
+                at(i).to_ascii_uppercase()
+            } else {
+                at(i)
+            };
+            i += 1;
+            if b != p {
+                return b.cmp(&p);
+            }
+        }
+    }
+
+    if mods.contains(StringMod::FullWordMatch) && at(i) != 0 && !is_space(at(i)) {
+        return Ordering::Greater;
+    }
+    Ordering::Equal
 }
 
 impl StringTest {
@@ -1123,12 +1186,13 @@ impl SearchTest {
             let (ok, consumed) = string_match(&self.str, self.str_mods, &buf[i..]);
 
             if ok {
-                return Some(MatchRes::Bytes(
-                    off_buf.saturating_add(pos as u64),
-                    None,
-                    &buf[i..i + consumed],
-                    Encoding::Utf8,
-                ));
+                return Some(MatchRes::Bytes {
+                    offset: off_buf.saturating_add(pos as u64),
+                    end: None,
+                    bytes: &buf[i..i + consumed],
+                    encoding: Encoding::Utf8,
+                    print_max: SEARCH_PRINT_MAX,
+                });
             } else {
                 i += max(consumed, 1)
             }
@@ -1136,7 +1200,13 @@ impl SearchTest {
 
         // handles the case where we want the string not to be found
         if self.cmp_op.is_neq() {
-            return Some(MatchRes::Bytes(off_buf, None, buf, Encoding::Utf8));
+            return Some(MatchRes::Bytes {
+                offset: off_buf,
+                end: None,
+                bytes: buf,
+                encoding: Encoding::Utf8,
+                print_max: SEARCH_PRINT_MAX,
+            });
         }
 
         None
@@ -1222,14 +1292,24 @@ enum Encoding {
     Utf8,
 }
 
+// libmagic prints string types from a 128-byte buffer and regex/search from a 512-byte one
+const STRING_PRINT_MAX: usize = 127;
+const SEARCH_PRINT_MAX: usize = 511;
+
 // Carry the offset of the start of the data in the stream
 // and the data itself
 enum MatchRes<'buf> {
-    // Bytes.0: offset of the match
-    // Bytes.1: optional end of match (to address the need of EOL adjustment in string regex)
-    // Bytes.2: the bytes matching
-    // Bytes.3: encoding of the buffer
-    Bytes(u64, Option<u64>, &'buf [u8], Encoding),
+    Bytes {
+        // match start offset
+        offset: u64,
+        // match end when not offset + bytes.len(): regex line end, /T trim, ! pattern length
+        end: Option<u64>,
+        // data printed by %s
+        bytes: &'buf [u8],
+        encoding: Encoding,
+        // maximum number of characters printed by %s
+        print_max: usize,
+    },
     Scalar(u64, Scalar),
     Float(u64, Float),
 }
@@ -1245,11 +1325,18 @@ impl DynDisplay for MatchRes<'_> {
         match self {
             Self::Scalar(_, v) => v.dyn_fmt(f),
             Self::Float(_, v) => v.dyn_fmt(f),
-            Self::Bytes(_, _, v, enc) => match enc {
-                Encoding::Utf8 => String::from_utf8_lossy(v).to_string().dyn_fmt(f),
+            Self::Bytes {
+                bytes,
+                encoding,
+                print_max,
+                ..
+            } => match encoding {
+                Encoding::Utf8 => {
+                    String::from_utf8_lossy(&bytes[..bytes.len().min(*print_max)]).dyn_fmt(f)
+                }
                 Encoding::Utf16(enc) => {
-                    let utf16: Vec<u16> = slice_to_utf16_iter(v, *enc).collect();
-                    String::from_utf16_lossy(&utf16).dyn_fmt(f)
+                    let utf16: Vec<u16> = slice_to_utf16_iter(bytes, *enc).collect();
+                    String::from_utf16_lossy(&utf16[..utf16.len().min(*print_max)]).dyn_fmt(f)
                 }
             },
         }
@@ -1261,7 +1348,7 @@ impl MatchRes<'_> {
     #[inline]
     fn start_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(o, _, _, _) => *o,
+            MatchRes::Bytes { offset, .. } => *offset,
             MatchRes::Scalar(o, _) => *o,
             MatchRes::Float(o, _) => *o,
         }
@@ -1271,10 +1358,9 @@ impl MatchRes<'_> {
     #[inline]
     fn end_offset(&self) -> u64 {
         match self {
-            MatchRes::Bytes(start, end, buf, _) => match end {
-                Some(end) => *end,
-                None => start.saturating_add(buf.len() as u64),
-            },
+            MatchRes::Bytes {
+                offset, end, bytes, ..
+            } => end.unwrap_or_else(|| offset.saturating_add(bytes.len() as u64)),
             MatchRes::Scalar(o, sc) => o.add(sc.size_of() as u64),
             MatchRes::Float(o, f) => o.add(f.size_of() as u64),
         }
@@ -1300,6 +1386,13 @@ fn slice_to_utf16_iter(read: &[u8], encoding: String16Encoding) -> impl Iterator
     })
 }
 
+fn utf16_until_nul(buf: &[u8], encoding: String16Encoding) -> &[u8] {
+    let end = slice_to_utf16_iter(buf, encoding)
+        .position(|c| c == 0)
+        .map_or(buf.len() & !1, |i| i * 2);
+    &buf[..end]
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum String16Encoding {
     Le,
@@ -1308,8 +1401,8 @@ enum String16Encoding {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct String16Test {
-    orig: String,
     test_val: TestValue<Vec<u16>>,
+    cmp_op: CmpOp,
     encoding: String16Encoding,
 }
 
@@ -1358,6 +1451,7 @@ impl PStringLen {
 struct PStringTest {
     len: PStringLen,
     test_val: TestValue<Vec<u8>>,
+    cmp_op: CmpOp,
     include_len: bool,
 }
 
@@ -1378,16 +1472,23 @@ impl PStringTest {
         if self.include_len {
             len = len.saturating_sub(self.len.size_of_len())
         }
+        // libmagic copies the content into a 128-byte buffer that also holds the length prefix
+        len = len.min(STRING_PRINT_MAX + 1 - self.len.size_of_len());
 
-        if let TestValue::Value(s) = self.test_val.as_ref()
-            && len != s.len()
-        {
-            return Ok(None);
+        let mut count = len;
+        if let TestValue::Value(s) = self.test_val.as_ref() {
+            if matches!(self.cmp_op, CmpOp::Gt | CmpOp::Lt) {
+                // libmagic fails >/< when fewer bytes than the pattern follow the length prefix,
+                // so read at least that many but only compare the pstring content
+                count = len.max(s.len());
+            } else if !self.cmp_op.is_neq() && len != s.len() {
+                return Ok(None);
+            }
         }
 
-        let read = haystack.read_exact_count(len as u64)?;
+        let read = haystack.read_exact_count(count as u64)?;
 
-        Ok(Some(read))
+        Ok(Some(&read[..len]))
     }
 
     #[inline(always)]
@@ -1444,6 +1545,17 @@ impl Display for Test {
     }
 }
 
+/// Reads the `>`/`<` window of up to `limit` bytes. Like numeric reads, it
+/// fails when fewer than `min` bytes (the pattern) are available.
+#[inline(always)]
+fn read_cmp_window<D: DataRead>(haystack: &mut D, limit: u64, min: u64) -> Result<&[u8], Error> {
+    let buf = haystack.read_count(limit)?;
+    if (buf.len() as u64) < min {
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+    }
+    Ok(buf)
+}
+
 impl Test {
     // read the value to test from the haystack
     #[inline]
@@ -1474,25 +1586,21 @@ impl Test {
                             // no length specified we read until end of string
 
                             match t.cmp_op {
+                                CmpOp::Eq if !t.mods.has_unbounded_length() => {
+                                    let len = str.len() as u64 + t.mods.word_boundary_lookahead();
+                                    haystack.read_count(len)?
+                                }
+                                // libmagic compares against its 128-byte copy minus the NUL,
+                                // ! also prints the data from that window
                                 CmpOp::Eq | CmpOp::Neq => {
-                                    if t.mods.has_unbounded_length() {
-                                        haystack.read_count(FILE_BYTES_MAX as u64)?
-                                    } else {
-                                        let len =
-                                            str.len() as u64 + t.mods.word_boundary_lookahead();
-                                        haystack.read_count(len)?
-                                    }
+                                    haystack.read_count(STRING_PRINT_MAX as u64)?
                                 }
-                                CmpOp::Lt | CmpOp::Gt => {
-                                    let read =
-                                        haystack.read_until_any_delim_or_limit(b"\n\0", 8092)?;
-
-                                    if read.ends_with(b"\0") || read.ends_with(b"\n") {
-                                        &read[..read.len() - 1]
-                                    } else {
-                                        read
-                                    }
-                                }
+                                // libmagic compares against its raw NUL terminated 128-byte copy
+                                CmpOp::Lt | CmpOp::Gt => read_cmp_window(
+                                    haystack,
+                                    STRING_PRINT_MAX as u64,
+                                    str.len() as u64,
+                                )?,
                                 _ => {
                                     return Err(Error::Msg(format!(
                                         "string test does not support {:?} operator",
@@ -1505,7 +1613,8 @@ impl Test {
                         Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
                     }
                     TestValue::Any => {
-                        let read = haystack.read_until_any_delim_or_limit(b"\0\n", 8192)?;
+                        let read = haystack
+                            .read_until_any_delim_or_limit(b"\0\n", STRING_PRINT_MAX as u64)?;
                         // we don't take last byte if it matches end of string
                         let bytes = if read.ends_with(b"\0") || read.ends_with(b"\n") {
                             &read[..read.len() - 1]
@@ -1521,12 +1630,27 @@ impl Test {
             Self::String16(t) => {
                 match t.test_val.as_ref() {
                     TestValue::Value(str16) => {
-                        let read = haystack.read_exact_count((str16.len() * 2) as u64)?;
+                        let len = (str16.len() * 2) as u64;
+                        let read = match t.cmp_op {
+                            CmpOp::Eq => haystack.read_exact_count(len)?,
+                            // libmagic converts up to 127 characters, ! also prints them
+                            CmpOp::Neq => haystack.read_count(STRING_PRINT_MAX as u64 * 2)?,
+                            CmpOp::Lt | CmpOp::Gt => {
+                                read_cmp_window(haystack, STRING_PRINT_MAX as u64 * 2, len)?
+                            }
+                            _ => {
+                                return Err(Error::Msg(format!(
+                                    "string16 test does not support {:?} operator",
+                                    t.cmp_op
+                                )));
+                            }
+                        };
 
                         Ok(Some(ReadValue::Bytes(test_value_offset, read)))
                     }
                     TestValue::Any => {
-                        let read = haystack.read_until_utf16_or_limit(b"\x00\x00", 8192)?;
+                        let read = haystack
+                            .read_until_utf16_or_limit(b"\x00\x00", STRING_PRINT_MAX as u64 * 2)?;
 
                         // we make sure we have an even number of elements
                         let end = if read.len() % 2 == 0 {
@@ -1558,7 +1682,9 @@ impl Test {
                         .unwrap_or(FILE_BYTES_MAX as u64)
                         .saturating_add(s.str.len() as u64)
                         .saturating_add(s.str_mods.word_boundary_lookahead())
+                        .min(FILE_BYTES_MAX as u64)
                 };
+
                 let buf = haystack.read_count(length)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, buf)))
             }
@@ -1578,7 +1704,7 @@ impl Test {
                     }
                 };
 
-                let read = haystack.read_count(length as u64)?;
+                let read = haystack.read_count(length.min(FILE_REGEX_MAX) as u64)?;
                 Ok(Some(ReadValue::Bytes(test_value_offset, read)))
             }
 
@@ -1659,12 +1785,27 @@ impl Test {
             }
 
             (Self::String(st), ReadValue::Bytes(o, buf)) => {
-                macro_rules! trim_buf {
+                macro_rules! bytes_res {
                     ($buf: expr) => {{
+                        let buf = $buf;
                         if st.mods.contains(StringMod::Trim) {
-                            $buf.trim_ascii()
+                            // leading spaces are not printed but stay in the match
+                            let buf = buf.trim_ascii_end();
+                            Some(MatchRes::Bytes {
+                                offset: *o,
+                                end: Some(o.saturating_add(buf.len() as u64)),
+                                bytes: buf.trim_ascii_start(),
+                                encoding: Encoding::Utf8,
+                                print_max: STRING_PRINT_MAX,
+                            })
                         } else {
-                            $buf
+                            Some(MatchRes::Bytes {
+                                offset: *o,
+                                end: None,
+                                bytes: buf,
+                                encoding: Encoding::Utf8,
+                                print_max: STRING_PRINT_MAX,
+                            })
                         }
                     }};
                 }
@@ -1674,28 +1815,36 @@ impl Test {
                         match st.cmp_op {
                             CmpOp::Eq => {
                                 if let (true, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(str), Encoding::Utf8))
+                                    bytes_res!(str)
                                 } else {
                                     None
                                 }
                             }
-                            CmpOp::Neq => {
-                                if let (false, _) = string_match(str, st.mods, buf) {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(str), Encoding::Utf8))
-                                } else {
-                                    None
-                                }
-                            }
-                            CmpOp::Gt => {
-                                if buf.len() > str.len() {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
-                                } else {
-                                    None
-                                }
-                            }
-                            CmpOp::Lt => {
-                                if buf.len() < str.len() {
-                                    Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
+                            CmpOp::Neq | CmpOp::Gt | CmpOp::Lt => {
+                                let ok = match st.cmp_op {
+                                    CmpOp::Neq => !string_match(str, st.mods, buf).0,
+                                    op => matches!(
+                                        (op, string_cmp(str, st.mods, buf)),
+                                        (CmpOp::Gt, Ordering::Greater)
+                                            | (CmpOp::Lt, Ordering::Less)
+                                    ),
+                                };
+                                if ok {
+                                    let msg = &buf[..memchr(b'\0', buf).unwrap_or(buf.len())];
+                                    // libmagic cuts the message at CR/LF when the pattern starts with NUL
+                                    let msg = if str.starts_with(b"\0") {
+                                        &msg[..memchr2(b'\r', b'\n', msg).unwrap_or(msg.len())]
+                                    } else {
+                                        msg
+                                    };
+                                    let mut res = bytes_res!(msg);
+                                    // libmagic advances &0 by the pattern length on !, not the data's
+                                    if let (CmpOp::Neq, Some(MatchRes::Bytes { offset, end, .. })) =
+                                        (st.cmp_op, res.as_mut())
+                                    {
+                                        *end = Some(offset.saturating_add(str.len() as u64));
+                                    }
+                                    res
                                 } else {
                                     None
                                 }
@@ -1711,25 +1860,71 @@ impl Test {
                             }
                         }
                     }
-                    TestValue::Any => {
-                        Some(MatchRes::Bytes(*o, None, trim_buf!(buf), Encoding::Utf8))
-                    }
+                    TestValue::Any => bytes_res!(buf),
                 }
             }
 
             (Self::PString(m), ReadValue::Bytes(o, buf)) => match m.test_val.as_ref() {
                 TestValue::Value(psv) => {
-                    if buf == psv {
-                        Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf8))
+                    let ok = match m.cmp_op {
+                        CmpOp::Gt | CmpOp::Lt => matches!(
+                            (m.cmp_op, string_cmp(psv, StringModFlags::empty(), buf)),
+                            (CmpOp::Gt, Ordering::Greater) | (CmpOp::Lt, Ordering::Less)
+                        ),
+                        CmpOp::Neq => buf != psv,
+                        _ => buf == psv,
+                    };
+                    if ok {
+                        Some(MatchRes::Bytes {
+                            offset: *o,
+                            // libmagic advances &0 by the pattern length on !, not the data's
+                            end: matches!(m.cmp_op, CmpOp::Neq)
+                                .then(|| o.saturating_add(psv.len() as u64)),
+                            bytes: buf,
+                            encoding: Encoding::Utf8,
+                            print_max: STRING_PRINT_MAX,
+                        })
                     } else {
                         None
                     }
                 }
-                TestValue::Any => Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf8)),
+                TestValue::Any => Some(MatchRes::Bytes {
+                    offset: *o,
+                    end: None,
+                    bytes: buf,
+                    encoding: Encoding::Utf8,
+                    print_max: STRING_PRINT_MAX,
+                }),
             },
 
             (Self::String16(t), ReadValue::Bytes(o, buf)) => {
                 match t.test_val.as_ref() {
+                    TestValue::Value(str16)
+                        if matches!(t.cmp_op, CmpOp::Neq | CmpOp::Lt | CmpOp::Gt) =>
+                    {
+                        let data = utf16_until_nul(buf, t.encoding);
+                        // like libmagic, compare the pattern length with the data NUL padded
+                        let ord = slice_to_utf16_iter(data, t.encoding)
+                            .chain(iter::repeat(0))
+                            .take(str16.len())
+                            .cmp(str16.iter().copied());
+                        let ok = matches!(
+                            (t.cmp_op, ord),
+                            (CmpOp::Neq, Ordering::Less | Ordering::Greater)
+                                | (CmpOp::Gt, Ordering::Greater)
+                                | (CmpOp::Lt, Ordering::Less)
+                        );
+                        ok.then_some(MatchRes::Bytes {
+                            offset: *o,
+                            // libmagic advances &0 by the pattern length on !, but counts chars
+                            // as bytes
+                            end: matches!(t.cmp_op, CmpOp::Neq)
+                                .then(|| o.saturating_add(str16.len() as u64 * 2)),
+                            bytes: data,
+                            encoding: Encoding::Utf16(t.encoding),
+                            print_max: STRING_PRINT_MAX,
+                        })
+                    }
                     TestValue::Value(str16) => {
                         // strings cannot be equal
                         if str16.len() * 2 != buf.len() {
@@ -1737,23 +1932,30 @@ impl Test {
                         }
 
                         // we check string equality
-                        for (i, utf16_char) in slice_to_utf16_iter(buf, t.encoding).enumerate() {
-                            if str16[i] != utf16_char {
-                                return None;
-                            }
+                        if str16
+                            .iter()
+                            .zip(slice_to_utf16_iter(buf, t.encoding))
+                            .any(|(a, b)| a != &b)
+                        {
+                            return None;
                         }
 
-                        Some(MatchRes::Bytes(
-                            *o,
-                            None,
-                            t.orig.as_bytes(),
-                            Encoding::Utf16(t.encoding),
-                        ))
+                        Some(MatchRes::Bytes {
+                            offset: *o,
+                            end: None,
+                            bytes: buf,
+                            encoding: Encoding::Utf16(t.encoding),
+                            print_max: STRING_PRINT_MAX,
+                        })
                     }
 
-                    TestValue::Any => {
-                        Some(MatchRes::Bytes(*o, None, buf, Encoding::Utf16(t.encoding)))
-                    }
+                    TestValue::Any => Some(MatchRes::Bytes {
+                        offset: *o,
+                        end: None,
+                        bytes: utf16_until_nul(buf, t.encoding),
+                        encoding: Encoding::Utf16(t.encoding),
+                        print_max: STRING_PRINT_MAX,
+                    }),
                 }
             }
 
@@ -1783,7 +1985,10 @@ impl Test {
 
             Test::String(t) => out += t.test_value_len().saturating_mul(MULT),
 
-            Test::PString(t) => out += t.test_value_len().saturating_mul(MULT),
+            // the length prefix is matched too, so it counts like libmagic
+            Test::PString(t) => {
+                out += (t.len.size_of_len() + t.test_value_len()).saturating_mul(MULT)
+            }
 
             Test::Search(s) => {
                 // NOTE: this implementation deviates from what is in
@@ -1835,10 +2040,8 @@ impl Test {
             }
 
             Test::String16(t) => {
-                // NOTE: in libmagic the result is div by 2
-                // but I GUESS it is because the len is expressed
-                // in number bytes. In our case length is expressed
-                // in number of u16 so we shouldn't divide.
+                // NOTE: libmagic halves this; wiza doesn't, so a string16
+                // pattern weighs the same as a string one of the same length.
                 out += t.test_value_len().saturating_mul(MULT);
             }
 
@@ -1875,13 +2078,13 @@ impl Test {
             Self::Float(t) => Some(t.cmp_op),
             Self::Search(t) => Some(t.cmp_op),
             Self::Regex(t) => Some(t.cmp_op),
+            Self::String16(t) => Some(t.cmp_op),
+            Self::PString(t) => Some(t.cmp_op),
             Self::Name(_)
             | Self::Use(_, _)
-            | Self::PString(_)
             | Self::Clear
             | Self::Default
             | Self::Indirect(_)
-            | Self::String16(_)
             | Self::Der => None,
         }
     }
@@ -2816,8 +3019,22 @@ impl EntryNode {
             // we need to adjust stream offset in case of regex/search tests
             if let Some(mr) = opt_match_res {
                 match &self.entry.test {
-                    Test::String(t) if t.has_length_mod() => {
+                    // !/>/< read a 127-byte window and x reads its delimiter,
+                    // but they end after the printed string
+                    test @ (Test::String(_) | Test::String16(_))
+                        if test.is_match_any()
+                            || matches!(
+                                test.cmp_op(),
+                                Some(CmpOp::Neq | CmpOp::Lt | CmpOp::Gt)
+                            )
+                            || matches!(test, Test::String(t) if t.has_length_mod()) =>
+                    {
                         let o = mr.end_offset();
+                        haystack.seek(SeekFrom::Start(o))?;
+                    }
+                    // >/< may read past the content to compare a longer pattern
+                    Test::PString(t) => {
+                        let o = mr.end_offset().saturating_add(t.len.size_of_len() as u64);
                         haystack.seek(SeekFrom::Start(o))?;
                     }
                     Test::Search(t) => {
@@ -4417,6 +4634,21 @@ mod tests {
 HelloWorld
             "#
         );
+
+        // libmagic caps regex %s output at 511 bytes, not 127 like string
+        for (n, expected) in [(200, 200), (600, 511)] {
+            let data = [vec![b'A'; n], vec![b'\n']].concat();
+            assert_eq!(
+                best_magic("0	regex A+ %s", &data, StreamKind::Text(TextEncoding::Utf8))
+                    .unwrap()
+                    .message(),
+                "A".repeat(expected)
+            );
+        }
+
+        // the match may end on the last window byte, which libmagic overwrites with a NUL
+        assert_magic_match_text!(r"0 regex abc [%s]", b"abc", "[abc]");
+        assert_magic_match_text!(r"0 regex/3 abc [%s]", b"abcd\n", "[abc]");
     }
 
     #[test]
@@ -4476,6 +4708,32 @@ HelloWorld
             r#"0	string/W	#!/usr/bin/env\ \ python  PYTHON"#,
             b"#!/usr/bin/env python"
         );
+
+        // libmagic's /w skips data blanks only after a blank in the pattern
+        assert_magic_not_match_text!(r"0	string/w	ab	X", b"a b\n");
+
+        // libmagic compares /W and /w strings within a 127-byte window
+        for rule in [r"0	string/W	a\ b	X", r"0	string/w	a\ b	X"] {
+            for (spaces, matches) in [(125, true), (126, false)] {
+                let data = [b"a", &b" ".repeat(spaces)[..], b"b\n"].concat();
+                assert_eq!(
+                    !best_magic(rule, &data, StreamKind::Text(TextEncoding::Utf8))
+                        .unwrap()
+                        .is_default(),
+                    matches,
+                    "{rule} with {spaces} spaces"
+                );
+            }
+        }
+
+        // libmagic's /W, /w and /f take C isspace bytes as blanks, in the pattern and the data
+        assert_magic_match_text!(r"0	string/W	a\ b	X", b"a\tb\n");
+        assert_magic_match_text!(r"0	string/w	a\ b	X", b"a\x0b\x0cb\n");
+        assert_magic_match_text!(r"0	string/W	a\tb	X", b"a  b\n");
+        assert_magic_match_text!(r"0	string/f	ab	X", b"ab\x0bc\n");
+
+        // libmagic's /f also ends the word at a NUL
+        assert_magic_match_bin!(r"0	string/f	ab	X", b"ab\0cc\n");
     }
 
     #[test]
@@ -4529,6 +4787,102 @@ HelloWorld
         assert_magic_match_bin!(r#"0 pstring/l Toast it works"#, b"\x05\x00\x00\x00Toast");
 
         assert_magic_match_bin!(r#"0 pstring/lJ Toast it works"#, b"\x09\x00\x00\x00Toast");
+
+        assert_magic_match_bin!(r#"0 pstring >\0 [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_match_bin!(r#"0 pstring <b [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring <abc [%s]"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring >abd [%s]"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring <abb [%s]"#, b"\x03abc");
+        // unlike libmagic, which also compares as many bytes past the pattern as the length prefix has
+        assert_magic_not_match_bin!(r#"0 pstring >ab X"#, b"\x03abc");
+        assert_magic_not_match_bin!(r#"0 pstring/H >ab X"#, b"\x00\x04ab\x00c");
+        // like numeric types, the test fails unless length prefix + pattern fit in the data
+        assert_magic_not_match_bin!(r#"0 pstring <abc X"#, b"\x02ab");
+        assert_magic_not_match_bin!(r#"0 pstring >abc X"#, b"\x02ac");
+        assert_magic_match_bin!(r#"0 pstring <abc X"#, b"\x02abZ", "X");
+        assert_magic_match_bin!(r#"0 pstring >abc X"#, b"\x02acZ", "X");
+        assert_magic_match_bin!(r#"0 pstring <abc [%s]"#, b"\x02abZ", "[ab]");
+        assert_magic_not_match_bin!(r#"0 pstring >abc [%s]"#, b"\x02abd");
+        // the relative offset follows the length-prefixed content, not the bytes read to compare
+        // against a longer pattern
+        assert_magic_match_bin!(
+            r#"
+            0 pstring <abc [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x02abZW",
+            "[ab] (5a)"
+        );
+        // unlike libmagic, which handles the >/< and x value as a C string, the content does not
+        // stop at the first NUL: the length prefix alone delimits a pstring
+        assert_magic_match_bin!(r#"0 pstring >\0 [%s]"#, b"\x03a\x00c", r"[a\000c]");
+        assert_magic_match_bin!(
+            r#"
+            0 pstring >\0 [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x03a\x00cdef",
+            r"[a\000c] (64)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 pstring x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x03a\x00cdef",
+            r"[a\000c] (64)"
+        );
+        // unlike libmagic, which prints the pattern, a ! match prints the content, as numeric types
+        // print the value read; like libmagic, &0 advances by the prefix and the pattern length
+        assert_magic_match_bin!(r#"0 pstring !abd [%s]"#, b"\x03abc", "[abc]");
+        assert_magic_not_match_bin!(r#"0 pstring !abc [%s]"#, b"\x03abc");
+        assert_magic_match_bin!(
+            r#"
+            0 pstring !abcdef [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\x03abcXYZW",
+            "[abc] (57)"
+        );
+        // like libmagic, a ! test matches when the data can't be read: offset past EOF, or fewer
+        // content bytes than the length prefix says
+        assert_magic_match_bin!(r#"20 pstring !abc X"#, b"0123456789", "X");
+        assert_magic_match_bin!(r#"0 pstring !abc X"#, b"\x09abcd", "X");
+
+        // like libmagic, the content is capped at 128 bytes minus the length prefix size, whatever
+        // the length prefix says
+        let long = [b"A".repeat(200), b"XYZ".to_vec()].concat();
+        for (len_mod, prefix, cap) in [
+            ("", &b"\xc8"[..], 127),
+            ("/H", b"\x00\xc8", 126),
+            ("/L", b"\xff\xff\xff\xff", 124),
+        ] {
+            let data = [prefix, &long].concat();
+            assert_eq!(
+                best_magic(
+                    &format!("0 pstring{len_mod} x %s"),
+                    &data,
+                    StreamKind::Binary
+                )
+                .unwrap()
+                .message(),
+                "A".repeat(cap),
+                "{len_mod}"
+            );
+            // the match ends after the capped content (byte 128), not after the declared length
+            assert_eq!(
+                best_magic(
+                    &format!("0 pstring{len_mod} x X\n>&0 ubyte x %d"),
+                    &data,
+                    StreamKind::Binary
+                )
+                .unwrap()
+                .message(),
+                "X 65",
+                "{len_mod}"
+            );
+        }
     }
 
     #[test]
@@ -4552,9 +4906,148 @@ HelloWorld
         assert_magic_match_bin!("0	string/b MZ MZ File", b"MZ\0");
         assert_magic_match_text!("0	string !MZ Not MZ File", b"AZ\0");
         assert_magic_match_text!(r"0	string >\0 Any String", b"A\0");
-        assert_magic_match_text!("0	string >Test Any String", b"Test 1\0");
-        assert_magic_match_text!("0	string <Test Any String", b"\0");
+        assert_magic_not_match_text!("0	string >Test Any String", b"Test 1\0");
+        // like numeric types, all bytes read (pattern length) must be in the data
+        assert_magic_not_match_text!("0	string <Test Any String", b"\0");
         assert_magic_not_match_text!("0	string >Test Any String", b"\0");
+        assert_magic_not_match_bin!("0	string <abc X", b"ab");
+        assert_magic_not_match_bin!("0	string >abc X", b"ac");
+        assert_magic_match_bin!("0	string <abc X", b"abZ", "X");
+        assert_magic_match_text!("0	string <Test Any String", b"Tess\0");
+        assert_magic_match_text!("0	string >Tess Any String", b"Test\0");
+        assert_magic_not_match_bin!(r"0	string >\0 Any String", b"\0\0\0\0");
+        assert_magic_match_bin!(r"0	string >\0 Any String", b"\nfoo\0");
+        assert_magic_match_bin!(r"0	string >\0 [%s]", b"A\nfoo\0", "[A]");
+        assert_magic_match_bin!(r"0	string >\0 [%s]", b"A\rfoo\0", "[A]");
+        assert_magic_match_bin!(r"0	string >A [%s]", b"B\nfoo\0", r"[B\nfoo]");
+        assert_magic_not_match_bin!("0	string/c <test Any String", b"TEST\0");
+        assert_magic_match_bin!(r"0	string >Test\0 [%s]", b"Test 1\0", "[Test 1]");
+        assert_magic_not_match_bin!(r"0	string Test\0 Any String", b"Test 1\0");
+        assert_magic_match_bin!(r"0	string !Test\0 Any String", b"Test 1\0");
+        assert_magic_match_bin!(r"0	string Test\0 Any String", b"Test\0zz");
+        assert_magic_match_bin!(r"0	string/W >a\ b [%s]", b"a  c\0", "[a  c]");
+        assert_magic_match_bin!(r"0	string/w <a\ b [%s]", b"aa\0", "[aa]");
+        assert_magic_not_match_bin!(r"0	string/w >a\ b Any String", b"ab\0");
+        assert_magic_match_bin!("0	string/f >ab [%s]", b"abc\0", "[abc]");
+        assert_magic_not_match_bin!("0	string/f >ab Any String", b"ab c\0");
+        assert_magic_match_bin!(r"0	string >ab\0c [%s]", b"ab\0d", "[ab]");
+        assert_magic_not_match_bin!(r"0	string >ab\0e Any String", b"ab\0d");
+        assert_magic_match_bin!(r"0	string <ab\0e [%s]", b"ab\0d", "[ab]");
+        assert_magic_not_match_bin!(r"0	string <ab\0c Any String", b"ab\0d");
+        // >/< read a 127-byte window but the match ends after the printed string
+        assert_magic_match_bin!(
+            r#"
+            0 string >abc [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abdXYZW\0Q",
+            "[abdXYZW] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string <abc [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abbXYZW\0Q",
+            "[abbXYZW] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string >\0 [%s]
+            >&0 byte x (%x)
+            "#,
+            b"A\nfoo\0Q",
+            "[A] (a)"
+        );
+        // ! prints the data read, not the pattern (libmagic prints the pattern),
+        // but like libmagic &0 advances by the pattern length, not the data's
+        assert_magic_match_text!("0	string !abd [%s]", b"abc", "[abc]");
+        // we must consume only 6 chars in %s
+        assert_magic_match_bin!(
+            r#"
+            0 string !abcdef [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abcXYZW\0Q",
+            "[abcXYZW] (57)"
+        );
+        // x stops at the NUL without consuming it, /T ends the match before the
+        // trimmed trailing spaces
+        assert_magic_match_bin!(
+            r#"
+            0 string x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abc\0Q",
+            "[abc] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abc\0Q",
+            "[abc] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"abc  \0Q",
+            "[abc] (20)"
+        );
+        // libmagic trims in place: leading spaces are skipped for printing but
+        // stay in the match, so &0 is the end of the trimmed text
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"  abc  \0Q",
+            "[abc] (20)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 string/T x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"  abc\0Q",
+            "[abc] (0)"
+        );
+
+        let long = [&[b'A'; 200][..], b"\0"].concat();
+        for rule in [r"0	string >\0 %s", "0	string x %s"] {
+            assert_eq!(
+                best_magic(rule, &long, StreamKind::Binary)
+                    .unwrap()
+                    .message(),
+                "A".repeat(127),
+                "{rule}"
+            );
+        }
+        // the match ends after the 127 printed bytes, not at the NUL (byte 200)
+        for op in [r">\0", "x"] {
+            assert_eq!(
+                best_magic(
+                    &format!("0 string {op} X\n>&0 ubyte x %d"),
+                    &long,
+                    StreamKind::Binary
+                )
+                .unwrap()
+                .message(),
+                "X 65",
+                "{op}"
+            );
+        }
+
+        let long16 = [b"A\0".repeat(200), vec![0, 0]].concat();
+        assert_eq!(
+            best_magic("0	lestring16 x %s", &long16, StreamKind::Binary)
+                .unwrap()
+                .message(),
+            "A".repeat(127)
+        );
     }
 
     #[test]
@@ -4567,6 +5060,11 @@ HelloWorld
             "0 lestring16 x %s",
             b"\x61\x00\x62\x00\x63\x00\x64\x00\x00",
             "abcd"
+        );
+        assert_magic_match_bin!(
+            "0 lestring16 abcd [%s]",
+            b"\x61\x00\x62\x00\x63\x00\x64\x00",
+            "[abcd]"
         );
         assert_magic_not_match_bin!(
             "0 lestring16 abcd Little-endian UTF-16 string",
@@ -4589,6 +5087,11 @@ HelloWorld
             b"\x00\x61\x00\x62\x00\x63\x00\x64",
             "abcd"
         );
+        assert_magic_match_bin!(
+            "0 bestring16 abcd [%s]",
+            b"\x00\x61\x00\x62\x00\x63\x00\x64",
+            "[abcd]"
+        );
         assert_magic_not_match_bin!(
             "0 bestring16 abcd Big-endian UTF-16 string",
             b"\x61\x00\x62\x00\x63\x00\x64\x00"
@@ -4597,6 +5100,158 @@ HelloWorld
             "4 bestring16 abcd Big-endian UTF-16 string",
             b"\x00\x00\x00\x00\x00\x61\x00\x62\x00\x63\x00\x64"
         );
+    }
+
+    #[test]
+    fn test_string16_ops() {
+        // `!` prints the data like `string !`, where libmagic prints the pattern ([abd])
+        assert_magic_match_bin!(
+            r"0 lestring16 =abcde [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 =abd X", b"a\0b\0c\0d\0e\0\0\0Q");
+        assert_magic_match_bin!(
+            r"0 lestring16 !abd [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 !abcde X", b"a\0b\0c\0d\0e\0\0\0Q");
+        assert_magic_match_bin!(
+            r"0 lestring16 >abb [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 >abcde X", b"a\0b\0c\0d\0e\0\0\0Q");
+        assert_magic_match_bin!(
+            r"0 lestring16 <abd [%s]",
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 lestring16 <abcde X", b"a\0b\0c\0d\0e\0\0\0Q");
+
+        assert_magic_match_bin!(
+            r"0 bestring16 =abcde [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 =abd X", b"\0a\0b\0c\0d\0e\0\0Q");
+        assert_magic_match_bin!(
+            r"0 bestring16 !abd [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 !abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+        assert_magic_match_bin!(
+            r"0 bestring16 >abb [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 >abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+        assert_magic_match_bin!(
+            r"0 bestring16 <abd [%s]",
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde]"
+        );
+        assert_magic_not_match_bin!(r"0 bestring16 <abcde X", b"\0a\0b\0c\0d\0e\0\0Q");
+
+        // &0 advances by the pattern length on !, 2 bytes per char; libmagic gives (6300) and
+        // (6200) because it counts the chars as bytes
+        assert_magic_match_bin!(
+            r#"
+            0 lestring16 !abd [%s]
+            >&0 leshort x (%x)
+            "#,
+            b"a\0b\0c\0d\0e\0\0\0Q",
+            "[abcde] (64)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 bestring16 !abd [%s]
+            >&0 beshort x (%x)
+            "#,
+            b"\0a\0b\0c\0d\0e\0\0Q",
+            "[abcde] (64)"
+        );
+
+        // x stops at the 16-bit NUL without consuming it; libmagic gives (62) for BE
+        // because it ends the match after 3 bytes (one per char) instead of 6
+        assert_magic_match_bin!(
+            r#"
+            0 lestring16 x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"a\0b\0c\0\0\0Q",
+            "[abc] (0)"
+        );
+        assert_magic_match_bin!(
+            r#"
+            0 bestring16 x [%s]
+            >&0 byte x (%x)
+            "#,
+            b"\0a\0b\0c\0\0Q",
+            "[abc] (0)"
+        );
+
+        // x ends after the 127 printed chars (byte 254, 'B'), not after the whole
+        // string; libmagic gives 65 (byte 127) as it counts the chars as bytes
+        let long16 = [b"AA".repeat(127), b"BB".repeat(73), b"\0\0Q".to_vec()].concat();
+        assert_eq!(
+            best_magic(
+                r#"
+                0 lestring16 x X
+                >&0 ubyte x %d
+                "#,
+                &long16,
+                StreamKind::Binary
+            )
+            .unwrap()
+            .message(),
+            "X 66"
+        );
+    }
+
+    #[test]
+    fn test_string16_ops_strength() {
+        // libmagic adjusts the strength by operator for every type (apprentice.c:1039)
+        let strength = |rule: &str, data: &[u8]| {
+            best_magic(rule, data, StreamKind::Binary)
+                .unwrap()
+                .strength()
+        };
+        let le = b"a\0b\0c\0d\0e\0\0\0Q";
+        let s = b"abcde\0";
+        assert_eq!(
+            strength(r"0 lestring16 =abc X", le),
+            strength(r"0 string =abc X", s)
+        );
+        assert_eq!(
+            strength(r"0 lestring16 !abd X", le),
+            strength(r"0 string !abd X", s)
+        );
+        assert_eq!(
+            strength(r"0 lestring16 >abb X", le),
+            strength(r"0 string >abb X", s)
+        );
+        assert_eq!(
+            strength(r"0 lestring16 <abd X", le),
+            strength(r"0 string <abd X", s)
+        );
+    }
+
+    #[test]
+    fn test_pstring_strength() {
+        // libmagic counts the length prefix in the pattern length (apprentice.c:3191),
+        // expected values are from `file -l`
+        let strength = |rule: &str, data: &[u8]| {
+            best_magic(rule, data, StreamKind::Binary)
+                .unwrap()
+                .strength()
+        };
+        assert_eq!(strength(r"0 pstring abc X", b"\x03abc"), 70);
+        assert_eq!(strength(r"0 pstring >ab X", b"\x02ac"), 30);
+        assert_eq!(strength(r"0 pstring/H abc X", b"\x00\x03abc"), 80);
+        assert_eq!(strength(r"0 pstring/l abc X", b"\x03\x00\x00\x00abc"), 100);
     }
 
     #[test]
@@ -5778,5 +6433,15 @@ HelloWorld
         )
         .unwrap();
         assert_eq!(m.message(), "data");
+    }
+
+    // unlike libmagic, which prints the zero-filled value (`[0]`) or the pattern (`[abc]`), a !
+    // match on unreadable data prints nothing for the format spec: a 0 read must differ from no
+    // data
+    #[test]
+    fn test_neq_test_on_unreadable_offset_prints_no_value() {
+        assert_magic_match_bin!(r#"20 byte !1 [%d]"#, b"0123456789", "[]");
+        assert_magic_match_bin!(r#"20 long !1 [%x]"#, b"0123456789", "[]");
+        assert_magic_match_bin!(r#"20 pstring !abc [%s]"#, b"0123456789", "[]");
     }
 }

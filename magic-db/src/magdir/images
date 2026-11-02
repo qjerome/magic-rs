@@ -911,7 +911,10 @@
 #>>>14	short		>0		\b, reserved 0x%x
 # length of comment text; 0~no comment text
 #>>>16	ubeshort	>0		\b, comment length %u
->>>16	pstring/H	>0		\b, comment "%s"
+# LOCAL(qjerome): upstream's ">0" compares the comment with the string "0"
+# (first byte >= '0' in libmagic); ">\0" matches any non-empty comment as
+# intended.
+>>>16	pstring/H	>\0		\b, comment "%s"
 #
 0	string		BM
 # check for magic and version 2 of VDC bitmap or BMP with cbSize=715=CB02
@@ -2741,17 +2744,21 @@
 # by looking for driver letter in range A-Z
 >>>&-1	ubyte	>0x40
 # directory path like: "E:\iPE\CDSample\Images\Scenes" "D:\XmasCard\Samples" "C:\TEMP\PLANTS"
->>>>&-5	pstring/l	>0		\b, "%s"
+# LOCAL(qjerome): upstream's ">0" compares the path with the string "0";
+# ">\0" matches any non-empty path as intended.
+>>>>&-5	pstring/l	>\0		\b, "%s"
 # look for DOS/Windows network path if no valid drive letter part
 >>>&-1	default		x
 >>>>4	search/192/s	\x5c\x5c
 # directory path like: "\\FSX\SYS\OPPS\IPE.ENG\TEMPLATE\BUSINESS" "\\Lionking\upi\SAMPLES\IMAGES\ANIMALS"
->>>>>&-4 pstring/l	>0		\b, "%s"
+# LOCAL(qjerome): upstream's ">0" replaced by ">\0", see above.
+>>>>>&-4 pstring/l	>\0		\b, "%s"
 # look for DOS/Windows network path if no drive letter part
 >>4	default		x
 >>>4	search/192/s	\x5c\x5c
 # directory path like: "\\FSX\SYS\opps\ipe.eng\samples" "\\DANIEL\IPE_CD\IPE.ITA"
->>>>&-4 pstring/l	>0		\b, "%s"
+# LOCAL(qjerome): upstream's ">0" replaced by ">\0", see above.
+>>>>&-4 pstring/l	>\0		\b, "%s"
 # look for point character inside image names
 >56	search/38/s	.
 # image name extension like: bmp jpg pcd tpl
