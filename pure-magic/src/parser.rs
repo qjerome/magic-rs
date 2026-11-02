@@ -805,7 +805,7 @@ impl RegexTest {
                             Rule::regex_mod => {
                                 for m in p.as_str().chars() {
                                     match m {
-                                        'c' => {
+                                        'c' | 'C' => {
                                             mods |= ReMod::CaseInsensitive;
                                         }
                                         's' => mods |= ReMod::StartOffsetUpdate,
