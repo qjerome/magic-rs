@@ -805,11 +805,17 @@ impl RegexTest {
             .ok()?
             .find(buf)
             .map(|re_match| {
+                let bytes = re_match.as_bytes();
                 MatchRes::Bytes {
                     // the offset of the string is computed from the start of the buffer
                     offset: off_buf + re_match.start() as u64,
-                    end: None,
-                    bytes: re_match.as_bytes(),
+                    // /T trims the printed match only
+                    end: Some(off_buf + re_match.end() as u64),
+                    bytes: if self.mods.contains(ReMod::TrimMatch) {
+                        bytes.trim_ascii()
+                    } else {
+                        bytes
+                    },
                     encoding: Encoding::Utf8,
                     print_max: SEARCH_PRINT_MAX,
                 }
