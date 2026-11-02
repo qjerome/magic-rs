@@ -124,7 +124,10 @@
 # archive comment length n
 #>>20	uleshort	>0		\b, comment length %u
 # archive comment
->>20	pstring/l	>0		\b, %s
+# LOCAL(qjerome): upstream's ">0" compares the comment with the string "0"
+# (first byte >= '0' in libmagic); ">\0" matches any non-empty comment as
+# intended.
+>>20	pstring/l	>\0		\b, %s
 
 # The end directory record does not work for piped input
 # so try one that looks from the beginning of the file.
