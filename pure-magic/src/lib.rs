@@ -4634,6 +4634,16 @@ HelloWorld
         // libmagic maps `/C` to `REG_ICASE` too
         assert_magic_match_text!(r"0 regex/C hello OK", b"HELLO\n");
         assert_magic_match_text!(r"0 regex/C HELLO OK", b"hello\n");
+
+        // `/T` trims the printed match only, &0 stays at the end of the match
+        assert_magic_match_text!(
+            r#"
+            0 regex/T \ +abc\ + x[%s]
+            >&0 byte x (%x)
+            "#,
+            b"  abc  \nQ",
+            "x[abc] (a)"
+        );
     }
 
     #[test]
