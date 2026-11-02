@@ -805,11 +805,17 @@ impl RegexTest {
             .ok()?
             .find(buf)
             .map(|re_match| {
+                let bytes = re_match.as_bytes();
                 MatchRes::Bytes {
                     // the offset of the string is computed from the start of the buffer
                     offset: off_buf + re_match.start() as u64,
-                    end: None,
-                    bytes: re_match.as_bytes(),
+                    // /T trims the printed match only
+                    end: Some(off_buf + re_match.end() as u64),
+                    bytes: if self.mods.contains(ReMod::TrimMatch) {
+                        bytes.trim_ascii()
+                    } else {
+                        bytes
+                    },
                     encoding: Encoding::Utf8,
                     print_max: SEARCH_PRINT_MAX,
                 }
@@ -4634,6 +4640,16 @@ HelloWorld
         // libmagic maps `/C` to `REG_ICASE` too
         assert_magic_match_text!(r"0 regex/C hello OK", b"HELLO\n");
         assert_magic_match_text!(r"0 regex/C HELLO OK", b"hello\n");
+
+        // `/T` trims the printed match only, &0 stays at the end of the match
+        assert_magic_match_text!(
+            r#"
+            0 regex/T \ +abc\ + x[%s]
+            >&0 byte x (%x)
+            "#,
+            b"  abc  \nQ",
+            "x[abc] (a)"
+        );
     }
 
     #[test]
