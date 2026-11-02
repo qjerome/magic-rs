@@ -100,7 +100,10 @@
 # like: STANDARD.PRS WORKBOOK.PRS
 !:ext		prs
 # like: "Standard Printer" "Workbook Printer"
->>>0x64		pstring/B	>A	"%s"
+# LOCAL(qjerome): libmagic compares pstring patterns plus a trailing NUL, so
+# upstream's ">A" means first byte >= 'A'; comparing the pattern only needs
+# ">@" for the same result.
+>>>0x64		pstring/B	>@	"%s"
 #>>9	byte	18	WordPerfect Prefix information file
 # printer resource .ALL
 >>9	byte	19	WordPerfect printer data
