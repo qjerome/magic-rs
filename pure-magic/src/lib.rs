@@ -779,85 +779,41 @@ impl RegexTest {
     fn match_buf<'buf>(
         &self,
         off_buf: u64, // absolute buffer offset in content
-        stream_kind: StreamKind,
         buf: &'buf [u8],
     ) -> Option<MatchRes<'buf>> {
-        let mr = match stream_kind {
-            StreamKind::Text(_) => {
-                let mut off_txt = off_buf;
-
-                let mut line_limit = self.length.unwrap_or(usize::MAX);
-
-                for line in buf.split(|c| c == &b'\n') {
-                    // we don't need to break on offset
-                    // limit as buf contains the good amount
-                    // of bytes to match against
-                    if line_limit == 0 {
-                        break;
-                    }
-
-                    if let Some(re_match) = self
-                        .re
-                        .get_re()
-                        .inspect_err(|e| {
-                            error!(
-                                "deferred compile of regex pattern {:?} failed: {e}",
-                                self.re.s
-                            )
-                        })
-                        .ok()?
-                        .find(line)
-                    {
-                        // the offset of the string is computed from the start of the buffer
-                        let start_offset = off_txt + re_match.start() as u64;
-
-                        // if we matched until EOL we need to add one to include the delimiter removed from the split
-                        let stop_offset = if re_match.end() == line.len() {
-                            Some(start_offset + re_match.as_bytes().len() as u64 + 1)
-                        } else {
-                            None
-                        };
-
-                        return Some(MatchRes::Bytes {
-                            offset: start_offset,
-                            end: stop_offset,
-                            bytes: re_match.as_bytes(),
-                            encoding: Encoding::Utf8,
-                            print_max: SEARCH_PRINT_MAX,
-                        });
-                    }
-
-                    off_txt += line.len() as u64;
-                    // we have to add one because lines do not contain splitting character
-                    off_txt += 1;
-                    line_limit = line_limit.saturating_sub(1)
-                }
-                None
+        let buf = match self.length {
+            Some(lines) if self.mods.contains(ReMod::LineLimit) => {
+                let len = buf
+                    .split_inclusive(|c| *c == b'\n')
+                    .take(lines)
+                    .map(<[u8]>::len)
+                    .sum();
+                &buf[..len]
             }
-
-            StreamKind::Binary => {
-                self.re
-                    .get_re()
-                    .inspect_err(|e| {
-                        error!(
-                            "deferred compile of regex pattern {:?} failed: {e}",
-                            self.re.s
-                        )
-                    })
-                    .ok()?
-                    .find(buf)
-                    .map(|re_match| {
-                        MatchRes::Bytes {
-                            // the offset of the string is computed from the start of the buffer
-                            offset: off_buf + re_match.start() as u64,
-                            end: None,
-                            bytes: re_match.as_bytes(),
-                            encoding: Encoding::Utf8,
-                            print_max: SEARCH_PRINT_MAX,
-                        }
-                    })
-            }
+            _ => buf,
         };
+
+        let mr = self
+            .re
+            .get_re()
+            .inspect_err(|e| {
+                error!(
+                    "deferred compile of regex pattern {:?} failed: {e}",
+                    self.re.s
+                )
+            })
+            .ok()?
+            .find(buf)
+            .map(|re_match| {
+                MatchRes::Bytes {
+                    // the offset of the string is computed from the start of the buffer
+                    offset: off_buf + re_match.start() as u64,
+                    end: None,
+                    bytes: re_match.as_bytes(),
+                    encoding: Encoding::Utf8,
+                    print_max: SEARCH_PRINT_MAX,
+                }
+            });
 
         // handle the case where we want the regex not to match
         if self.cmp_op.is_neq() && mr.is_none() {
@@ -1718,11 +1674,7 @@ impl Test {
     }
 
     #[inline(always)]
-    fn match_value<'s>(
-        &'s self,
-        tv: &ReadValue<'s>,
-        stream_kind: StreamKind,
-    ) -> Option<MatchRes<'s>> {
+    fn match_value<'s>(&'s self, tv: &ReadValue<'s>) -> Option<MatchRes<'s>> {
         match (self, tv) {
             (Self::Scalar(t), ReadValue::Scalar(o, ts)) => {
                 let read_value: Scalar = match t.transform.as_ref() {
@@ -1959,7 +1911,7 @@ impl Test {
                 }
             }
 
-            (Self::Regex(r), ReadValue::Bytes(o, buf)) => r.match_buf(*o, stream_kind, buf),
+            (Self::Regex(r), ReadValue::Bytes(o, buf)) => r.match_buf(*o, buf),
 
             (Self::Search(t), ReadValue::Bytes(o, buf)) => t.match_buf(*o, buf),
 
@@ -2730,8 +2682,7 @@ impl Match {
                             v.push(format!("read_in_stream={drv}"))
                         }
 
-                        let match_res =
-                            opt_test_value.and_then(|tv| self.test.match_value(&tv, stream_kind));
+                        let match_res = opt_test_value.and_then(|tv| self.test.match_value(&tv));
 
                         if let Some(v) = trace_msg.as_mut() {
                             v.push(format!(
