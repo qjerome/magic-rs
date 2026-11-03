@@ -55,14 +55,14 @@ This benchmark measures the speed of `pure-magic` vs `libmagic`, via the
 
 | Benchmark | API | pure_magic (first) | libmagic | Speedup | pure_magic (best) |
 | --- | --- | --- | --- | --- | --- |
-| single_large_file | file | **1.59 ms** | 4.09 ms | pure_magic 2.57x | 1.73 ms (1.1x first) |
-| medium_file | file | **177.03 µs** | 293.10 µs | pure_magic 1.66x | 206.31 µs (1.2x first) |
-| many_small_files_with_ext | file | **92.02 ms** | 267.71 ms | pure_magic 2.91x | 262.88 ms (2.9x first) |
-| many_small_files_no_ext | file | **219.07 ms** | 268.39 ms | pure_magic 1.23x | 248.43 ms (1.1x first) |
-| single_large_file | buffer | **99.72 µs** | 231.62 µs | pure_magic 2.32x | 134.00 µs (1.3x first) |
-| medium_file | buffer | **41.76 µs** | 231.82 µs | pure_magic 5.55x | 67.93 µs (1.6x first) |
-| many_small_files_with_ext | buffer | **75.24 ms** | 248.91 ms | pure_magic 3.31x | 242.61 ms (3.2x first) |
-| many_small_files_no_ext | buffer | **198.71 ms** | 245.13 ms | pure_magic 1.23x | 227.22 ms (1.1x first) |
+| single_large_file | file | **2.05 ms** | 4.78 ms | pure_magic 2.33x | 2.08 ms (1.0x first) |
+| medium_file | file | **147.78 µs** | 180.48 µs | pure_magic 1.22x | 186.88 µs (1.3x first) |
+| many_small_files_with_ext | file | **53.20 ms** | 161.95 ms | pure_magic 3.04x | 175.81 ms (3.3x first) |
+| many_small_files_no_ext | file | **155.79 ms** | 162.12 ms | pure_magic 1.04x | 188.07 ms (1.2x first) |
+| single_large_file | buffer | **71.50 µs** | 134.45 µs | pure_magic 1.88x | 92.38 µs (1.3x first) |
+| medium_file | buffer | **28.21 µs** | 124.24 µs | pure_magic 4.40x | 44.72 µs (1.6x first) |
+| many_small_files_with_ext | buffer | **42.75 ms** | 144.88 ms | pure_magic 3.39x | 143.78 ms (3.4x first) |
+| many_small_files_no_ext | buffer | **135.70 ms** | 145.14 ms | pure_magic 1.07x | 155.11 ms (1.1x first) |
 
 ### CLI
 
@@ -72,17 +72,16 @@ the user's home directory.
 
 |  files |        wiza (ms) |        file (ms) |  file/wiza | wiza ms/file | file ms/file | faster |
 | -------|------------------|------------------|------------|--------------|--------------|------- |
-|     50 |       61.1 ± 2.3 |   **38.0 ± 1.5** |      0.62x |        1.222 |    **0.760** |   file |
-|    100 |       89.4 ± 5.3 |   **65.9 ± 3.6** |      0.74x |        0.894 |    **0.659** |   file |
-|    250 |  **156.1 ± 6.4** |      176.9 ± 6.1 |      1.13x |    **0.624** |        0.708 |   wiza |
-|    500 | **280.3 ± 13.4** |     473.6 ± 26.2 |      1.69x |    **0.561** |        0.947 |   wiza |
-|   1000 | **492.5 ± 27.3** |     759.6 ± 29.9 |      1.54x |    **0.492** |        0.760 |   wiza |
-|   2000 | **993.1 ± 55.9** |    1530.3 ± 78.6 |      1.54x |    **0.497** |        0.765 |   wiza |
-|   4000 | **2552.0 ± 86.0** |    3678.0 ± 59.0 |      1.44x |    **0.638** |        0.919 |   wiza |
-|   8000 | **6100.0 ± 69.0** |   8501.0 ± 102.0 |      1.39x |    **0.762** |        1.063 |   wiza |
+|     50 |       61.9 ± 4.1 |   **36.1 ± 2.7** |      0.58x |        1.238 |    **0.722** |   file |
+|    100 |       66.1 ± 3.0 |   **61.7 ± 4.6** |      0.93x |        0.661 |    **0.617** |   file |
+|    250 |   **90.5 ± 2.1** |      109.2 ± 2.4 |      1.21x |    **0.362** |        0.437 |   wiza |
+|    500 |  **143.9 ± 2.0** |      215.0 ± 4.8 |      1.49x |    **0.288** |        0.430 |   wiza |
+|   1000 | **267.3 ± 30.7** |      399.3 ± 7.0 |      1.49x |    **0.267** |        0.399 |   wiza |
+|   2000 | **600.1 ± 28.5** |     775.9 ± 11.4 |      1.29x |    **0.300** |        0.388 |   wiza |
+|   4000 | **980.5 ± 68.3** |    1596.9 ± 30.1 |      1.63x |    **0.245** |        0.399 |   wiza |
+|   8000 | **1842.0 ± 6.0** |    3154.0 ± 35.0 |      1.71x |    **0.230** |        0.394 |   wiza |
 
-
-What explains the crossover between `wiza` and `file`? `file` `mmap`s its
+What explains the crossover between `wiza` and `file`? `file` memory maps its
 precompiled `.mgc` database and casts the mapped bytes directly into its
 rule structs. `wiza` instead deserializes its entire embedded
 database into owned Rust values up front, so every invocation pays that
