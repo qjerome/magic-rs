@@ -4381,10 +4381,8 @@ impl MagicDb {
     pub fn deserialize<R: Read>(r: &mut R) -> Result<Self, Error> {
         let mut buf = vec![];
         let mut gz = GzDecoder::new(r);
-        gz.read_to_end(&mut buf)
-            .map_err(|e| Error::msg(format!("failed to read: {e}")))?;
-        let sdb = postcard::from_bytes(&buf).map_err(Error::Deserialize)?;
-        Ok(sdb)
+        gz.read_to_end(&mut buf)?;
+        postcard::from_bytes(&buf).map_err(Error::Deserialize)
     }
 
     /// Verifies the consistency of the [`MagicDb`] database.
