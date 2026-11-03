@@ -5,7 +5,7 @@ rows = []
 for f in glob.glob("target/benchmarks/cli/wiza_vs_file_*.md"):
     n = int(re.search(r'_(\d+)\.md$', f).group(1))
     text = open(f).read()
-    unit_match = re.search(r'Mean \[(\w+)\]', text)
+    unit_match = re.search(r'Mean[\w\s]+\[(\w+)\]', text)
     unit = unit_match.group(1)
     mult = 1000.0 if unit == 's' else 1.0
 
