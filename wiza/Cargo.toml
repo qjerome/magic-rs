@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.98"
 clap = { version = "4.5.42", features = ["derive"] }
+foldhash = "0.2"
 fs-walk = "0.2.0"
 magic-db = { path = "../magic-db", version = "0.6.0" }
 pure-magic = { path = "../pure-magic", version = "0.4.1" }

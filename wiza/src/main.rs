@@ -106,7 +106,6 @@
 
 use std::{
     borrow::Cow,
-    collections::HashSet,
     fs::File,
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -115,6 +114,7 @@ use std::{
 
 use anyhow::anyhow;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, builder::styling};
+use foldhash::HashSet;
 use fs_walk::WalkOptions;
 use pure_magic::{Magic, MagicDb, MagicSource, readers::DataReader};
 use serde_derive::Serialize;
