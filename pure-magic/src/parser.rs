@@ -1,10 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet},
     fs::File,
     io::{self, Read},
     iter::Peekable,
     path::Path,
 };
+
+use foldhash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 use dyf::FormatString;
 use pest::{Parser, iterators::Pair};
@@ -1439,7 +1440,7 @@ impl EntryNode {
 
         Ok(Self {
             root,
-            entry: parent,
+            entry: *parent,
             children,
             mimetype,
             apple,
@@ -1472,20 +1473,28 @@ impl MagicRule {
 
                     items.push(Entry::Match(
                         span,
-                        Name {
-                            line,
-                            // parser guarantee not to panic
-                            name: name.unwrap(),
-                            message,
-                        }
-                        .into(),
+                        Box::new(
+                            Name {
+                                line,
+                                // parser guarantee not to panic
+                                name: name.unwrap(),
+                                message,
+                            }
+                            .into(),
+                        ),
                     ))
                 }
                 Rule::r#match_depth | Rule::r#match_no_depth => {
-                    items.push(Entry::Match(pair.as_span(), Match::from_pair(pair)?));
+                    items.push(Entry::Match(
+                        pair.as_span(),
+                        Box::new(Match::from_pair(pair)?),
+                    ));
                 }
                 Rule::r#use => {
-                    items.push(Entry::Match(pair.as_span(), Use::from_pair(pair)?.into()));
+                    items.push(Entry::Match(
+                        pair.as_span(),
+                        Box::new(Use::from_pair(pair)?.into()),
+                    ));
                 }
                 Rule::flag => items.push(Entry::Flag(pair.as_span(), Flag::from_pair(pair)?)),
                 Rule::EOI => {}

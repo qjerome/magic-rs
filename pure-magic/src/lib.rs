@@ -143,6 +143,7 @@
 use dyf::{DynDisplay, FormatString, dformat};
 use flaglet::flags;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use foldhash::{HashMap, HashSet, HashSetExt};
 use memchr::{memchr, memchr2};
 use pest::{Span, error::ErrorVariant};
 use regex::bytes::{self};
@@ -150,7 +151,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::{Ordering, max},
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::{self, Debug, Display},
     fs::File,
     io::{self, Read, SeekFrom, Write},
@@ -2792,7 +2793,7 @@ struct Name {
 
 #[derive(Debug, Clone)]
 enum Entry<'span> {
-    Match(Span<'span>, Match),
+    Match(Span<'span>, Box<Match>),
     Flag(Span<'span>, Flag),
 }
 
