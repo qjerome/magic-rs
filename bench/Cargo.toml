@@ -19,6 +19,10 @@ criterion = "0.8"
 name = "vs_libmagic"
 harness = false
 
+[[bench]]
+name = "db_load"
+harness = false
+
 [[bin]]
 name = "summarize"
 path = "src/bin/summarize.rs"
