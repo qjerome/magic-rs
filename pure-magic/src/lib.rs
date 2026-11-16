@@ -1657,7 +1657,7 @@ impl Test {
                     match r.length {
                         Some(len) => {
                             if r.mods.contains(ReMod::LineLimit) {
-                                len * 80
+                                len.saturating_mul(80)
                             } else {
                                 len
                             }
@@ -1981,7 +1981,7 @@ impl Test {
                     .length
                     .map(|l| {
                         if r.mods.contains(ReMod::LineLimit) {
-                            l * 80
+                            l.saturating_mul(80)
                         } else {
                             l
                         }
@@ -2218,9 +2218,16 @@ impl IndOffset {
 
                 haystack.seek(SeekFrom::Start(o))?
             }
-            DirOffset::LastUpper(c) => haystack.seek(SeekFrom::Start(
-                (last_upper_match_offset.unwrap_or_default() as i64 + c) as u64,
-            ))?,
+            DirOffset::LastUpper(c) => {
+                let Some(o) = last_upper_match_offset
+                    .unwrap_or_default()
+                    .checked_add_signed(c)
+                else {
+                    return Ok(None);
+                };
+
+                haystack.seek(SeekFrom::Start(o))?
+            }
             DirOffset::End(e) => haystack.seek(SeekFrom::End(e))?,
         };
 
@@ -2446,11 +2453,9 @@ impl Match {
         match self.offset {
             Offset::Direct(dir_offset) => match dir_offset {
                 DirOffset::Start(s) => Ok(Some(s)),
-                DirOffset::LastUpper(shift) => {
-                    let o = last_level_offset.unwrap_or_default() as i64 + shift;
-
-                    if o >= 0 { Ok(Some(o as u64)) } else { Ok(None) }
-                }
+                DirOffset::LastUpper(shift) => Ok(last_level_offset
+                    .unwrap_or_default()
+                    .checked_add_signed(shift)),
                 DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
             Offset::Indirect(ind_offset) => {
@@ -2825,7 +2830,7 @@ impl EntryNodeVisitor {
 
     fn merge(&mut self, other: Self) {
         self.exts.extend(other.exts);
-        self.max_score += other.max_score;
+        self.max_score = self.max_score.saturating_add(other.max_score);
     }
 }
 
@@ -2847,7 +2852,7 @@ impl EntryNode {
             // libmagic gives entries with no message/description a bonus,
             // since they rely on later continuations to print anything.
             if self.entry.message.is_none() {
-                score += 1;
+                score = score.saturating_add(1);
             }
             v.score = score;
 
@@ -2868,7 +2873,8 @@ impl EntryNode {
             .map(|c| {
                 let d = depth.saturating_add(1);
                 // Mirror runtime computation
-                (c.entry.test_strength >> d).saturating_add(c.best_path_bonus(d))
+                (c.entry.test_strength.checked_shr(d as u32).unwrap_or_default())
+                    .saturating_add(c.best_path_bonus(d))
             })
             .max()
             .unwrap_or(0)
@@ -5290,6 +5296,30 @@ HelloWorld
         assert_magic_match_bin!(
             "(0.l+(4)) ubyte 0x42 it works",
             b"\x04\x00\x00\x00\x04\x00\x00\x00\x42"
+        );
+    }
+
+    // `!0` matches unreadable data, so a negative `&` offset wrapping past EOF would print `child`.
+    #[test]
+    fn test_relative_offset_overflow() {
+        assert_magic_match_bin!(
+            "0 ubyte x parent\n>&0x7fffffffffffffff ubyte x child",
+            b"\x00\x00",
+            "parent"
+        );
+        assert_magic_match_bin!(
+            "0 ubyte x parent\n>&-2 ubyte !0 child",
+            b"\x00\x00",
+            "parent"
+        );
+    }
+
+    #[test]
+    fn test_indirect_relative_offset_overflow() {
+        assert_magic_match_bin!(
+            "0 ubyte x parent\n>(&0x7fffffffffffffff.b) ubyte !0 child",
+            b"\x00\x00",
+            "parent"
         );
     }
 
