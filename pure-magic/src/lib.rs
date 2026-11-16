@@ -1657,7 +1657,7 @@ impl Test {
                     match r.length {
                         Some(len) => {
                             if r.mods.contains(ReMod::LineLimit) {
-                                len * 80
+                                len.saturating_mul(80)
                             } else {
                                 len
                             }
@@ -1981,7 +1981,7 @@ impl Test {
                     .length
                     .map(|l| {
                         if r.mods.contains(ReMod::LineLimit) {
-                            l * 80
+                            l.saturating_mul(80)
                         } else {
                             l
                         }
@@ -2830,7 +2830,7 @@ impl EntryNodeVisitor {
 
     fn merge(&mut self, other: Self) {
         self.exts.extend(other.exts);
-        self.max_score += other.max_score;
+        self.max_score = self.max_score.saturating_add(other.max_score);
     }
 }
 
@@ -2852,7 +2852,7 @@ impl EntryNode {
             // libmagic gives entries with no message/description a bonus,
             // since they rely on later continuations to print anything.
             if self.entry.message.is_none() {
-                score += 1;
+                score = score.saturating_add(1);
             }
             v.score = score;
 
@@ -2873,7 +2873,8 @@ impl EntryNode {
             .map(|c| {
                 let d = depth.saturating_add(1);
                 // Mirror runtime computation
-                (c.entry.test_strength >> d).saturating_add(c.best_path_bonus(d))
+                (c.entry.test_strength.checked_shr(d as u32).unwrap_or_default())
+                    .saturating_add(c.best_path_bonus(d))
             })
             .max()
             .unwrap_or(0)
