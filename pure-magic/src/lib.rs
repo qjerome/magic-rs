@@ -2218,9 +2218,16 @@ impl IndOffset {
 
                 haystack.seek(SeekFrom::Start(o))?
             }
-            DirOffset::LastUpper(c) => haystack.seek(SeekFrom::Start(
-                (last_upper_match_offset.unwrap_or_default() as i64 + c) as u64,
-            ))?,
+            DirOffset::LastUpper(c) => {
+                let Some(o) = last_upper_match_offset
+                    .unwrap_or_default()
+                    .checked_add_signed(c)
+                else {
+                    return Ok(None);
+                };
+
+                haystack.seek(SeekFrom::Start(o))?
+            }
             DirOffset::End(e) => haystack.seek(SeekFrom::End(e))?,
         };
 
@@ -2446,11 +2453,9 @@ impl Match {
         match self.offset {
             Offset::Direct(dir_offset) => match dir_offset {
                 DirOffset::Start(s) => Ok(Some(s)),
-                DirOffset::LastUpper(shift) => {
-                    let o = last_level_offset.unwrap_or_default() as i64 + shift;
-
-                    if o >= 0 { Ok(Some(o as u64)) } else { Ok(None) }
-                }
+                DirOffset::LastUpper(shift) => Ok(last_level_offset
+                    .unwrap_or_default()
+                    .checked_add_signed(shift)),
                 DirOffset::End(e) => Ok(Some(haystack.offset_from_start(SeekFrom::End(e)))),
             },
             Offset::Indirect(ind_offset) => {
