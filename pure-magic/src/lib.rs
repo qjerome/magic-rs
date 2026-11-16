@@ -5293,6 +5293,30 @@ HelloWorld
         );
     }
 
+    // `!0` matches unreadable data, so a negative `&` offset wrapping past EOF would print `child`.
+    #[test]
+    fn test_relative_offset_overflow() {
+        assert_magic_match_bin!(
+            "0 ubyte x parent\n>&0x7fffffffffffffff ubyte x child",
+            b"\x00\x00",
+            "parent"
+        );
+        assert_magic_match_bin!(
+            "0 ubyte x parent\n>&-2 ubyte !0 child",
+            b"\x00\x00",
+            "parent"
+        );
+    }
+
+    #[test]
+    fn test_indirect_relative_offset_overflow() {
+        assert_magic_match_bin!(
+            "0 ubyte x parent\n>(&0x7fffffffffffffff.b) ubyte !0 child",
+            b"\x00\x00",
+            "parent"
+        );
+    }
+
     // A `use` line's own message is never printed by libmagic (softmagic.c's
     // FILE_USE case never calls file_printf on its own `desc`) -- only the
     // named rule's own text (here the `name` line's "then second match")
