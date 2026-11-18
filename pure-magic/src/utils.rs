@@ -1,4 +1,8 @@
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use jiff::{
+    Timestamp,
+    civil::{Date, Time},
+    tz::TimeZone,
+};
 use memchr::memchr2;
 
 use crate::TIMESTAMP_FORMAT;
@@ -60,53 +64,59 @@ pub(crate) fn nonmagic(str: &str) -> usize {
     if rv == 0 { 1 } else { rv }
 }
 
-/// Parses a u16 FAT/DOS date into a `NaiveDate`.
+/// Parses a u16 FAT/DOS date into a `Date`.
 // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-dosdatetimetofiletime?redirectedfrom=MSDN
-pub(crate) fn parse_fat_date(fat_date: u16) -> Option<NaiveDate> {
-    let day = (fat_date & 0x1f) as u32; // Bits 0-4
-    let month = ((fat_date >> 5) & 0xf) as u32; // Bits 5-8
-    let year = (fat_date >> 9) as i32 + 1980; // Bits 9-15 + 1980
-    NaiveDate::from_ymd_opt(year, month, day)
+pub(crate) fn parse_fat_date(fat_date: u16) -> Option<Date> {
+    let day = (fat_date & 0x1f) as i8; // Bits 0-4
+    let month = ((fat_date >> 5) & 0xf) as i8; // Bits 5-8
+    let year = (fat_date >> 9) as i16 + 1980; // Bits 9-15 + 1980
+    Date::new(year, month, day).ok()
 }
 
-pub(crate) fn parse_fat_time(fat_time: u16) -> Option<NaiveTime> {
+pub(crate) fn parse_fat_time(fat_time: u16) -> Option<Time> {
     // time is encoded in 2 sec
-    let sec = (fat_time & 0x1f) * 2;
-    let min = (fat_time >> 5) & 0b111111;
-    let hour = (fat_time >> 11) & 0b11111;
-    NaiveTime::from_hms_opt(hour as u32, min as u32, sec as u32)
+    let sec = ((fat_time & 0x1f) * 2) as i8;
+    let min = ((fat_time >> 5) & 0b111111) as i8;
+    let hour = ((fat_time >> 11) & 0b11111) as i8;
+    Time::new(hour, min, sec, 0).ok()
 }
 
-fn windows_time_to_datetime(filetime: i64) -> Option<DateTime<Utc>> {
-    // FILETIME starts 1601-01-01
-    let windows_epoch = Utc.with_ymd_and_hms(1601, 1, 1, 0, 0, 0).single()?;
+fn windows_time_to_datetime(filetime: i64) -> Option<Timestamp> {
+    // FILETIME starts 1601-01-01, which is this many seconds before the Unix epoch
+    const WINDOWS_EPOCH_SECS: i64 = -11_644_473_600;
     // convert 100ns units into seconds + nanos
     let secs = filetime / 10_000_000;
-    let nanos = (filetime % 10_000_000) * 100;
-    Some(windows_epoch + chrono::Duration::seconds(secs) + chrono::Duration::nanoseconds(nanos))
+    let nanos = ((filetime % 10_000_000) * 100) as i32;
+    let elapsed = jiff::SignedDuration::new(secs, nanos);
+    Timestamp::from_second(WINDOWS_EPOCH_SECS)
+        .ok()?
+        .checked_add(elapsed)
+        .ok()
 }
 
 #[inline(always)]
 pub(crate) fn unix_local_time_to_string(timestamp: i64) -> String {
-    Local
-        .timestamp_opt(timestamp, 0)
-        .earliest()
-        .map(|ts| ts.naive_local().format(TIMESTAMP_FORMAT).to_string())
-        .unwrap_or("invalid timestamp".into())
+    Timestamp::from_second(timestamp)
+        .map(|ts| {
+            ts.to_zoned(TimeZone::system())
+                .strftime(TIMESTAMP_FORMAT)
+                .to_string()
+        })
+        .unwrap_or_else(|_| "invalid timestamp".into())
 }
 
 #[inline(always)]
 pub(crate) fn unix_utc_time_to_string(timestamp: i64) -> String {
-    DateTime::from_timestamp(timestamp, 0)
-        .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-        .unwrap_or("invalid timestamp".into())
+    Timestamp::from_second(timestamp)
+        .map(|ts| ts.strftime(TIMESTAMP_FORMAT).to_string())
+        .unwrap_or_else(|_| "invalid timestamp".into())
 }
 
 #[inline(always)]
 pub(crate) fn windows_filetime_to_string(timestamp: i64) -> String {
     windows_time_to_datetime(timestamp)
-        .map(|ts| ts.format(TIMESTAMP_FORMAT).to_string())
-        .unwrap_or("invalid timestamp".into())
+        .map(|ts| ts.strftime(TIMESTAMP_FORMAT).to_string())
+        .unwrap_or_else(|| "invalid timestamp".into())
 }
 
 #[inline(always)]
@@ -317,7 +327,6 @@ pub(crate) fn run_utf8_validation(v: &[u8]) -> Result<bool, Utf8Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Datelike;
 
     #[test]
     fn test_valid_dates() {
@@ -344,11 +353,11 @@ mod tests {
 
     #[test]
     fn test_valid_times() {
-        assert_eq!(parse_fat_time(0x0), NaiveTime::from_hms_opt(0, 0, 0));
+        assert_eq!(parse_fat_time(0x0), Time::new(0, 0, 0, 0).ok());
 
-        assert_eq!(parse_fat_time(0xbf7d), NaiveTime::from_hms_opt(23, 59, 58));
+        assert_eq!(parse_fat_time(0xbf7d), Time::new(23, 59, 58, 0).ok());
 
-        assert_eq!(parse_fat_time(18301), NaiveTime::from_hms_opt(8, 59, 58));
+        assert_eq!(parse_fat_time(18301), Time::new(8, 59, 58, 0).ok());
     }
 
     #[test]
