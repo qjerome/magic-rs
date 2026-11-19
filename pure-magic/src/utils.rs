@@ -361,12 +361,55 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_times() {
+        // seconds field 31 encodes 62 seconds
+        assert_eq!(parse_fat_time(0x001f), None);
+        assert_eq!(parse_fat_time(24 << 11), None);
+        assert_eq!(parse_fat_time(60 << 5), None);
+    }
+
+    #[test]
     fn test_windows_date() {
         assert_eq!(windows_filetime_to_string(0), "1601-01-01 00:00:00");
         assert_eq!(
             windows_filetime_to_string(132723834270000000),
             "2021-08-02 13:10:27"
         );
+    }
+
+    #[test]
+    fn test_windows_date_sub_second() {
+        assert_eq!(
+            windows_filetime_to_string(132723834270000000 + 9_999_999),
+            "2021-08-02 13:10:27"
+        );
+    }
+
+    #[test]
+    fn test_windows_date_before_epoch() {
+        assert_eq!(
+            windows_filetime_to_string(-10_000_000),
+            "1600-12-31 23:59:59"
+        );
+        assert_eq!(windows_filetime_to_string(-1), "1600-12-31 23:59:59");
+    }
+
+    // jiff timestamps stop at 9999-12-30 22:00:00 UTC, unlike libmagic which relies on gmtime(3)
+    #[test]
+    fn test_windows_date_after_year_9999() {
+        assert_eq!(windows_filetime_to_string(i64::MAX), "invalid timestamp");
+    }
+
+    #[test]
+    fn test_unix_utc_time_after_year_9999() {
+        assert_eq!(unix_utc_time_to_string(253402207200), "9999-12-30 22:00:00");
+        assert_eq!(unix_utc_time_to_string(253402207201), "invalid timestamp");
+        assert_eq!(unix_utc_time_to_string(253402300800), "invalid timestamp");
+    }
+
+    #[test]
+    fn test_unix_local_time_out_of_range() {
+        assert_eq!(unix_local_time_to_string(i64::MAX), "invalid timestamp");
     }
 
     #[test]
