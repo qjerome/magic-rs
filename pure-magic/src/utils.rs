@@ -96,9 +96,13 @@ fn windows_time_to_datetime(filetime: i64) -> Option<Timestamp> {
 
 #[inline(always)]
 pub(crate) fn unix_local_time_to_string(timestamp: i64) -> String {
+    unix_time_to_string_in(timestamp, TimeZone::system())
+}
+
+fn unix_time_to_string_in(timestamp: i64, time_zone: TimeZone) -> String {
     Timestamp::from_second(timestamp)
         .map(|ts| {
-            ts.to_zoned(TimeZone::system())
+            ts.to_zoned(time_zone)
                 .strftime(TIMESTAMP_FORMAT)
                 .to_string()
         })
@@ -405,6 +409,20 @@ mod tests {
         assert_eq!(unix_utc_time_to_string(253402207200), "9999-12-30 22:00:00");
         assert_eq!(unix_utc_time_to_string(253402207201), "invalid timestamp");
         assert_eq!(unix_utc_time_to_string(253402300800), "invalid timestamp");
+    }
+
+    #[test]
+    fn test_unix_time_in_time_zone() {
+        let plus_two = TimeZone::fixed(jiff::tz::offset(2));
+        let minus_five = TimeZone::fixed(jiff::tz::offset(-5));
+        assert_eq!(
+            unix_time_to_string_in(946684800, plus_two),
+            "2000-01-01 02:00:00"
+        );
+        assert_eq!(
+            unix_time_to_string_in(946684800, minus_five),
+            "1999-12-31 19:00:00"
+        );
     }
 
     #[test]
