@@ -5977,6 +5977,18 @@ HelloWorld
     }
 
     #[test]
+    fn test_lemsdosdate() {
+        assert_magic_match_bin!("0 lemsdosdate x %s", b"\x90\x54", "2022-04-16");
+        assert_magic_match_bin!("0 lemsdosdate x %s", b"\xa0\xff", "invalid msdos date");
+    }
+
+    #[test]
+    fn test_lemsdostime() {
+        assert_magic_match_bin!("0 lemsdostime x %s", b"\x7d\x47", "08:59:58");
+        assert_magic_match_bin!("0 lemsdostime x %s", b"\x1f\x00", "invalid msdos time");
+    }
+
+    #[test]
     fn test_scalar_with_transform() {
         assert_magic_match_bin!("0 ubyte/10 2 {}", b"\x14", "2");
         assert_magic_match_bin!("0 ubyte/10 x {}", b"\x14", "2");
