@@ -16,7 +16,7 @@ path = "src/main.rs"
 anyhow = "1.0.98"
 clap = { version = "4.5.42", features = ["derive"] }
 foldhash = "0.2"
-fs-walk = "0.2.0"
+fs-walk = "0.3"
 magic-db = { path = "../magic-db", version = "0.7.1" }
 pure-magic = { path = "../pure-magic", version = "0.5.1" }
 serde = "1.0.228"

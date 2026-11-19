@@ -229,9 +229,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "fs-walk"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "746935557bc3cc8ee58275bb0209f7515bc09a8f58037ae9816bd231bfcc920e"
+checksum = "72c3ca56653df776b7697f4c94fbf22180fe5caa8f2638f50a54eb6e825ee24a"
 dependencies = [
  "blake3",
 ]

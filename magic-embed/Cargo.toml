@@ -12,7 +12,7 @@ keywords = ["embedded", "libmagic", "magic", "mime", "proc-macro"]
 proc-macro = true
 
 [dependencies]
-fs-walk = "0.2.0"
+fs-walk = "0.3"
 proc-macro2 = "1.0"
 pure-magic = { path = "../pure-magic", version = "0.5.1" }
 quote = "1.0"
